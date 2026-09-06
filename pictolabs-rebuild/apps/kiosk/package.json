@@ -1,0 +1,42 @@
+{
+  "name": "@pictolabs/kiosk",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/main/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "electron:dev": "tsc -p tsconfig.electron.json && electron .",
+    "electron:build": "npm run build && tsc -p tsconfig.electron.json && electron-builder"
+  },
+  "dependencies": {
+    "@photolab/canon": "file:../../../extracted-asar/node_modules/@photolab/canon",
+    "@pictolabs/shared": "*",
+    "@types/better-sqlite3": "^9.6.0",
+    "better-sqlite3": "^13.0.3",
+    "canvas-confetti": "^1.9.4",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.16.0",
+    "qrcode": "^1.5.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "sharp": "^0.35.4",
+    "socket.io-client": "^4.8.3",
+    "tailwind-merge": "^3.5.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/canvas-confetti": "^1.9.0",
+    "@types/node": "^20.19.43",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^44.1.1",
+    "electron-builder": "^26.15.3",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.2.0"
+  }
+}

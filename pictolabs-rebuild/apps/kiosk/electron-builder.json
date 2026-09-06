@@ -1,0 +1,20 @@
+{
+  "appId": "com.pictolabs.kiosk",
+  "productName": "Pictolabs Kiosk",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/**/*",
+    "package.json"
+  ],
+  "win": {
+    "target": "nsis"
+  },
+  "nsis": {
+    "oneClick": true,
+    "perMachine": true,
+    "createDesktopShortcut": true,
+    "runAfterFinish": true
+  }
+}

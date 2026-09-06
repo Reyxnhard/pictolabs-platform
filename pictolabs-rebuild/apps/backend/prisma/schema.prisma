@@ -1,0 +1,244 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Enums converted to Strings for SQLite compatibility
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("OPERATOR") // SUPERADMIN, COMPANY_ADMIN, BRANCH_MANAGER, OPERATOR
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+model Company {
+  id        String   @id @default(uuid())
+  name      String
+  users     User[]
+  branches  Branch[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("companies")
+}
+
+model Branch {
+  id        String   @id @default(uuid())
+  name      String
+  location  String?
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
+  booths    Booth[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("branches")
+}
+
+model Booth {
+  id           String           @id @default(uuid())
+  name         String
+  deviceSecret String           @unique
+  branchId     String
+  branch       Branch           @relation(fields: [branchId], references: [id])
+  status       String           @default("OFFLINE") // ONLINE, OFFLINE, MAINTENANCE, CAPTURING, PRINTING
+  config       BoothConfig?
+  healthLogs   BoothHealthLog[]
+  sessions     Session[]
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@map("booths")
+}
+
+model BoothConfig {
+  id              String   @id @default(uuid())
+  boothId         String   @unique
+  booth           Booth    @relation(fields: [boothId], references: [id])
+  cameraSettings  String   @default("{\"iso\":100,\"shutterSpeed\":\"1/125\",\"aperture\":\"f/5.6\"}") // Stored as String for JSON
+  printerSettings String   @default("{\"paperSize\":\"4R\",\"copies\":1,\"offsetX\":0,\"offsetY\":0}")
+  generalSettings String   @default("{\"price\":35000,\"countdown\":5,\"timeout\":270}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("booth_configs")
+}
+
+model BoothHealthLog {
+  id           String   @id @default(uuid())
+  boothId      String
+  booth        Booth    @relation(fields: [boothId], references: [id])
+  cpuTemp      Float?
+  paperCount   Int?
+  cameraState  String?
+  printerState String?
+  rawPayload   String?  // Stored as String for JSON
+  createdAt    DateTime @default(now())
+
+  @@map("booth_health_logs")
+}
+
+model Session {
+  id          String        @id @default(uuid())
+  boothId     String
+  booth       Booth         @relation(fields: [boothId], references: [id])
+  status      String        @default("PENDING_PAYMENT")
+  frameId     String?
+  frame       Frame?        @relation(fields: [frameId], references: [id])
+  photos      Photo[]
+  prints      Print[]
+  transaction Transaction?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@map("sessions")
+}
+
+model Photo {
+  id         String   @id @default(uuid())
+  sessionId  String
+  session    Session  @relation(fields: [sessionId], references: [id])
+  rawUrl     String?
+  finalUrl   String?
+  storageKey String?
+  sequenceNo Int      @default(1)
+  createdAt  DateTime @default(now())
+
+  @@map("photos")
+}
+
+model Print {
+  id        String    @id @default(uuid())
+  sessionId String
+  session   Session   @relation(fields: [sessionId], references: [id])
+  copies    Int       @default(1)
+  paperSize String    @default("4R")
+  isSuccess Boolean   @default(false)
+  printedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@map("prints")
+}
+
+model Frame {
+  id         String       @id @default(uuid())
+  name       String
+  category   String       @default("4R")
+  previewUrl String
+  layers     FrameLayer[]
+  assets     FrameAsset[]
+  sessions   Session[]
+  isActive   Boolean      @default(true)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@map("frames")
+}
+
+model FrameLayer {
+  id        String   @id @default(uuid())
+  frameId   String
+  frame     Frame    @relation(fields: [frameId], references: [id])
+  layerType String
+  zIndex    Int      @default(0)
+  config    String   // Stored as JSON string
+  createdAt DateTime @default(now())
+
+  @@map("frame_layers")
+}
+
+model FrameAsset {
+  id        String   @id @default(uuid())
+  frameId   String
+  frame     Frame    @relation(fields: [frameId], references: [id])
+  assetUrl  String
+  assetType String
+  createdAt DateTime @default(now())
+
+  @@map("frame_assets")
+}
+
+model Transaction {
+  id        String   @id @default(uuid())
+  sessionId String   @unique
+  session   Session  @relation(fields: [sessionId], references: [id])
+  amount    Float
+  payment   Payment?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("transactions")
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  transactionId String        @unique
+  transaction   Transaction   @relation(fields: [transactionId], references: [id])
+  method        String        @default("QRIS")
+  status        String        @default("PENDING")
+  paymentRef    String?
+  amount        Float
+  paidAt        DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@map("payments")
+}
+
+model Voucher {
+  id         String   @id @default(uuid())
+  code       String   @unique
+  discount   Float
+  usageLimit Int      @default(1)
+  usedCount  Int      @default(0)
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  @@map("vouchers")
+}
+
+model QueueJob {
+  id        String   @id @default(uuid())
+  queueName String   
+  payload   String   // JSON string
+  status    String   @default("PENDING")
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("queues")
+}
+
+model AppUpdate {
+  id           String   @id @default(uuid())
+  version      String   @unique
+  releaseUrl   String
+  notes        String?
+  targetBooths String?  // JSON string
+  createdAt    DateTime @default(now())
+
+  @@map("updates")
+}
+
+model SystemLog {
+  id        String   @id @default(uuid())
+  level     String   @default("INFO")
+  source    String   
+  message   String
+  meta      String?  // JSON string
+  createdAt DateTime @default(now())
+
+  @@map("logs")
+}

@@ -1,0 +1,32 @@
+# Reference and reverse-engineered binaries
+extracted-asar/
+kiosk-client-photobooth-template-flipbook-basic/
+
+# Dependencies & Build artifacts
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.next/
+.turbo/
+
+# Environment and Secrets
+*.env
+*.env.local
+**/*.env
+**/*.env.local
+
+# Databases & Runtime Data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+**/*.db
+**/*.db-journal
+**/*.db-wal
+**/*.db-shm
+**/pictolabs-data/
+
+# OS Files
+.DS_Store
+Thumbs.db
