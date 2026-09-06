@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import type { SessionData, KioskScreen } from '../App';
 import { useKioskConfig } from '../context/KioskConfigContext';
 import { kiosk, PrinterHealth } from '../ipc/bridge';
-import { AlertTriangle, Wrench } from 'lucide-react';
+import { AlertTriangle, Wrench, Shield } from 'lucide-react';
 
 export interface ScreenProps {
   session: SessionData;
@@ -64,14 +64,19 @@ export default function WelcomeScreen({ navigate, onOpenAdmin }: ScreenProps) {
     }
   };
 
-  const isPrinterReady = printerHealth === null || printerHealth.ready;
+  // Printer Bypass state (enabled by default so kiosk can be tested without physical printer)
+  const [bypassPrinter, setBypassPrinter] = useState(() => {
+    return localStorage.getItem('pictolabs-bypass-printer') !== 'false';
+  });
+
+  const isPrinterReady = bypassPrinter || printerHealth === null || printerHealth.ready;
 
   const handleStart = () => {
     if (!isPrinterReady) {
       console.warn('[WelcomeScreen] Start blocked: Printer is not ready');
       return;
     }
-    navigate('frame-select');
+    navigate('product-select');
   };
 
   return (
@@ -84,14 +89,26 @@ export default function WelcomeScreen({ navigate, onOpenAdmin }: ScreenProps) {
       }}
       onClick={handleStart}
     >
-      {/* Hidden Operator Gesture Hotspot (Top-Left 90x90px) */}
+      {/* Operator Admin Screen Button (Mudah Dilihat & Diakses) */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (onOpenAdmin) onOpenAdmin();
+        }}
+        className="absolute top-4 left-4 z-50 px-3.5 py-1.5 rounded-full bg-slate-900/80 hover:bg-slate-900 text-slate-200 hover:text-white border border-slate-700/80 backdrop-blur-md shadow-xl flex items-center gap-2 text-xs font-bold transition-all cursor-pointer hover:scale-105 active:scale-95"
+        title="Buka Operator Admin Panel (PIN default: 1234)"
+      >
+        <Shield className="w-3.5 h-3.5 text-blue-400" />
+        <span>Admin Panel</span>
+      </button>
+
+      {/* Hidden Operator Gesture Hotspot (Top-Left 96x96px Fallback) */}
       <div
         onClick={handleSecretTap}
-        className="absolute top-0 left-0 w-24 h-24 z-40 cursor-default opacity-0 hover:opacity-10 transition-opacity flex items-center justify-center text-xs text-slate-500 font-mono"
-        title="Admin Hotspot"
-      >
-        [ADM]
-      </div>
+        className="absolute top-0 left-0 w-24 h-24 z-40 cursor-default select-none"
+        aria-hidden="true"
+      />
 
       {/* Halftone pattern overlay */}
       <div
@@ -120,6 +137,16 @@ export default function WelcomeScreen({ navigate, onOpenAdmin }: ScreenProps) {
                 {printerHealth?.message || 'Printer sedang kehabisan kertas atau penutup terbuka. Silakan hubungi staf.'}
               </p>
             </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setBypassPrinter(true);
+                localStorage.setItem('pictolabs-bypass-printer', 'true');
+              }}
+              className="px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-xs font-bold text-white flex items-center gap-1 border border-amber-400 transition-colors shadow"
+            >
+              ⚡ Bypass
+            </button>
             <button
               onClick={(e) => {
                 e.stopPropagation();

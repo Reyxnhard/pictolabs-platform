@@ -6,12 +6,20 @@
  * so the React app can still function for UI development.
  */
 
+export interface CameraStatus {
+  isCanonConnected: boolean;
+  cameraModel: string | null;
+  isLiveView: boolean;
+}
+
 export interface KioskCameraAPI {
   startLiveView(): Promise<void>;
   stopLiveView(): Promise<void>;
-  capturePhoto(): Promise<string>;
+  capturePhoto(options?: { mirrorResult?: boolean }): Promise<string>;
+  getStatus(): Promise<CameraStatus>;
   onLiveViewFrame(cb: (frame: string) => void): () => void;
 }
+
 
 export interface PrintResult {
   success: boolean;
@@ -44,15 +52,70 @@ export interface KioskPrinterAPI {
   listPrinters(): Promise<string[]>;
   reprintLast(): Promise<ReprintResult>;
   cutTest(): Promise<PrintResult>;
+  setBypass(enabled: boolean): Promise<{ success: boolean; bypass: boolean }>;
+}
+
+export interface RenderResult {
+  dataUrl: string;
+  filePath: string;
 }
 
 export interface KioskRenderAPI {
-  composite(photos: string[], frameId: string, filter: string): Promise<string>;
+  composite(photos: string[], frameId: string, filter: string): Promise<RenderResult | string>;
+}
+
+export interface LivePhotoFinalizeResult {
+  success: boolean;
+  videoPaths: string[];
+  videoPath?: string;
+}
+
+export interface KioskLivePhotoAPI {
+  saveClip(sessionId: string, poseIndex: number, data: string | Uint8Array | ArrayBuffer): Promise<{ success: boolean; filePath: string; mp4Path?: string }>;
+  saveClipBuffer(sessionId: string, poseIndex: number, buffer: Uint8Array | ArrayBuffer): Promise<{ success: boolean; filePath: string; mp4Path?: string }>;
+  finalize(sessionId: string, totalPoses?: number): Promise<LivePhotoFinalizeResult>;
+  generate(sessionId: string, totalPoses?: number): Promise<LivePhotoFinalizeResult>;
+  generateGif(sessionId: string, photoPaths: string[]): Promise<{ success: boolean; gifPath?: string; mp4Path?: string }>;
+  getClipData(filePath: string): Promise<string | null>;
+}
+
+export interface SessionRecord {
+  id: string;
+  createdAt: string;
+  frameId: string;
+  filter: string;
+  photos: string[];
+  compositePath?: string;
+  liveVideoPath?: string;
+  liveVideoPaths?: string[];
+  liveVideoUrl?: string;
+  liveVideoUrls?: string[];
+  gifPath?: string;
+  gifUrl?: string;
+  printStatus: 'pending' | 'printed' | 'failed';
+  synced: boolean;
+  uploaded?: boolean;
+  remoteUrl?: string;
+}
+
+export interface CreateSessionInput {
+  id?: string;
+  frameId: string;
+  filter: string;
+  photos: string[];
+  printStatus?: 'pending' | 'printed' | 'failed';
+  compositePath?: string;
+  liveVideoPath?: string;
+  liveVideoPaths?: string[];
+  gifPath?: string;
 }
 
 export interface KioskSessionAPI {
-  getLast(): Promise<any>;
-  list(): Promise<any[]>;
+  create(data: CreateSessionInput): Promise<SessionRecord>;
+  update(id: string, update: Partial<SessionRecord>): Promise<SessionRecord | null>;
+  getLast(): Promise<SessionRecord | null>;
+  list(): Promise<SessionRecord[]>;
+  getDownloadUrl(sessionId: string): Promise<string>;
 }
 
 export interface KioskConfigAPI {
@@ -72,6 +135,7 @@ export interface KioskAPI {
   camera: KioskCameraAPI;
   printer: KioskPrinterAPI;
   render: KioskRenderAPI;
+  livePhoto: KioskLivePhotoAPI;
   session: KioskSessionAPI;
   config: KioskConfigAPI;
   system: KioskSystemAPI;
@@ -99,8 +163,8 @@ const mockCamera: KioskCameraAPI = {
   async stopLiveView() {
     console.log('[MockKiosk] Camera: stopLiveView');
   },
-  async capturePhoto() {
-    console.log('[MockKiosk] Camera: capturePhoto (simulated)');
+  async capturePhoto(_options?: { mirrorResult?: boolean }) {
+    console.log('[MockKiosk] Camera: capturePhoto (simulated)', _options);
     const canvas = document.createElement('canvas');
     canvas.width = 640;
     canvas.height = 480;
@@ -113,6 +177,13 @@ const mockCamera: KioskCameraAPI = {
     ctx.fillText('Simulated Photo', 320, 240);
     ctx.fillText(new Date().toLocaleTimeString(), 320, 270);
     return canvas.toDataURL('image/jpeg', 0.9);
+  },
+  async getStatus() {
+    return {
+      isCanonConnected: false,
+      cameraModel: 'Webcam Fallback (Browser Dev)',
+      isLiveView: false,
+    };
   },
   onLiveViewFrame(_cb) {
     console.log('[MockKiosk] Camera: onLiveViewFrame (no-op in browser)');
@@ -147,6 +218,10 @@ const mockPrinter: KioskPrinterAPI = {
     console.log('[MockKiosk] Printer: cutTest (simulated)');
     return { success: true };
   },
+  async setBypass(enabled) {
+    localStorage.setItem('pictolabs-bypass-printer', String(enabled));
+    return { success: true, bypass: enabled };
+  },
 };
 
 const mockRender: KioskRenderAPI = {
@@ -167,17 +242,59 @@ const mockRender: KioskRenderAPI = {
     ctx.fillText('Composite Preview', 200, 280);
     ctx.fillText(`${frameId} | ${filter}`, 200, 310);
     ctx.fillText(`${photos.length} photos`, 200, 340);
-    return canvas.toDataURL('image/jpeg', 0.9);
+    return {
+      dataUrl: canvas.toDataURL('image/jpeg', 0.9),
+      filePath: '/mock/composites/composite_simulated.jpg',
+    };
   },
 };
 
 const mockSession: KioskSessionAPI = {
+  async create(data) {
+    const session: SessionRecord = {
+      id: data.id || `session_${Date.now()}_mock`,
+      createdAt: new Date().toISOString(),
+      frameId: data.frameId,
+      filter: data.filter,
+      photos: data.photos,
+      compositePath: data.compositePath,
+      liveVideoPath: data.liveVideoPath,
+      printStatus: data.printStatus || 'pending',
+      synced: false,
+      uploaded: false,
+    };
+    localStorage.setItem('pictolabs-mock-last-session', JSON.stringify(session));
+    const allRaw = localStorage.getItem('pictolabs-mock-sessions') || '[]';
+    try {
+      const all = JSON.parse(allRaw);
+      all.unshift(session);
+      localStorage.setItem('pictolabs-mock-sessions', JSON.stringify(all));
+    } catch {}
+    return session;
+  },
+  async update(id, update) {
+    const current = await this.getLast();
+    if (current && current.id === id) {
+      const merged = { ...current, ...update };
+      localStorage.setItem('pictolabs-mock-last-session', JSON.stringify(merged));
+      return merged;
+    }
+    return null;
+  },
   async getLast() {
     const raw = localStorage.getItem('pictolabs-mock-last-session');
     return raw ? JSON.parse(raw) : null;
   },
   async list() {
-    return [];
+    const raw = localStorage.getItem('pictolabs-mock-sessions') || '[]';
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  },
+  async getDownloadUrl(sessionId) {
+    return `http://localhost:4000/d/${sessionId}`;
   },
 };
 
@@ -216,10 +333,37 @@ const mockSystem: KioskSystemAPI = {
   },
 };
 
+const mockLivePhoto: KioskLivePhotoAPI = {
+  async saveClip(sessionId: string, poseIndex: number, _data: string | Uint8Array | ArrayBuffer) {
+    console.log(`[MockKiosk] LivePhoto: saveClip pose ${poseIndex} for ${sessionId}`);
+    return { success: true, filePath: `mock_clip_${poseIndex}.mp4`, mp4Path: `mock_clip_${poseIndex}.mp4` };
+  },
+  async saveClipBuffer(sessionId: string, poseIndex: number, _buffer: Uint8Array | ArrayBuffer) {
+    console.log(`[MockKiosk] LivePhoto: saveClipBuffer pose ${poseIndex} for ${sessionId}`);
+    return { success: true, filePath: `mock_clip_${poseIndex}.mp4`, mp4Path: `mock_clip_${poseIndex}.mp4` };
+  },
+  async finalize(sessionId: string, totalPoses = 4) {
+    console.log(`[MockKiosk] LivePhoto: finalize ${totalPoses} separate clips for ${sessionId}`);
+    const videoPaths = Array.from({ length: totalPoses }, (_, i) => `mock_livephoto_${sessionId}_pose_${i + 1}.mp4`);
+    return { success: true, videoPaths, videoPath: videoPaths[0] };
+  },
+  async generate(sessionId: string, totalPoses = 4) {
+    return this.finalize(sessionId, totalPoses);
+  },
+  async generateGif(sessionId: string, photoPaths: string[]) {
+    console.log(`[MockKiosk] LivePhoto: generateGif for ${sessionId} with ${photoPaths.length} photos`);
+    return { success: true, gifPath: `mock_gif_${sessionId}.gif`, mp4Path: `mock_gif_${sessionId}.mp4` };
+  },
+  async getClipData(filePath: string) {
+    return null;
+  },
+};
+
 const mockKiosk: KioskAPI = {
   camera: mockCamera,
   printer: mockPrinter,
   render: mockRender,
+  livePhoto: mockLivePhoto,
   session: mockSession,
   config: mockConfig,
   system: mockSystem,
@@ -239,6 +383,7 @@ export const kiosk: KioskAPI = {
   get camera() { return (isElectron() ? window.kiosk! : mockKiosk).camera; },
   get printer() { return (isElectron() ? window.kiosk! : mockKiosk).printer; },
   get render() { return (isElectron() ? window.kiosk! : mockKiosk).render; },
+  get livePhoto() { return (isElectron() ? window.kiosk! : mockKiosk).livePhoto; },
   get session() { return (isElectron() ? window.kiosk! : mockKiosk).session; },
   get config() { return (isElectron() ? window.kiosk! : mockKiosk).config; },
   get system() { return (isElectron() ? window.kiosk! : mockKiosk).system; },

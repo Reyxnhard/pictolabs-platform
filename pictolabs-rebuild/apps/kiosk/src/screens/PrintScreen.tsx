@@ -34,6 +34,13 @@ export default function PrintScreen({ session, navigate }: ScreenProps) {
           console.warn('Printer warning/error:', result.error);
         }
 
+        // Update session print status in SQLite
+        if (session.sessionId) {
+          kiosk.session.update(session.sessionId, {
+            printStatus: result.success ? 'printed' : 'failed',
+          }).catch((e) => console.warn('[PrintScreen] Failed to update session printStatus:', e));
+        }
+
         // Trigger celebratory confetti burst!
         try {
           confetti({
@@ -48,6 +55,10 @@ export default function PrintScreen({ session, navigate }: ScreenProps) {
 
       } catch (err) {
         console.error('Print process failed:', err);
+        if (session.sessionId) {
+          kiosk.session.update(session.sessionId, { printStatus: 'failed' })
+            .catch((e) => console.warn('[PrintScreen] Failed to set session failed:', e));
+        }
         setError('Gagal mencetak foto. Silakan hubungi petugas.');
         setIsPrinting(false);
         setTimeout(() => navigate('qr'), 3000);
@@ -55,7 +66,7 @@ export default function PrintScreen({ session, navigate }: ScreenProps) {
     }
 
     executePrint();
-  }, [navigate, session.compositeUrl]);
+  }, [navigate, session.compositeUrl, session.sessionId]);
 
   return (
     <div 

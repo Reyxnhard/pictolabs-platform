@@ -48,7 +48,14 @@ export class StorageController {
       }
 
       const safeFilename = headerFileName || `composite_${sessionId || Date.now()}.jpg`;
-      const result = await this.storageService.saveFile(safeFilename, buffer, 'image/jpeg');
+      const mimeType = safeFilename.endsWith('.mp4')
+        ? 'video/mp4'
+        : safeFilename.endsWith('.webm')
+        ? 'video/webm'
+        : fileType === 'video'
+        ? 'video/mp4'
+        : 'image/jpeg';
+      const result = await this.storageService.saveFile(safeFilename, buffer, mimeType);
 
       return {
         success: true,

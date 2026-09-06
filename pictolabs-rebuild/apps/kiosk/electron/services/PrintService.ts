@@ -17,6 +17,7 @@ import { getLastSession } from './SyncEngine';
 
 export interface PrintServiceConfig {
   defaultPrinter?: string; // override auto-detect
+  bypassPrinter?: boolean;
 }
 
 export interface PrinterHealth {
@@ -27,7 +28,35 @@ export interface PrinterHealth {
   checkedAt: number;
 }
 
+// ─── Win32 Spooler / WMI Status Bitmask Constants ───────────
+export const PRINTER_STATE_PAUSED            = 0x00000001;
+export const PRINTER_STATE_ERROR             = 0x00000002;
+export const PRINTER_STATE_PENDING_DELETION  = 0x00000004;
+export const PRINTER_STATE_PAPER_JAM         = 0x00000008;
+export const PRINTER_STATE_PAPER_OUT         = 0x00000010;
+export const PRINTER_STATE_MANUAL_FEED       = 0x00000020;
+export const PRINTER_STATE_PAPER_PROBLEM     = 0x00000040;
+export const PRINTER_STATE_OFFLINE           = 0x00000080;
+export const PRINTER_STATE_IO_ACTIVE         = 0x00000100;
+export const PRINTER_STATE_BUSY              = 0x00000200;
+export const PRINTER_STATE_PRINTING          = 0x00000400;
+export const PRINTER_STATE_OUTPUT_BIN_FULL   = 0x00000800;
+export const PRINTER_STATE_NOT_AVAILABLE     = 0x00001000;
+export const PRINTER_STATE_WAITING           = 0x00002000;
+export const PRINTER_STATE_PROCESSING        = 0x00004000;
+export const PRINTER_STATE_INITIALIZING      = 0x00008000;
+export const PRINTER_STATE_WARMING_UP        = 0x00010000;
+export const PRINTER_STATE_TONER_LOW         = 0x00020000;
+export const PRINTER_STATE_NO_TONER          = 0x00040000;
+export const PRINTER_STATE_PAGE_PUNT         = 0x00080000;
+export const PRINTER_STATE_USER_INTERVENTION = 0x00100000;
+export const PRINTER_STATE_OUT_OF_MEMORY     = 0x00200000;
+export const PRINTER_STATE_DOOR_OPEN         = 0x00400000;
+export const PRINTER_STATE_SERVER_UNKNOWN    = 0x00800000;
+export const PRINTER_STATE_POWER_SAVE        = 0x01000000;
+
 let defaultPrinterName: string | null = null;
+let isBypassMode = true; // Auto-bypass by default when no physical photo printer is connected
 let cachedHealth: PrinterHealth = {
   ready: true,
   name: 'Detecting...',
@@ -36,6 +65,11 @@ let cachedHealth: PrinterHealth = {
   checkedAt: 0,
 };
 let isCheckingHealth = false;
+let backgroundHealthTimer: NodeJS.Timeout | null = null;
+
+export function getCachedPrinterHealth(): PrinterHealth {
+  return cachedHealth;
+}
 
 /**
  * Discover available printers via PowerShell.
@@ -93,15 +127,18 @@ async function queryPrinterHealth(printerName: string): Promise<PrinterHealth> {
         exit
       }
       $jobs = Get-PrintJob -PrinterName '${escaped}' -ErrorAction SilentlyContinue
-      $hasJobError = ($jobs | Where-Object { $_.JobStatus -match 'Error|PaperOut|Blocked' }).Count -gt 0
+      $hasJobError = ($jobs | Where-Object { $_.JobStatus -match 'Error|PaperOut|Blocked|UserIntervention' }).Count -gt 0
+      $jobStatuses = @($jobs | ForEach-Object { $_.JobStatus })
       
       [PSCustomObject]@{
         Name = $p.Name
-        WorkOffline = $p.WorkOffline
-        PrinterStatus = $p.PrinterStatus
-        DetectedErrorState = $p.DetectedErrorState
-        ExtendedPrinterStatus = $p.ExtendedPrinterStatus
-        HasJobError = $hasJobError
+        WorkOffline = [bool]$p.WorkOffline
+        PrinterStatus = [int]$p.PrinterStatus
+        PrinterState = [int]$p.PrinterState
+        DetectedErrorState = [int]$p.DetectedErrorState
+        ExtendedPrinterStatus = [int]$p.ExtendedPrinterStatus
+        HasJobError = [bool]$hasJobError
+        JobStatuses = $jobStatuses
       } | ConvertTo-Json -Compress
     `.replace(/\n/g, ' ');
 
@@ -124,45 +161,98 @@ async function queryPrinterHealth(printerName: string): Promise<PrinterHealth> {
     }
 
     const data = JSON.parse(stdout);
+    const printerState = Number(data.PrinterState) || 0;
+    const detectedError = Number(data.DetectedErrorState) || 0;
+    const extendedStatus = Number(data.ExtendedPrinterStatus) || 0;
+    const jobStatuses: string[] = Array.isArray(data.JobStatuses) ? data.JobStatuses : [];
+    const jobStatusStr = jobStatuses.join(' ').toLowerCase();
+
     let code: PrinterHealth['code'] = 'OK';
     let message = 'Printer siap';
     let ready = true;
 
-    if (data.WorkOffline === true) {
+    // Priority 1: Offline / Disconnected
+    if (
+      data.WorkOffline === true ||
+      extendedStatus === 7 ||
+      (printerState & PRINTER_STATE_OFFLINE) !== 0 ||
+      (printerState & PRINTER_STATE_NOT_AVAILABLE) !== 0
+    ) {
       code = 'OFFLINE';
       message = 'Printer offline / kabel USB terputus';
       ready = false;
-    } else if (data.DetectedErrorState === 4) {
-      code = 'PAPER_OUT';
-      message = 'Kertas foto habis (Paper Out)';
-      ready = false;
-    } else if (data.DetectedErrorState === 6) {
-      code = 'RIBBON_OUT';
-      message = 'Pita ribbon habis (Ribbon Out)';
-      ready = false;
-    } else if (data.DetectedErrorState === 7) {
+    }
+    // Priority 2: Cover / Door Open
+    else if (
+      (printerState & PRINTER_STATE_DOOR_OPEN) !== 0 ||
+      detectedError === 7 ||
+      jobStatusStr.includes('door')
+    ) {
       code = 'DOOR_OPEN';
-      message = 'Pintu printer terbuka (Cover Open)';
+      message = 'Penutup pintu printer terbuka (Door Open)';
       ready = false;
-    } else if (data.DetectedErrorState === 8) {
+    }
+    // Priority 3: Paper Out / Problem
+    else if (
+      (printerState & PRINTER_STATE_PAPER_OUT) !== 0 ||
+      (printerState & PRINTER_STATE_PAPER_PROBLEM) !== 0 ||
+      detectedError === 4 ||
+      jobStatusStr.includes('paperout') ||
+      jobStatusStr.includes('paper out')
+    ) {
+      code = 'PAPER_OUT';
+      message = 'Kertas foto habis di dalam tray (Paper Out)';
+      ready = false;
+    }
+    // Priority 4: Ribbon / Toner Out
+    else if (
+      (printerState & PRINTER_STATE_NO_TONER) !== 0 ||
+      detectedError === 6 ||
+      jobStatusStr.includes('toner') ||
+      jobStatusStr.includes('ribbon')
+    ) {
+      code = 'RIBBON_OUT';
+      message = 'Pita ribbon habis / perlu diganti (Ribbon Out)';
+      ready = false;
+    }
+    // Priority 5: Paper Jam
+    else if (
+      (printerState & PRINTER_STATE_PAPER_JAM) !== 0 ||
+      detectedError === 8 ||
+      jobStatusStr.includes('jam')
+    ) {
       code = 'JAMMED';
       message = 'Kertas macet di dalam printer (Paper Jam)';
       ready = false;
-    } else if (data.DetectedErrorState === 3) {
-      code = 'LOW_PAPER';
-      message = 'Kertas hampir habis (< 20 lembar)';
-      ready = true; // Still ready, but warning
-    } else if (data.ExtendedPrinterStatus === 7) {
-      code = 'OFFLINE';
-      message = 'Printer offline';
-      ready = false;
-    } else if (data.ExtendedPrinterStatus === 9 || data.HasJobError) {
+    }
+    // Priority 6: Spooler Error or User Intervention Required
+    else if (
+      (printerState & PRINTER_STATE_USER_INTERVENTION) !== 0 ||
+      (printerState & PRINTER_STATE_ERROR) !== 0 ||
+      extendedStatus === 9 ||
+      data.HasJobError
+    ) {
       code = 'ERROR';
-      message = 'Antrean spooler printer bermasalah';
+      message = 'Printer membutuhkan intervensi operator (Error Spooler)';
       ready = false;
-    } else if (data.PrinterStatus === 4) {
+    }
+    // Priority 7: Low Paper Warning (Still Ready to Print)
+    else if (
+      (printerState & PRINTER_STATE_TONER_LOW) !== 0 ||
+      detectedError === 3
+    ) {
+      code = 'LOW_PAPER';
+      message = 'Kertas atau pita ribbon hampir habis (< 20 lembar)';
+      ready = true;
+    }
+    // Priority 8: Busy / Printing
+    else if (
+      (printerState & PRINTER_STATE_BUSY) !== 0 ||
+      (printerState & PRINTER_STATE_PRINTING) !== 0 ||
+      data.PrinterStatus === 4
+    ) {
       code = 'BUSY';
-      message = 'Sedang mencetak antrean lain...';
+      message = 'Sedang memproses antrean cetak...';
       ready = true;
     }
 
@@ -248,13 +338,34 @@ export function registerPrintHandlers(config: PrintServiceConfig): void {
   // Initialize printer on startup
   const printers = listPrintersSync();
   defaultPrinterName = config.defaultPrinter || autoDetectPrinter(printers);
+
+  const priorities = ['DNP', 'Citizen', 'HiTi', 'RX1', 'DS620', 'CX-02', 'P525L', 'Mitsubishi'];
+  const hasPhotoHardware = printers.some((p) =>
+    priorities.some((keyword) => p.toLowerCase().includes(keyword.toLowerCase()))
+  );
+
+  // Auto-enable bypass if no dedicated photo printer hardware is attached
+  if (config.bypassPrinter !== undefined) {
+    isBypassMode = config.bypassPrinter;
+  } else if (!hasPhotoHardware) {
+    isBypassMode = true;
+    console.log('[PrintService] ⚠️ No dedicated photo printer detected. Auto-enabling BYPASS / SIMULATION MODE.');
+  } else {
+    isBypassMode = false;
+  }
+
   console.log(`[PrintService] Detected printers: [${printers.join(', ')}]`);
   console.log(`[PrintService] Default printer: ${defaultPrinterName || 'NONE'}`);
+  console.log(`[PrintService] Bypass Mode: ${isBypassMode ? 'ENABLED (Simulated Spooler)' : 'DISABLED (Hardware Gate)'}`);
 
   // ─── Print ─────────────────────────────────────────────
   ipcMain.handle(
     'printer:print',
     async (_event, imagePath: string, copies: number = 1) => {
+      if (isBypassMode) {
+        console.log(`[PrintService] [BYPASS] Simulated print job: ${path.basename(imagePath)} (x${copies})`);
+        return { success: true };
+      }
       if (!defaultPrinterName) {
         return { success: false, error: 'No printer configured or detected' };
       }
@@ -264,6 +375,15 @@ export function registerPrintHandlers(config: PrintServiceConfig): void {
 
   // ─── Printer Health & Pre-Session Gate ──────────────────
   ipcMain.handle('printer:health', async () => {
+    if (isBypassMode) {
+      return {
+        ready: true,
+        name: defaultPrinterName ? `${defaultPrinterName} (Bypass Mode)` : 'Virtual Photo Printer (Bypass Dev Mode)',
+        code: 'OK',
+        message: 'Printer siap (Bypass / Virtual Mode)',
+        checkedAt: Date.now(),
+      };
+    }
     if (!defaultPrinterName) {
       return {
         ready: false,
@@ -278,6 +398,9 @@ export function registerPrintHandlers(config: PrintServiceConfig): void {
 
   // ─── Legacy Printer Status ─────────────────────────────
   ipcMain.handle('printer:status', async () => {
+    if (isBypassMode) {
+      return { ready: true, name: 'Virtual Printer (Bypass)' };
+    }
     if (!defaultPrinterName) {
       return { ready: false, name: 'None' };
     }
@@ -298,11 +421,20 @@ export function registerPrintHandlers(config: PrintServiceConfig): void {
 
   // ─── Operator Reprint Last Photo ───────────────────────
   ipcMain.handle('printer:reprint-last', async () => {
+    const lastSession = getLastSession();
+    if (isBypassMode) {
+      console.log(`[PrintService] [BYPASS] Simulated reprint of session: ${lastSession?.id || 'none'}`);
+      return {
+        success: true,
+        sessionId: lastSession?.id || 'simulated',
+        compositePath: lastSession?.compositePath || 'simulated.jpg',
+      };
+    }
+
     if (!defaultPrinterName) {
       return { success: false, error: 'Tidak ada printer terpasang' };
     }
 
-    const lastSession = getLastSession();
     if (!lastSession || !lastSession.compositePath) {
       return { success: false, error: 'Tidak ada riwayat foto komposit terakhir' };
     }
@@ -323,6 +455,11 @@ export function registerPrintHandlers(config: PrintServiceConfig): void {
 
   // ─── Operator Cut / Calibration Test ───────────────────
   ipcMain.handle('printer:cut-test', async () => {
+    if (isBypassMode) {
+      console.log('[PrintService] [BYPASS] Simulated paper cut test');
+      return { success: true };
+    }
+
     if (!defaultPrinterName) {
       return { success: false, error: 'Tidak ada printer terpasang' };
     }
@@ -350,5 +487,27 @@ export function registerPrintHandlers(config: PrintServiceConfig): void {
       return { success: false, error: err.message };
     }
   });
+
+  // ─── Set Bypass Mode ───────────────────────────────────
+  ipcMain.handle('printer:set-bypass', async (_event, enabled: boolean) => {
+    isBypassMode = Boolean(enabled);
+    console.log(`[PrintService] Bypass mode dynamically set to: ${isBypassMode}`);
+    return { success: true, bypass: isBypassMode };
+  });
+
+  // Start background health polling every 3.5s
+  if (backgroundHealthTimer) clearInterval(backgroundHealthTimer);
+  backgroundHealthTimer = setInterval(() => {
+    if (!isBypassMode && defaultPrinterName) {
+      queryPrinterHealth(defaultPrinterName).catch(() => {});
+    }
+  }, 3500);
+}
+
+export function stopPrintService(): void {
+  if (backgroundHealthTimer) {
+    clearInterval(backgroundHealthTimer);
+    backgroundHealthTimer = null;
+  }
 }
 

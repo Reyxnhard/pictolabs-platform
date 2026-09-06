@@ -7,6 +7,9 @@ import * as fs from 'fs';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const express = require('express');
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
   app.enableCors({ origin: '*' });
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
 
@@ -16,9 +19,13 @@ async function bootstrap() {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
 
-  // Serve static assets at /uploads/
+  // Serve static assets at /uploads/ with HTTP 206 Partial Content (Range) support
   app.useStaticAssets(uploadsDir, {
     prefix: '/uploads/',
+    setHeaders: (res) => {
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+    },
   });
 
   const port = process.env.PORT || 4000;

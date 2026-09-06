@@ -33,27 +33,71 @@ export default function RenderScreen({ session, updateSession, navigate }: Scree
       hasRendered.current = true;
 
       try {
-        const frameId = session.frameId || '4R';
+        const frameId = session.frameDesignId || session.frameId || '2R';
         const filter = session.filter || 'none';
         
         const cleanPhotos = session.photos.map((p: string) => p.replace('file://', ''));
 
-        const outputPath = await kiosk.render.composite(
+        const result = await kiosk.render.composite(
           cleanPhotos,
           frameId,
           filter
         );
 
-        const compositeUrl = outputPath.startsWith('data:') 
-          ? outputPath 
-          : `file://${outputPath}`;
+        const dataUrl = typeof result === 'string' ? result : result.dataUrl;
+        const filePath = typeof result === 'string' ? '' : result.filePath;
+        const compositeUrl = dataUrl.startsWith('data:') 
+          ? dataUrl 
+          : `file://${dataUrl}`;
 
-        updateSession({ compositeUrl });
+        // Generate animated looping GIF from poses
+        let gifPath: string | undefined;
+        let gifUrl: string | undefined;
+        try {
+          if (typeof kiosk?.livePhoto?.generateGif === 'function') {
+            const gifRes = await kiosk.livePhoto.generateGif(session.sessionId || 'session', cleanPhotos);
+            if (gifRes && gifRes.success) {
+              gifPath = gifRes.gifPath;
+              gifUrl = gifRes.mp4Path || gifRes.gifPath;
+              console.log('[RenderScreen] ✓ GIF loop generated successfully:', gifPath);
+            }
+          }
+        } catch (gErr) {
+          console.warn('[RenderScreen] GIF generation warning:', gErr);
+        }
+
+        // Save session directly to SQLite (WAL Mode) via SyncEngine
+        let createdSessionId: string | undefined;
+        try {
+          const sessionRecord = await kiosk.session.create({
+            id: session.sessionId,
+            frameId,
+            filter,
+            photos: cleanPhotos,
+            compositePath: filePath,
+            liveVideoPath: session.liveVideoPath,
+            liveVideoPaths: session.liveVideoPaths,
+            gifPath,
+            printStatus: 'pending',
+          });
+          createdSessionId = sessionRecord?.id || session.sessionId;
+          console.log('[RenderScreen] ✓ Session saved in SQLite & upload queued:', createdSessionId);
+        } catch (sErr) {
+          console.warn('[RenderScreen] SQLite session creation warning:', sErr);
+        }
+
+        updateSession({ 
+          compositeUrl, 
+          compositePath: filePath,
+          gifPath,
+          gifUrl,
+          sessionId: createdSessionId,
+        });
         
-        setStageText('Selesai! Menyiapkan mesin pencetak...');
+        setStageText('Selesai! Membuka halaman unduh dan mencetak foto...');
         setProgress(100);
         clearInterval(interval);
-        setTimeout(() => navigate('print'), 800);
+        setTimeout(() => navigate('qr'), 600);
       } catch (err) {
         console.error('Render error:', err);
         setError('Gagal memproses foto. Silakan hubungi operator.');

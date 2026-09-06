@@ -24,22 +24,25 @@ export default function PaymentScreen({ navigate, session, onOpenAdmin }: Screen
     return () => clearInterval(timer);
   }, [timeLeft, navigate]);
 
+  // Check if developer has enabled printer bypass
+  const isBypass = typeof window !== 'undefined' && localStorage.getItem('pictolabs-bypass-printer') !== 'false';
+
   // Initial printer health check
   useEffect(() => {
     kiosk.printer.getHealth().then((h) => {
       setPrinterHealth(h);
-      if (!h.ready) {
+      if (!h.ready && !isBypass) {
         setPrinterBlockedError(h.message || 'Printer sedang kehabisan kertas.');
       }
     }).catch(console.warn);
-  }, []);
+  }, [isBypass]);
 
   const handleSelectPayment = async () => {
     setIsCheckingPrinter(true);
     try {
       const health = await kiosk.printer.getHealth();
       setPrinterHealth(health);
-      if (!health.ready) {
+      if (!health.ready && !isBypass) {
         setPrinterBlockedError(
           `Transaksi dibatalkan: ${health.message || 'Printer sedang offline atau kehabisan kertas/tinta'}`
         );
@@ -47,12 +50,12 @@ export default function PaymentScreen({ navigate, session, onOpenAdmin }: Screen
       }
       setPrinterBlockedError(null);
       setIsPaid(true);
-      setTimeout(() => navigate('capture'), 1500);
+      setTimeout(() => navigate('frame-design'), 1500);
     } catch (err: any) {
       console.error('[PaymentScreen] Printer check failed:', err);
       // Fallback: continue if unable to contact printer service in dev
       setIsPaid(true);
-      setTimeout(() => navigate('capture'), 1500);
+      setTimeout(() => navigate('frame-design'), 1500);
     } finally {
       setIsCheckingPrinter(false);
     }
@@ -110,7 +113,7 @@ export default function PaymentScreen({ navigate, session, onOpenAdmin }: Screen
             ✓
           </div>
           <h2 className="font-display text-3xl font-extrabold text-slate-800 mb-2">PEMBAYARAN SUKSES!</h2>
-          <p className="text-slate-500 font-medium">Mempersiapkan kamera foto...</p>
+          <p className="text-slate-500 font-medium">Membuka katalog desain frame...</p>
         </div>
       ) : (
         <div className="w-full max-w-2xl px-8 animate-slide-up flex flex-col items-center">
@@ -120,7 +123,7 @@ export default function PaymentScreen({ navigate, session, onOpenAdmin }: Screen
               ⏱ SISA WAKTU: {mins}:{secs.toString().padStart(2, '0')}
             </div>
             <h2 className="font-display text-4xl font-black text-slate-800 tracking-tight">METODE PEMBAYARAN</h2>
-            <p className="text-slate-500 font-medium mt-1">Layout: {session.frameName || 'Standard Photo'}</p>
+            <p className="text-slate-500 font-medium mt-1">Produk: {session.productName || session.frameName || 'Photostrip 2R'}</p>
           </div>
 
           {/* Price Header */}

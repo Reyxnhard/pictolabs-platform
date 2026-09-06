@@ -11,6 +11,8 @@ export interface KioskConfig {
   enableQRIS: boolean;
   activeLayout: string;
   apiBaseUrl?: string;
+  cameraPreview?: 'mirror' | 'original'; // Live view viewfinder during countdown ('mirror' default)
+  cameraResult?: 'mirror' | 'original';  // Captured photo & live photo video ('mirror' default)
 }
 
 export const DEFAULT_KIOSK_CONFIG: KioskConfig = {
@@ -22,7 +24,10 @@ export const DEFAULT_KIOSK_CONFIG: KioskConfig = {
   enableVoucher: true,
   enableQRIS: true,
   activeLayout: '4R',
+  cameraPreview: 'mirror',
+  cameraResult: 'mirror',
 };
+
 
 interface KioskConfigContextType {
   config: KioskConfig;

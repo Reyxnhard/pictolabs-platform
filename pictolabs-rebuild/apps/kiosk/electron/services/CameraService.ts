@@ -21,6 +21,7 @@ import * as os from 'os';
 interface CameraServiceConfig {
   outputDir: string;
   preferCanon: boolean;
+  dataDir?: string;
 }
 
 let canonAddon: any = null;
@@ -385,11 +386,25 @@ export function registerCameraHandlers(config: CameraServiceConfig): void {
     }
   });
 
+function readKioskConfig(dataDir?: string): any {
+  if (!dataDir) return {};
+  try {
+    const configPath = path.join(dataDir, 'kiosk-config.json');
+    if (fs.existsSync(configPath)) {
+      return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    }
+  } catch {}
+  return {};
+}
+
   // ─── Capture Photo ─────────────────────────────────────
-  ipcMain.handle('camera:capture', async () => {
+  ipcMain.handle('camera:capture', async (_event, options?: { mirrorResult?: boolean }) => {
     const outputDir = getOutputDir(config);
     const filename = `capture_${Date.now()}.jpg`;
     const outputPath = path.join(outputDir, filename);
+
+    const savedConfig = readKioskConfig(config.dataDir);
+    const shouldMirror = options?.mirrorResult ?? (savedConfig?.cameraResult !== 'original');
 
     // Refresh camera connection if needed
     if (hasCanon && !activeCamera) {
@@ -398,7 +413,7 @@ export function registerCameraHandlers(config: CameraServiceConfig): void {
 
     if (hasCanon && activeCamera) {
       try {
-        console.log(`[CameraService] Preparing shutter for ${activeCamera.description}...`);
+        console.log(`[CameraService] Preparing shutter for ${activeCamera.description} (mirror: ${shouldMirror})...`);
 
         // STEP 1: Pause LiveView interval so USB bus is 100% dedicated to image transfer
         if (liveViewInterval) {
@@ -450,9 +465,21 @@ export function registerCameraHandlers(config: CameraServiceConfig): void {
           startLiveViewInterval();
         }
 
-        // STEP 5: Return resulting image
+        // STEP 5: Return resulting image (with horizontal mirror flop if enabled)
         if (downloadedSuccessfully && fs.existsSync(outputPath)) {
-          const fileBuffer = fs.readFileSync(outputPath);
+          let fileBuffer = fs.readFileSync(outputPath);
+
+          if (shouldMirror) {
+            try {
+              const sharp = require('sharp');
+              fileBuffer = await sharp(fileBuffer).flop().jpeg({ quality: 95 }).toBuffer();
+              fs.writeFileSync(outputPath, fileBuffer);
+              console.log(`[CameraService] ✓ Mirrored (flop) photo saved to: ${outputPath}`);
+            } catch (mirrorErr: any) {
+              console.warn('[CameraService] Photo mirror error:', mirrorErr.message);
+            }
+          }
+
           const base64Data = fileBuffer.toString('base64');
           return `data:image/jpeg;base64,${base64Data}`;
         }
@@ -460,7 +487,21 @@ export function registerCameraHandlers(config: CameraServiceConfig): void {
         // Mode C fallback: If file download failed, use last LiveView sensor frame
         if (lastLiveViewDataUrl) {
           console.log('[CameraService] Using last LiveView sensor frame as photo fallback');
-          return lastLiveViewDataUrl;
+          let finalData = lastLiveViewDataUrl;
+          if (shouldMirror) {
+            try {
+              const sharp = require('sharp');
+              const base64 = lastLiveViewDataUrl.replace(/^data:image\/\w+;base64,/, '');
+              const buf = Buffer.from(base64, 'base64');
+              const mirrored = await sharp(buf).flop().jpeg({ quality: 95 }).toBuffer();
+              fs.writeFileSync(outputPath, mirrored);
+              finalData = `data:image/jpeg;base64,${mirrored.toString('base64')}`;
+            } catch (_) {}
+          } else {
+            const base64 = lastLiveViewDataUrl.replace(/^data:image\/\w+;base64,/, '');
+            fs.writeFileSync(outputPath, Buffer.from(base64, 'base64'));
+          }
+          return finalData;
         }
 
       } catch (err) {
@@ -480,7 +521,15 @@ export function registerCameraHandlers(config: CameraServiceConfig): void {
     // Absolute fallback if no Canon DSLR is connected
     console.log('[CameraService] Generating simulated fallback capture');
     await generateTestImage(outputPath);
-    const fileBuffer = fs.readFileSync(outputPath);
+    let fileBuffer = fs.readFileSync(outputPath);
+    if (shouldMirror) {
+      try {
+        const sharp = require('sharp');
+        fileBuffer = await sharp(fileBuffer).flop().jpeg({ quality: 95 }).toBuffer();
+        fs.writeFileSync(outputPath, fileBuffer);
+      } catch (_) {}
+    }
     return `data:image/jpeg;base64,${fileBuffer.toString('base64')}`;
   });
+
 }

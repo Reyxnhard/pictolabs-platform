@@ -1,8 +1,10 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { io, Socket } from 'socket.io-client';
 import Database from 'better-sqlite3';
+import { getCachedPrinterHealth } from './PrintService';
 
 /**
  * SyncEngine — Enterprise Embedded SQLite Session Storage + Cloud Sync Queue.
@@ -29,6 +31,12 @@ export interface Session {
   filter: string;
   photos: string[];
   compositePath?: string;
+  liveVideoPath?: string;
+  liveVideoPaths?: string[];
+  liveVideoUrl?: string;
+  liveVideoUrls?: string[];
+  gifPath?: string;
+  gifUrl?: string;
   printStatus: 'pending' | 'printed' | 'failed';
   synced: boolean;
   uploaded?: boolean;
@@ -39,7 +47,7 @@ export interface UploadQueueItem {
   id: string;
   sessionId: string;
   filePath: string;
-  fileType: 'composite' | 'raw';
+  fileType: 'composite' | 'raw' | 'video';
   status: 'PENDING' | 'UPLOADING' | 'COMPLETED' | 'FAILED';
   attempts: number;
   errorMessage?: string;
@@ -87,6 +95,8 @@ function initDatabase(dataDir: string): void {
       filter TEXT NOT NULL,
       photos TEXT NOT NULL,
       composite_path TEXT,
+      live_video_path TEXT,
+      live_video_url TEXT,
       print_status TEXT NOT NULL DEFAULT 'pending',
       synced INTEGER NOT NULL DEFAULT 0,
       uploaded INTEGER NOT NULL DEFAULT 0,
@@ -111,10 +121,24 @@ function initDatabase(dataDir: string): void {
     CREATE INDEX IF NOT EXISTS idx_upload_queue_status ON upload_queue(status);
   `);
 
+  // Migrate existing schema if live_video columns don't exist yet
+  try {
+    db.exec('ALTER TABLE sessions ADD COLUMN live_video_path TEXT;');
+  } catch (_) {}
+  try {
+    db.exec('ALTER TABLE sessions ADD COLUMN live_video_url TEXT;');
+  } catch (_) {}
+  try {
+    db.exec('ALTER TABLE sessions ADD COLUMN live_video_paths TEXT;');
+  } catch (_) {}
+  try {
+    db.exec('ALTER TABLE sessions ADD COLUMN live_video_urls TEXT;');
+  } catch (_) {}
+
   // Prepare statements
   stmtInsertSession = db.prepare(`
-    INSERT INTO sessions (id, created_at, frame_id, filter, photos, composite_path, print_status, synced, uploaded, remote_url)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO sessions (id, created_at, frame_id, filter, photos, composite_path, live_video_path, print_status, synced, uploaded, remote_url, live_video_url)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   stmtUpdateSession = db.prepare(`
@@ -123,10 +147,12 @@ function initDatabase(dataDir: string): void {
         filter = COALESCE(?, filter),
         photos = COALESCE(?, photos),
         composite_path = COALESCE(?, composite_path),
+        live_video_path = COALESCE(?, live_video_path),
         print_status = COALESCE(?, print_status),
         synced = COALESCE(?, synced),
         uploaded = COALESCE(?, uploaded),
-        remote_url = COALESCE(?, remote_url)
+        remote_url = COALESCE(?, remote_url),
+        live_video_url = COALESCE(?, live_video_url)
     WHERE id = ?
   `);
 
@@ -201,6 +227,10 @@ function rowToSession(row: any): Session {
     filter: row.filter,
     photos: JSON.parse(row.photos || '[]'),
     compositePath: row.composite_path || undefined,
+    liveVideoPath: row.live_video_path || undefined,
+    liveVideoPaths: row.live_video_paths ? JSON.parse(row.live_video_paths) : row.live_video_path ? [row.live_video_path] : [],
+    liveVideoUrl: row.live_video_url || undefined,
+    liveVideoUrls: row.live_video_urls ? JSON.parse(row.live_video_urls) : row.live_video_url ? [row.live_video_url] : [],
     printStatus: row.print_status as Session['printStatus'],
     synced: Boolean(row.synced),
     uploaded: Boolean(row.uploaded),
@@ -208,9 +238,12 @@ function rowToSession(row: any): Session {
   };
 }
 
-export function createSession(data: Omit<Session, 'id' | 'createdAt' | 'synced'>): Session {
-  const id = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+export function createSession(data: Omit<Session, 'id' | 'createdAt' | 'synced'> & { id?: string }): Session {
+  const id = data.id || `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const createdAt = new Date().toISOString();
+
+  const liveVideoPaths = data.liveVideoPaths || (data.liveVideoPath ? [data.liveVideoPath] : []);
+  const primaryVideoPath = liveVideoPaths[0] || data.liveVideoPath || null;
 
   if (db && stmtInsertSession) {
     stmtInsertSession.run(
@@ -220,24 +253,89 @@ export function createSession(data: Omit<Session, 'id' | 'createdAt' | 'synced'>
       data.filter,
       JSON.stringify(data.photos || []),
       data.compositePath || null,
+      primaryVideoPath,
       data.printStatus || 'pending',
       0,
       0,
+      null,
       null
     );
 
-    // If a composite file path is present, automatically enqueue for Cloudflare R2 upload!
+    // Save live_video_paths array
+    if (liveVideoPaths.length > 0) {
+      try {
+        db.prepare('UPDATE sessions SET live_video_paths = ? WHERE id = ?').run(
+          JSON.stringify(liveVideoPaths),
+          id
+        );
+      } catch (_) {}
+    }
+
+    // 1. Composite file upload
     if (data.compositePath && fs.existsSync(data.compositePath)) {
       enqueueUpload(id, data.compositePath, 'composite');
     }
+
+    // 2. Individual pose photos upload
+    if (Array.isArray(data.photos) && data.photos.length > 0) {
+      const outputDir = data.compositePath ? path.dirname(data.compositePath) : path.join(os.tmpdir(), 'pictolabs-captures');
+      if (!fs.existsSync(outputDir)) {
+        try { fs.mkdirSync(outputDir, { recursive: true }); } catch (_) {}
+      }
+      data.photos.forEach((photo, idx) => {
+        const poseNum = idx + 1;
+        let posePath: string | null = null;
+        if (typeof photo === 'string' && photo.startsWith('data:image')) {
+          const base64Data = photo.replace(/^data:image\/\w+;base64,/, '');
+          posePath = path.join(outputDir, `photo_${id}_pose_${poseNum}.jpg`);
+          try {
+            fs.writeFileSync(posePath, Buffer.from(base64Data, 'base64'));
+          } catch (_) {}
+        } else if (typeof photo === 'string') {
+          const clean = photo.replace(/^file:\/\/\/?/, '');
+          if (fs.existsSync(clean)) {
+            const ext = path.extname(clean) || '.jpg';
+            posePath = path.join(outputDir, `photo_${id}_pose_${poseNum}${ext}`);
+            try {
+              if (clean !== posePath) {
+                fs.copyFileSync(clean, posePath);
+              }
+            } catch (_) {
+              posePath = clean;
+            }
+          }
+        }
+        if (posePath && fs.existsSync(posePath)) {
+          enqueueUpload(id, posePath, 'raw');
+        }
+      });
+    }
+
+    // 3. Live Photo video file paths upload
+    if (liveVideoPaths.length > 0) {
+      for (const vPath of liveVideoPaths) {
+        if (vPath && fs.existsSync(vPath)) {
+          enqueueUpload(id, vPath, 'video');
+        }
+      }
+    } else if (data.liveVideoPath && fs.existsSync(data.liveVideoPath)) {
+      enqueueUpload(id, data.liveVideoPath, 'video');
+    }
+
+    // 4. Looping GIF / motion video upload
+    if (data.gifPath && fs.existsSync(data.gifPath)) {
+      enqueueUpload(id, data.gifPath, 'video');
+    }
   }
 
-  console.log(`[SyncEngine] ✓ Session created in SQLite: ${id}`);
+  console.log(`[SyncEngine] ✓ Session created in SQLite: ${id} (${liveVideoPaths.length} Live Photo clips)`);
   return {
     ...data,
     id,
     createdAt,
     synced: false,
+    uploaded: false,
+    liveVideoPaths,
   };
 }
 
@@ -280,15 +378,36 @@ export function listSessions(): Session[] {
   return rows.map(rowToSession);
 }
 
-export function enqueueUpload(sessionId: string, filePath: string, fileType: 'composite' | 'raw'): void {
+export function enqueueUpload(sessionId: string, filePath: string, fileType: 'composite' | 'raw' | 'video'): void {
   if (!db || !stmtEnqueueUpload) return;
-  const id = `upload_${sessionId}_${fileType}`;
+  const filename = path.basename(filePath);
+  const id = `upload_${sessionId}_${fileType}_${filename}`;
   const now = new Date().toISOString();
   stmtEnqueueUpload.run(id, sessionId, filePath, fileType, now, now);
-  console.log(`[SyncEngine] Enqueued ${fileType} for Cloudflare R2 upload (Session: ${sessionId})`);
+  console.log(`[SyncEngine] Enqueued ${fileType} (${filename}) for upload (Session: ${sessionId})`);
 }
 
 // ─── Asynchronous Cloudflare R2 / Cloud Upload Worker ───────
+function resolveLanDownloadUrl(url: string, baseUrl: string): string {
+  let fullUrl = url.startsWith('http')
+    ? url
+    : `${baseUrl}${url.startsWith('/') ? '' : '/'}${url}`;
+
+  // In local development, if fullUrl points to localhost/127.0.0.1, resolve to LAN IP
+  // so scanning the QR code on a smartphone connects directly!
+  if (fullUrl.includes('localhost') || fullUrl.includes('127.0.0.1')) {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+      for (const net of interfaces[name] || []) {
+        if (net.family === 'IPv4' && !net.internal && !net.address.startsWith('169.254')) {
+          return fullUrl.replace('localhost', net.address).replace('127.0.0.1', net.address);
+        }
+      }
+    }
+  }
+  return fullUrl;
+}
+
 async function processUploadQueue(): Promise<void> {
   if (isUploading || !config.apiBaseUrl || !db || !stmtGetPendingUploads || !stmtUpdateUploadStatus) {
     return;
@@ -326,15 +445,36 @@ async function processUploadQueue(): Promise<void> {
 
       if (response.ok) {
         const result = (await response.json()) as { url?: string; publicUrl?: string };
-        const remoteUrl = result.publicUrl || result.url || `${config.apiBaseUrl}/uploads/${filename}`;
+        const rawUrl = result.publicUrl || result.url || `/uploads/${filename}`;
+        const remoteUrl = resolveLanDownloadUrl(rawUrl, config.apiBaseUrl || 'http://localhost:4000');
         
         stmtUpdateUploadStatus.run('COMPLETED', null, remoteUrl, now, item.id);
         
-        // Update session uploaded flag
+        // Update session uploaded flags & URLs
         if (db) {
-          db.prepare('UPDATE sessions SET uploaded = 1, remote_url = ? WHERE id = ?').run(remoteUrl, item.session_id);
+          if (item.file_type === 'video') {
+            try {
+              const row = db.prepare('SELECT live_video_urls FROM sessions WHERE id = ?').get(item.session_id) as any;
+              let urls: string[] = [];
+              try {
+                urls = JSON.parse(row?.live_video_urls || '[]');
+              } catch (_) {}
+              if (!urls.includes(remoteUrl)) {
+                urls.push(remoteUrl);
+              }
+              db.prepare('UPDATE sessions SET live_video_urls = ?, live_video_url = ? WHERE id = ?').run(
+                JSON.stringify(urls),
+                remoteUrl,
+                item.session_id
+              );
+            } catch (_) {
+              db.prepare('UPDATE sessions SET live_video_url = ? WHERE id = ?').run(remoteUrl, item.session_id);
+            }
+          } else {
+            db.prepare('UPDATE sessions SET uploaded = 1, remote_url = ? WHERE id = ?').run(remoteUrl, item.session_id);
+          }
         }
-        console.log(`[SyncEngine] ✓ Uploaded successfully: ${remoteUrl}`);
+        console.log(`[SyncEngine] ✓ Uploaded ${item.file_type} successfully: ${remoteUrl}`);
       } else {
         const errText = await response.text();
         stmtUpdateUploadStatus.run('FAILED', `HTTP ${response.status}: ${errText.slice(0, 100)}`, null, now, item.id);
@@ -425,14 +565,17 @@ function setupSocketConnection(): void {
     }
   });
 
-  // Start health ping
+  // Start health ping (transmits real-time hardware telemetry to Cloud Backend)
   healthPingInterval = setInterval(() => {
     if (socket?.connected) {
+      const pHealth = getCachedPrinterHealth();
       socket.emit('HEALTH_PING', {
         cpuTemp: 44.5,
-        paperCount: 350,
+        paperCount: pHealth.code === 'PAPER_OUT' ? 0 : 350,
         cameraState: 'OK',
-        printerState: 'READY',
+        printerState: pHealth.code,
+        printerReady: pHealth.ready,
+        printerMessage: pHealth.message,
       });
     }
   }, 10_000);
@@ -493,14 +636,26 @@ export function registerSyncHandlers(engineConfig: SyncEngineConfig): void {
     'session:create',
     async (
       _event,
-      data: { frameId: string; filter: string; photos: string[]; printStatus: string; compositePath?: string }
+      data: {
+        id?: string;
+        frameId: string;
+        filter: string;
+        photos: string[];
+        printStatus?: string;
+        compositePath?: string;
+        liveVideoPath?: string;
+        liveVideoPaths?: string[];
+      }
     ) => {
       return createSession({
+        id: data.id,
         frameId: data.frameId,
         filter: data.filter,
         photos: data.photos,
         printStatus: (data.printStatus as Session['printStatus']) || 'pending',
         compositePath: data.compositePath,
+        liveVideoPath: data.liveVideoPath,
+        liveVideoPaths: data.liveVideoPaths,
       });
     }
   );
@@ -518,6 +673,10 @@ export function registerSyncHandlers(engineConfig: SyncEngineConfig): void {
 
   ipcMain.handle('session:get-last', async () => {
     return getLastSession();
+  });
+
+  ipcMain.handle('session:get-download-url', async (_event, sessionId: string) => {
+    return resolveLanDownloadUrl(`/d/${sessionId}`, config.apiBaseUrl || 'http://localhost:4000');
   });
 }
 

@@ -4,6 +4,8 @@ import { AuthModule } from './auth/auth.module';
 import { BoothsModule } from './booths/booths.module';
 import { GatewayModule } from './gateway/gateway.module';
 import { StorageModule } from './storage/storage.module';
+import { SessionsModule } from './sessions/sessions.module';
+import { GalleryModule } from './gallery/gallery.module';
 
 @Module({
   imports: [
@@ -12,6 +14,8 @@ import { StorageModule } from './storage/storage.module';
     BoothsModule,
     GatewayModule,
     StorageModule,
+    SessionsModule,
+    GalleryModule,
   ],
 })
 export class AppModule {}

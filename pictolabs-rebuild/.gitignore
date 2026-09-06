@@ -6,3 +6,8 @@ dist/
 *.env.local
 .DS_Store
 Thumbs.db
+apps/backend/public/uploads/*
+!apps/backend/public/uploads/.gitkeep
+*.db
+*.db-wal
+*.db-shm

@@ -14,8 +14,11 @@ const kioskApi = {
       ipcRenderer.invoke('camera:start-live-view'),
     stopLiveView: (): Promise<void> =>
       ipcRenderer.invoke('camera:stop-live-view'),
-    capturePhoto: (): Promise<string> =>
-      ipcRenderer.invoke('camera:capture'),
+    capturePhoto: (options?: { mirrorResult?: boolean }): Promise<string> =>
+      ipcRenderer.invoke('camera:capture', options),
+
+    getStatus: (): Promise<{ isCanonConnected: boolean; cameraModel: string | null; isLiveView: boolean }> =>
+      ipcRenderer.invoke('camera:status'),
     /** Subscribe to live-view frame stream. Returns unsubscribe fn. */
     onLiveViewFrame: (cb: (frame: string) => void): (() => void) => {
       const handler = (_event: Electron.IpcRendererEvent, frame: string) =>
@@ -39,6 +42,8 @@ const kioskApi = {
       ipcRenderer.invoke('printer:reprint-last'),
     cutTest: (): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('printer:cut-test'),
+    setBypass: (enabled: boolean): Promise<{ success: boolean; bypass: boolean }> =>
+      ipcRenderer.invoke('printer:set-bypass', enabled),
   },
 
   // ─── Render Engine ─────────────────────────────────────
@@ -47,16 +52,47 @@ const kioskApi = {
       photos: string[],
       frameId: string,
       filter: string
-    ): Promise<string> =>
+    ): Promise<{ dataUrl: string; filePath: string } | string> =>
       ipcRenderer.invoke('render:composite', photos, frameId, filter),
+  },
+
+  // ─── Live Photo ─────────────────────────────────────────
+  livePhoto: {
+    saveClip: (sessionId: string, poseIndex: number, data: string | Uint8Array | ArrayBuffer): Promise<{ success: boolean; filePath: string; mp4Path?: string }> =>
+      ipcRenderer.invoke('livephoto:save-clip', sessionId, poseIndex, data),
+    saveClipBuffer: (sessionId: string, poseIndex: number, buffer: Uint8Array | ArrayBuffer): Promise<{ success: boolean; filePath: string; mp4Path?: string }> =>
+      ipcRenderer.invoke('livephoto:save-clip-buffer', sessionId, poseIndex, buffer),
+    finalize: (sessionId: string, totalPoses?: number): Promise<{ success: boolean; videoPaths: string[]; videoPath: string }> =>
+      ipcRenderer.invoke('livephoto:finalize', sessionId, totalPoses),
+    generate: (sessionId: string, totalPoses?: number): Promise<{ success: boolean; videoPaths: string[]; videoPath: string }> =>
+      ipcRenderer.invoke('livephoto:finalize', sessionId, totalPoses),
+    generateGif: (sessionId: string, photoPaths: string[]): Promise<{ success: boolean; gifPath?: string; mp4Path?: string }> =>
+      ipcRenderer.invoke('livephoto:generate-gif', sessionId, photoPaths),
+    getClipData: (filePath: string): Promise<string | null> =>
+      ipcRenderer.invoke('livephoto:get-clip-data', filePath),
   },
 
   // ─── Sessions ───────────────────────────────────────────
   session: {
+    create: (data: {
+      id?: string;
+      frameId: string;
+      filter: string;
+      photos: string[];
+      printStatus?: string;
+      compositePath?: string;
+      liveVideoPath?: string;
+      liveVideoPaths?: string[];
+    }): Promise<any> =>
+      ipcRenderer.invoke('session:create', data),
+    update: (id: string, update: any): Promise<any> =>
+      ipcRenderer.invoke('session:update', id, update),
     getLast: (): Promise<any> =>
       ipcRenderer.invoke('session:get-last'),
     list: (): Promise<any[]> =>
       ipcRenderer.invoke('session:list'),
+    getDownloadUrl: (sessionId: string): Promise<string> =>
+      ipcRenderer.invoke('session:get-download-url', sessionId),
   },
 
   // ─── Config ────────────────────────────────────────────
