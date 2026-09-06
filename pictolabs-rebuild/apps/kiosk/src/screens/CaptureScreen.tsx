@@ -21,14 +21,15 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
   const [isFlashing, setIsFlashing] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [webcamReady, setWebcamReady] = useState(false);
-  const [liveViewSrc, setLiveViewSrc] = useState<string | null>(null);
+  const [cameraSource, setCameraSource] = useState<'canon' | 'webcam' | 'connecting'>('connecting');
   const [isGeneratingLivePhoto, setIsGeneratingLivePhoto] = useState(false);
 
   // Post-Capture Photo Preview (manual advance/retake)
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const liveImgRef = useRef<HTMLImageElement>(null);
+  const liveCanvasRef = useRef<HTMLCanvasElement>(null);
+  const internalImageRef = useRef<HTMLImageElement>(new Image());
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const recordingCanvasRef = useRef<HTMLCanvasElement>(null);
   const workerRef = useRef<Worker | null>(null);
@@ -38,6 +39,11 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
   const clipResolversRef = useRef<Map<number, () => void>>(new Map());
 
   const liveViewSrcRef = useRef<string | null>(null);
+  const cameraSourceRef = useRef<'canon' | 'webcam' | 'connecting'>('connecting');
+  cameraSourceRef.current = cameraSource;
+  const hasCanonFrameRef = useRef(false);
+  const isNavigatingRef = useRef(false);
+  const isProcessingRef = useRef(false);
   const photosRef = useRef<string[]>([]);
   const currentPoseRef = useRef(currentPose);
   currentPoseRef.current = currentPose;
@@ -66,11 +72,31 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
       try {
         const res = await kiosk.camera.startLiveView();
         
-        // Listen for Canon EDSDK live view frames
+        // Listen for Canon EDSDK live view frames: Direct Canvas Rendering (Zero React Re-render!)
         unsubscribe = kiosk.camera.onLiveViewFrame((frameData) => {
           liveViewSrcRef.current = frameData;
-          setLiveViewSrc(frameData);
-          setWebcamReady(true);
+          if (!hasCanonFrameRef.current) {
+            hasCanonFrameRef.current = true;
+            setCameraSource('canon');
+            setWebcamReady(true);
+          }
+
+          const img = internalImageRef.current;
+          img.onload = () => {
+            const canvas = liveCanvasRef.current;
+            if (!canvas) return;
+            const nw = img.naturalWidth || 960;
+            const nh = img.naturalHeight || 640;
+            if (canvas.width !== nw || canvas.height !== nh) {
+              canvas.width = nw;
+              canvas.height = nh;
+            }
+            const ctx = canvas.getContext('2d', { alpha: false });
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, nw, nh);
+            }
+          };
+          img.src = frameData;
         });
 
         // If Electron reports WebRTC mode, or running in browser, start WebRTC immediately
@@ -79,7 +105,7 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
         } else {
           // Safety timeout: If Canon was requested but no frame arrives within 2 seconds, start fallback
           fallbackTimer = setTimeout(() => {
-            if (!liveViewSrcRef.current) {
+            if (!hasCanonFrameRef.current) {
               console.warn('[CaptureScreen] No Canon frame received within 2s, engaging fallback camera');
               startWebRTCFallback();
             }
@@ -93,6 +119,7 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
     }
 
     function startWebRTCFallback() {
+      if (hasCanonFrameRef.current) return;
       if (videoRef.current && videoRef.current.srcObject) return;
       navigator.mediaDevices
         .getUserMedia({
@@ -102,11 +129,13 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
         .then((s) => {
           if (videoRef.current) {
             videoRef.current.srcObject = s;
+            setCameraSource('webcam');
             setWebcamReady(true);
           }
         })
         .catch((err) => {
           console.warn('Webcam fallback failed:', err);
+          setCameraSource('webcam');
           setWebcamReady(true); // Allow user to still see UI instead of loading forever
         });
     }
@@ -182,9 +211,9 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
     let srcW = 1280;
     let srcH = 720;
 
-    if (liveImgRef.current && liveViewSrcRef.current) {
-      srcW = liveImgRef.current.naturalWidth || 960;
-      srcH = liveImgRef.current.naturalHeight || 640;
+    if (cameraSourceRef.current === 'canon' && internalImageRef.current.complete) {
+      srcW = internalImageRef.current.naturalWidth || 960;
+      srcH = internalImageRef.current.naturalHeight || 640;
     } else if (videoRef.current && videoRef.current.videoWidth > 0) {
       srcW = videoRef.current.videoWidth;
       srcH = videoRef.current.videoHeight;
@@ -260,9 +289,9 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
 
         if (ctx) {
           const shouldMirrorResult = configRef.current?.cameraResult !== 'original';
-          if (liveImgRef.current && liveViewSrcRef.current) {
+          if (cameraSourceRef.current === 'canon' && internalImageRef.current.complete) {
             // Canon DSLR Live View frame (mirrored if cameraResult is mirror, matching countdown viewfinder)
-            drawImageCover(liveImgRef.current, shouldMirrorResult);
+            drawImageCover(internalImageRef.current, shouldMirrorResult);
           } else if (videoRef.current && videoRef.current.videoWidth > 0) {
             // Webcam fallback (mirrored if cameraResult is mirror)
             drawImageCover(videoRef.current, shouldMirrorResult);
@@ -309,6 +338,7 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
 
   // Advance to next pose or next screen
   const handleNext = useCallback(async () => {
+    if (isNavigatingRef.current) return;
     setPreviewPhoto(null);
 
     const activePose = currentPoseRef.current;
@@ -323,6 +353,8 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
         startRecording();
       }, 600);
     } else {
+      isNavigatingRef.current = true;
+      isProcessingRef.current = true;
       // Completed all poses! Wait for any pending clip encoding to finish before finalization
       setIsGeneratingLivePhoto(true);
       try {
@@ -355,6 +387,7 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
         });
       } finally {
         setIsGeneratingLivePhoto(false);
+        isProcessingRef.current = false;
         navigate('filter');
       }
     }
@@ -362,6 +395,8 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
 
   // Retake photo for the current pose (with auto countdown & re-record)
   const handleRetake = useCallback(() => {
+    if (isNavigatingRef.current || isProcessingRef.current) return;
+
     // Discard the last captured photo from session
     const updatedPhotos = photosRef.current.slice(0, -1);
     photosRef.current = updatedPhotos;
@@ -421,8 +456,8 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
     // Safety fallback: Use latest LiveView sensor frame from Canon sensor so user always gets their photo
     if (!photoData && liveViewSrcRef.current) {
       console.log('[CaptureScreen] Using active LiveView sensor frame as photo fallback');
-      if (shouldMirror && canvasRef.current && liveImgRef.current) {
-        const img = liveImgRef.current;
+      if (shouldMirror && canvasRef.current && internalImageRef.current.complete) {
+        const img = internalImageRef.current;
         const canvas = canvasRef.current;
         canvas.width = img.naturalWidth || 1280;
         canvas.height = img.naturalHeight || 720;
@@ -461,7 +496,7 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
 
   // Trigger countdown
   const startCountdown = () => {
-    if (isCapturing || !webcamReady || countdown !== null || previewPhoto) return;
+    if (isNavigatingRef.current || isProcessingRef.current || isCapturing || !webcamReady || countdown !== null || previewPhoto) return;
     setCountdown(config.countdown || 5);
     startRecording();
   };
@@ -544,26 +579,24 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
       {/* Camera Live View & Preview Viewport */}
       <div className="flex-1 px-12 pb-6 flex gap-8 items-center justify-center">
         <div className="relative w-[800px] h-[550px] bg-slate-900 rounded-3xl overflow-hidden shadow-2xl border-4 border-white flex items-center justify-center">
-          {liveViewSrc ? (
-            <img
-              ref={liveImgRef}
-              src={liveViewSrc}
-              className={`w-full h-full object-cover transition-transform duration-200 ${
-                config.cameraPreview !== 'original' ? '-scale-x-100' : ''
-              }`}
-              alt="Live View"
-            />
-          ) : (
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className={`w-full h-full object-cover transition-transform duration-200 ${
-                config.cameraPreview !== 'original' ? '-scale-x-100' : ''
-              }`}
-            />
-          )}
+          {/* Canon Live View Direct Canvas (Zero React Re-render) */}
+          <canvas
+            ref={liveCanvasRef}
+            className={`w-full h-full object-cover transition-transform duration-200 ${
+              cameraSource === 'canon' ? 'block' : 'hidden'
+            } ${config.cameraPreview !== 'original' ? '-scale-x-100' : ''}`}
+          />
+
+          {/* WebRTC Video Fallback */}
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className={`w-full h-full object-cover transition-transform duration-200 ${
+              cameraSource === 'webcam' ? 'block' : 'hidden'
+            } ${config.cameraPreview !== 'original' ? '-scale-x-100' : ''}`}
+          />
 
           {!webcamReady && (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-800">
@@ -575,8 +608,8 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
           {/* Camera Source Badge (No drop-shadow, subtle opacity) */}
           {webcamReady && !previewPhoto && (
             <div className="absolute top-4 left-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/40 border border-white/10 text-white/70 text-[11px] font-bold shadow-none">
-              <span className={`w-2 h-2 rounded-full ${liveViewSrc ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-              <span>{liveViewSrc ? 'CANON DSLR (LIVE)' : 'WEBCAM BACKUP'}</span>
+              <span className={`w-2 h-2 rounded-full ${cameraSource === 'canon' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+              <span>{cameraSource === 'canon' ? 'CANON DSLR (LIVE)' : 'WEBCAM BACKUP'}</span>
             </div>
           )}
 

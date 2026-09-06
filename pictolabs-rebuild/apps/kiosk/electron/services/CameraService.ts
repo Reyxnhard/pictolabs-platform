@@ -288,7 +288,7 @@ function startLiveViewInterval(): void {
 
   const mainWindow = BrowserWindow.getAllWindows()[0];
   liveViewInterval = setInterval(() => {
-    if (!isLiveViewActive || !mainWindow || !activeCamera) return;
+    if (!isLiveViewActive || !mainWindow || mainWindow.isDestroyed() || !activeCamera) return;
     try {
       const liveImg = activeCamera.getLiveViewImage();
       if (liveImg) {
