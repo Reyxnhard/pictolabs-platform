@@ -8,6 +8,7 @@ import { registerRenderHandlers } from './services/RenderEngine';
 import { registerPrintHandlers, stopPrintService } from './services/PrintService';
 import { registerSyncHandlers, stopSyncEngine } from './services/SyncEngine';
 import { registerLivePhotoHandlers } from './services/LivePhotoService';
+import { initStorageRetention, stopStorageRetention } from './services/StorageRetentionService';
 
 // Register privileged custom schemes before app.whenReady()
 protocol.registerSchemesAsPrivileged([
@@ -187,6 +188,13 @@ app.whenReady().then(() => {
     deviceSecret: 'dev-secret-booth-01', // Should be injected via env/license in prod
   });
 
+  // Initialize Dual-Tier 7-Day Storage Retention Daemon
+  initStorageRetention({
+    mediaDirectories: [CAPTURES_DIR, COMPOSITES_DIR, VIDEOS_DIR],
+    retentionDays: 7,
+    minFreeDiskGb: 5,
+  });
+
   registerSystemHandlers();
 
   // Create the main window
@@ -197,12 +205,14 @@ app.on('before-quit', () => {
   cleanupCamera();
   stopSyncEngine();
   stopPrintService();
+  stopStorageRetention();
 });
 
 app.on('window-all-closed', () => {
   cleanupCamera();
   stopSyncEngine();
   stopPrintService();
+  stopStorageRetention();
   app.quit();
 });
 

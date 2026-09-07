@@ -419,38 +419,133 @@ async function processUploadQueue(): Promise<void> {
   isUploading = true;
   for (const item of pending) {
     const now = new Date().toISOString();
+
+    // 1. Exponential Backoff Check:
+    // If previous attempt failed, wait 2^attempts * 1000 ms (2s, 4s, 8s, 16s, 32s max)
+    if (item.status === 'FAILED' && item.attempts > 0) {
+      const lastUpdate = new Date(item.updated_at).getTime();
+      const backoffMs = Math.min(Math.pow(2, item.attempts) * 1000, 32000);
+      if (Date.now() - lastUpdate < backoffMs) {
+        continue; // Skip until backoff period passes
+      }
+    }
+
     try {
       if (!fs.existsSync(item.file_path)) {
         stmtUpdateUploadStatus.run('FAILED', 'File missing on local disk', null, now, item.id);
         continue;
       }
 
-      console.log(`[SyncEngine] Uploading ${item.file_type} (${path.basename(item.file_path)}) to Cloud...`);
-      const fileBuffer = fs.readFileSync(item.file_path);
       const filename = path.basename(item.file_path);
+      const fileBuffer = fs.readFileSync(item.file_path);
 
-      // Request upload endpoint on NestJS
-      const uploadUrl = `${config.apiBaseUrl}/api/storage/upload`;
-      const response = await fetch(uploadUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/octet-stream',
-          'x-session-id': item.session_id,
-          'x-file-name': filename,
-          'x-file-type': item.file_type,
-          'x-device-secret': config.deviceSecret || '',
-        },
-        body: fileBuffer,
-      });
+      // Mark status as UPLOADING to prevent duplicate workers
+      try {
+        db.prepare('UPDATE upload_queue SET status = "UPLOADING", updated_at = ? WHERE id = ?').run(now, item.id);
+      } catch (_) {}
 
-      if (response.ok) {
-        const result = (await response.json()) as { url?: string; publicUrl?: string };
-        const rawUrl = result.publicUrl || result.url || `/uploads/${filename}`;
-        const remoteUrl = resolveLanDownloadUrl(rawUrl, config.apiBaseUrl || 'http://localhost:4000');
-        
+      console.log(`[SyncEngine] Uploading ${item.file_type} (${filename}) to Cloud (Attempt ${item.attempts + 1})...`);
+
+      const mimeType = filename.endsWith('.mp4')
+        ? 'video/mp4'
+        : filename.endsWith('.gif')
+        ? 'image/gif'
+        : filename.endsWith('.webm')
+        ? 'video/webm'
+        : filename.endsWith('.png')
+        ? 'image/png'
+        : 'image/jpeg';
+
+      let uploadedSuccessfully = false;
+      let remoteUrl = '';
+
+      // 2. Request Presigned Direct Upload URL from NestJS Backend
+      try {
+        const presignedRes = await fetch(`${config.apiBaseUrl}/api/storage/presigned-url`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId: item.session_id,
+            fileName: filename,
+            fileType: item.file_type,
+            contentType: mimeType,
+          }),
+        });
+
+        if (presignedRes.ok) {
+          const presignedData = (await presignedRes.json()) as {
+            uploadUrl: string;
+            key: string;
+            publicUrl: string;
+            provider: 'cloudflare_r2' | 'local_fallback';
+          };
+
+          if (presignedData.provider === 'cloudflare_r2' && presignedData.uploadUrl.startsWith('http')) {
+            // Direct PUT to Cloudflare R2
+            const r2PutRes = await fetch(presignedData.uploadUrl, {
+              method: 'PUT',
+              headers: {
+                'Content-Type': mimeType,
+                'Cache-Control': 'public, max-age=31536000',
+              },
+              body: fileBuffer,
+            });
+
+            if (r2PutRes.ok || r2PutRes.status === 204) {
+              remoteUrl = presignedData.publicUrl;
+              uploadedSuccessfully = true;
+
+              // Confirm upload with NestJS
+              try {
+                await fetch(`${config.apiBaseUrl}/api/storage/confirm-upload`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    sessionId: item.session_id,
+                    fileName: filename,
+                    fileType: item.file_type,
+                    key: presignedData.key,
+                    publicUrl: remoteUrl,
+                  }),
+                });
+              } catch (_) {}
+            }
+          }
+        }
+      } catch (presignedErr: any) {
+        console.warn(`[SyncEngine] Presigned R2 flow failed: ${presignedErr.message}. Falling back to standard upload.`);
+      }
+
+      // 3. Fallback to standard multipart/stream upload endpoint if direct PUT was not used
+      if (!uploadedSuccessfully) {
+        const uploadUrl = `${config.apiBaseUrl}/api/storage/upload`;
+        const response = await fetch(uploadUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'x-session-id': item.session_id,
+            'x-file-name': filename,
+            'x-file-type': item.file_type,
+            'x-device-secret': config.deviceSecret || '',
+          },
+          body: fileBuffer,
+        });
+
+        if (response.ok) {
+          const result = (await response.json()) as { url?: string; publicUrl?: string };
+          const rawUrl = result.publicUrl || result.url || `/uploads/${filename}`;
+          remoteUrl = resolveLanDownloadUrl(rawUrl, config.apiBaseUrl || 'http://localhost:4000');
+          uploadedSuccessfully = true;
+        } else {
+          const errText = await response.text();
+          stmtUpdateUploadStatus.run('FAILED', `HTTP ${response.status}: ${errText.slice(0, 100)}`, null, now, item.id);
+        }
+      }
+
+      // 4. Update Database on Success
+      if (uploadedSuccessfully) {
         stmtUpdateUploadStatus.run('COMPLETED', null, remoteUrl, now, item.id);
-        
-        // Update session uploaded flags & URLs
+
         if (db) {
           if (item.file_type === 'video') {
             try {
@@ -462,25 +557,22 @@ async function processUploadQueue(): Promise<void> {
               if (!urls.includes(remoteUrl)) {
                 urls.push(remoteUrl);
               }
-              db.prepare('UPDATE sessions SET live_video_urls = ?, live_video_url = ? WHERE id = ?').run(
+              db.prepare('UPDATE sessions SET live_video_urls = ?, live_video_url = ?, uploaded = 1, synced = 1 WHERE id = ?').run(
                 JSON.stringify(urls),
                 remoteUrl,
                 item.session_id
               );
             } catch (_) {
-              db.prepare('UPDATE sessions SET live_video_url = ? WHERE id = ?').run(remoteUrl, item.session_id);
+              db.prepare('UPDATE sessions SET live_video_url = ?, uploaded = 1, synced = 1 WHERE id = ?').run(remoteUrl, item.session_id);
             }
           } else {
-            db.prepare('UPDATE sessions SET uploaded = 1, remote_url = ? WHERE id = ?').run(remoteUrl, item.session_id);
+            db.prepare('UPDATE sessions SET uploaded = 1, synced = 1, remote_url = ? WHERE id = ?').run(remoteUrl, item.session_id);
           }
         }
         console.log(`[SyncEngine] ✓ Uploaded ${item.file_type} successfully: ${remoteUrl}`);
-      } else {
-        const errText = await response.text();
-        stmtUpdateUploadStatus.run('FAILED', `HTTP ${response.status}: ${errText.slice(0, 100)}`, null, now, item.id);
       }
     } catch (err: any) {
-      console.warn(`[SyncEngine] Upload failed for ${item.id}:`, err.message);
+      console.warn(`[SyncEngine] Upload attempt failed for ${item.id}:`, err.message);
       stmtUpdateUploadStatus.run('FAILED', err.message, null, now, item.id);
     }
   }
@@ -788,6 +880,21 @@ export function stopSyncEngine(): void {
       console.log('[SyncEngine] SQLite database connection closed safely');
     } catch {}
     db = null;
+  }
+}
+
+export function getDatabase(): Database.Database | null {
+  return db;
+}
+
+export function getUploadQueueItemByPath(filePath: string): UploadQueueItem | null {
+  if (!db) return null;
+  const filename = path.basename(filePath);
+  try {
+    const row = db.prepare('SELECT * FROM upload_queue WHERE file_path LIKE ? OR id LIKE ? LIMIT 1').get(`%${filename}%`, `%${filename}%`) as any;
+    return row || null;
+  } catch (_) {
+    return null;
   }
 }
 

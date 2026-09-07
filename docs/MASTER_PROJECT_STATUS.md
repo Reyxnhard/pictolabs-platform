@@ -69,30 +69,26 @@ Sistem Pictolabs saat ini memiliki kapabilitas operasional inti sebagai berikut:
 | **300 DPI Composite Render Engine** | 100% | `apps/kiosk/electron/services/RenderEngine.ts`<br>`apps/kiosk/src/screens/RenderScreen.tsx` | `sharp`, Node `fs` |
 | **Color Filter Image Pipeline** | 100% | `apps/kiosk/electron/services/RenderEngine.ts`<br>`apps/kiosk/src/screens/FilterScreen.tsx` | `sharp` (`tint`, `modulate`, `linear`) |
 | **Touch Kiosk Fullscreen UX (1080x1920)** | 100% | `apps/kiosk/src/App.tsx`<br>`apps/kiosk/electron/main.ts` | React 18, Tailwind CSS v4, `canvas-confetti` |
-| **Digital Delivery QR Generator** | 100% | `apps/kiosk/src/screens/QRScreen.tsx` | `qrcode`, React 18 |
-| **Remote WebSocket Config Sync** | 100% | `apps/kiosk/electron/services/SyncEngine.ts`<br>`apps/backend/src/gateway/kiosk.gateway.ts` | `socket.io-client`, `@nestjs/websockets` |
+| **Midtrans Dynamic QRIS & Payment Core** | 100% | `apps/backend/src/payments/payments.service.ts`<br>`apps/kiosk/src/screens/PaymentScreen.tsx` | `midtrans-client`, Prisma SQLite, SHA-512 |
+| **Sub-Second WebSocket Payment Auto-Advance** | 100% | `apps/backend/src/gateway/kiosk.gateway.ts`<br>`apps/kiosk/electron/services/SyncEngine.ts` | `@nestjs/websockets`, `socket.io-client` |
+| **Cloudflare R2 Object Storage & Presigned URLs** | 100% | `apps/backend/src/storage/storage.service.ts`<br>`apps/backend/src/storage/storage.controller.ts` | `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner` |
+| **Offline-First Upload Queue & Backoff** | 100% | `apps/kiosk/electron/services/SyncEngine.ts` | `better-sqlite3`, exponential backoff retry |
+| **Customer Web Gallery & Streaming ZIP** | 100% | `apps/backend/src/gallery/gallery.controller.ts` | `archiver`, HTML5 smart video observer |
+| **Dual-Tier Retention Policy & Expiration Page** | 100% | `apps/kiosk/electron/services/StorageRetentionService.ts`<br>`apps/backend/src/gallery/gallery.controller.ts` | 7-day local (completed only), 30-day cloud, HTTP 200 graceful notice |
 
 ---
 
-## 4. PARTIALLY COMPLETED FEATURES
+## 4. PARTIALLY COMPLETED & NEXT UP FEATURES
 
 ### 1. Thermal Printer Spooler & Hardware Monitoring (75%)
 * **Status Saat Ini**: Mampu mendeteksi daftar printer Windows via PowerShell, menentukan printer utama secara heuristik (DNP, Citizen, HiTi), dan memicu proses cetak via `ImageView_PrintTo`.
 * **Kekurangan**: Belum memiliki pembacaan status sensor hardware tingkat rendah (*paper jam*, *ribbon out*, *door open*) dan belum ada antrean cetak asinkron persisten.
 
-### 2. QRIS & Payment Gateway Integration (50%)
-* **Status Saat Ini**: Layar antarmuka `PaymentScreen.tsx` sudah lengkap dengan kalkulasi harga, timer 270 detik, pilihan metode QRIS dan Voucher, serta mock simulator pembayaran. Skema database Prisma untuk `Transaction`, `Payment`, dan `Voucher` sudah siap.
-* **Kekurangan**: Belum tersambung ke webhook payment aggregator resmi (Midtrans Core API / Xendit Dynamic QRIS) untuk verifikasi mutasi bank otomatis.
-
-### 3. Remote Cloud Management Dashboard (65%)
+### 2. Remote Cloud Management Dashboard (65%)
 * **Status Saat Ini**: Aplikasi web dashboard (`apps/dashboard`) sudah memiliki UI monitoring booth, telemetri hardware, editor harga/timer, dan katalog frame.
 * **Kekurangan**: Sebagian data masih menggunakan state tiruan (mock), belum tersambung secara penuh ke REST API NestJS, dan belum ada autentikasi berbasis peran (*RBAC*).
 
-### 4. Offline Session Storage & Cloud Asset Sync (70%)
-* **Status Saat Ini**: Sesi disimpan ke berkas `sessions.json` lokal. Heartbeat telemetri dan status transaksi disinkronkan ke NestJS via WebSocket.
-* **Kekurangan**: Belum ada modul pengunggah latar belakang (*background worker*) untuk berkas media berukuran besar (foto mentah + composite 300 DPI) ke Cloudflare R2 / AWS S3 via presigned URL.
-
-### 5. Centralized Global State Store / Zustand (40%)
+### 3. Centralized Global State Store / Zustand (40%)
 * **Status Saat Ini**: Navigasi state antar layar menggunakan `ScreenProps` dan `KioskConfigContext`.
 * **Kekurangan**: Perlu dikonsolidasikan ke dalam satu store Zustand terpusat (`useKioskStore`) untuk mengurangi *prop-drilling* dan mempermudah pengujian unit.
 

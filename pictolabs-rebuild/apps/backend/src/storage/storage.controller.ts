@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Req,
+  Body,
   Headers,
   HttpException,
   HttpStatus,
@@ -10,16 +11,103 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { StorageService } from './storage.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Controller('api/storage')
 export class StorageController {
   private readonly logger = new Logger(StorageController.name);
 
-  constructor(private readonly storageService: StorageService) {}
+  constructor(
+    private readonly storageService: StorageService,
+    private readonly prisma: PrismaService
+  ) {}
 
   @Get('health')
   getHealth() {
     return this.storageService.getHealthStatus();
+  }
+
+  @Post('presigned-url')
+  async getPresignedUrl(
+    @Body()
+    body: {
+      sessionId: string;
+      fileName: string;
+      fileType?: string;
+      contentType?: string;
+      expiresInSeconds?: number;
+    }
+  ) {
+    if (!body?.sessionId || !body?.fileName) {
+      throw new HttpException('sessionId and fileName are required', HttpStatus.BAD_REQUEST);
+    }
+    return this.storageService.getPresignedUploadUrl(body);
+  }
+
+  @Post('confirm-upload')
+  async confirmUpload(
+    @Body()
+    body: {
+      sessionId: string;
+      fileName: string;
+      fileType: string;
+      key?: string;
+      publicUrl?: string;
+      sequenceNo?: number;
+    }
+  ) {
+    if (!body?.sessionId || !body?.fileName) {
+      throw new HttpException('sessionId and fileName are required', HttpStatus.BAD_REQUEST);
+    }
+
+    this.logger.log(
+      `[StorageController] Confirming upload for session=${body.sessionId}, file=${body.fileName}, type=${body.fileType}`
+    );
+
+    try {
+      const existingSession = await this.prisma.session.findUnique({
+        where: { id: body.sessionId },
+      });
+
+      if (existingSession) {
+        await this.prisma.photo.create({
+          data: {
+            sessionId: body.sessionId,
+            finalUrl: body.publicUrl || `/uploads/${body.fileName}`,
+            storageKey: body.key || body.fileName,
+            sequenceNo: body.sequenceNo || 1,
+          },
+        });
+
+        await this.prisma.session.update({
+          where: { id: body.sessionId },
+          data: { status: 'COMPLETED' },
+        });
+      }
+
+      return {
+        success: true,
+        sessionId: body.sessionId,
+        fileName: body.fileName,
+        confirmed: true,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (err: any) {
+      this.logger.warn(`[StorageController] DB confirmation non-fatal warning: ${err.message}`);
+      return {
+        success: true,
+        sessionId: body.sessionId,
+        fileName: body.fileName,
+        confirmed: true,
+        dbWarning: err.message,
+      };
+    }
+  }
+
+  @Post('lifecycle-sync')
+  async syncLifecycle(@Body() body?: { days?: number }) {
+    const days = body?.days || 30;
+    return this.storageService.configureBucketLifecycle(days);
   }
 
   @Post('upload')

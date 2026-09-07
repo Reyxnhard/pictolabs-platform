@@ -1,7 +1,8 @@
-import { Controller, Get, Param, Res, Logger } from '@nestjs/common';
+import { Controller, Get, Param, Query, Res, Logger } from '@nestjs/common';
 import type { Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
+import { PrismaService } from '../prisma/prisma.service';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const archiver = require('archiver');
 
@@ -46,6 +47,8 @@ interface SessionAssets {
 export class GalleryController {
   private readonly logger = new Logger(GalleryController.name);
   private readonly uploadDir = path.resolve(process.cwd(), 'public', 'uploads');
+
+  constructor(private readonly prisma: PrismaService) {}
 
   /**
    * Format byte count into human-readable string (KB, MB).
@@ -200,13 +203,254 @@ export class GalleryController {
   }
 
   /**
+   * Determine whether a session is expired (>30 days or purged) per Cloud Asset Retention Policy.
+   */
+  private async isSessionExpired(sessionId: string, explicitQuery?: string): Promise<{ expired: boolean; reason: string }> {
+    if (explicitQuery === 'true' || explicitQuery === '1') {
+      return { expired: true, reason: 'explicit_retention_check' };
+    }
+
+    // 1. Check in Prisma DB if available
+    if (this.prisma) {
+      try {
+        const session = await this.prisma.session.findUnique({
+          where: { id: sessionId },
+        });
+        if (session) {
+          if (session.status === 'PURGED') {
+            return { expired: true, reason: 'session_purged_by_lifecycle' };
+          }
+          const ageDays = (Date.now() - session.createdAt.getTime()) / (1000 * 60 * 60 * 24);
+          if (ageDays >= 30) {
+            return { expired: true, reason: `session_age_${Math.floor(ageDays)}_days` };
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 2. Check timestamp encoded in sessionId: session_<epochMs>_<rand>
+    const match = sessionId.match(/^session_(\d{10,13})_/);
+    if (match) {
+      const epoch = parseInt(match[1], 10);
+      const ageDays = (Date.now() - epoch) / (1000 * 60 * 60 * 24);
+      if (ageDays >= 30) {
+        return { expired: true, reason: `session_age_${Math.floor(ageDays)}_days` };
+      }
+    }
+
+    return { expired: false, reason: 'active' };
+  }
+
+  /**
+   * Render Graceful Expiration Page (HTTP 200).
+   * In accordance with AC-5.4: Expired gallery links remain valid URLs but show an expiration page.
+   */
+  private renderExpiredHtml(sessionId: string): string {
+    return `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>PICTOLABS — Masa Aktif Galeri Telah Berakhir (${sessionId})</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #6366f1;
+      --amber: #f59e0b;
+      --bg-dark: #070b14;
+      --card-bg: rgba(18, 25, 44, 0.78);
+      --border-subtle: rgba(255, 255, 255, 0.12);
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: radial-gradient(circle at 50% 0%, #1e1b4b 0%, #0d1326 50%, #050811 100%);
+      color: #f8fafc;
+      min-height: 100vh;
+      padding: 30px 16px 60px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow-x: hidden;
+    }
+    .container {
+      width: 100%;
+      max-width: 460px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      text-align: center;
+    }
+    .brand-title {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 900;
+      font-size: 28px;
+      letter-spacing: 3px;
+      background: linear-gradient(135deg, #a5b4fc 0%, #ffffff 50%, #f472b6 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 2px;
+    }
+    .brand-subtitle {
+      font-size: 11px;
+      font-weight: 700;
+      color: #94a3b8;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border-subtle);
+      border-radius: 24px;
+      padding: 36px 24px;
+      box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(16px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+    .icon-badge {
+      width: 76px;
+      height: 76px;
+      border-radius: 50%;
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #f59e0b;
+      box-shadow: 0 0 28px rgba(245, 158, 11, 0.25);
+    }
+    .title {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 800;
+      font-size: 21px;
+      color: #f8fafc;
+      line-height: 1.3;
+    }
+    .badge-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-subtle);
+      border-radius: 9999px;
+      padding: 5px 14px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #cbd5e1;
+    }
+    .badge-amber {
+      background: rgba(245, 158, 11, 0.15);
+      border-color: rgba(245, 158, 11, 0.4);
+      color: #fde68a;
+    }
+    .desc {
+      font-size: 13.5px;
+      line-height: 1.65;
+      color: #94a3b8;
+    }
+    .desc strong {
+      color: #f1f5f9;
+    }
+    .policy-box {
+      width: 100%;
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      border-radius: 16px;
+      padding: 16px;
+      font-size: 12px;
+      color: #94a3b8;
+      text-align: left;
+      line-height: 1.65;
+    }
+    .policy-box strong {
+      color: #e2e8f0;
+    }
+    .footer {
+      font-size: 11px;
+      color: #64748b;
+      margin-top: 6px;
+      letter-spacing: 0.5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 class="brand-title">PICTOLABS</h1>
+      <p class="brand-subtitle">Cloud Media Delivery & Privacy</p>
+    </div>
+    <div class="card">
+      <div class="icon-badge">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      </div>
+      <h2 class="title">Masa Aktif Galeri Telah Berakhir</h2>
+      <div class="badge-bar">
+        <div class="badge">
+          <span>SESI: ${sessionId}</span>
+        </div>
+        <div class="badge badge-amber">
+          <span>RETENSI: 30 HARI</span>
+        </div>
+      </div>
+      <p class="desc">
+        Sesuai kebijakan privasi data Pictolabs, berkas softfile foto dan Live Photo digital disimpan selama <strong>30 hari</strong> sejak sesi pemotretan dan kini telah <strong>otomatis dihapus secara permanen</strong> dari Cloudflare R2 Storage demi melindungi privasi Anda.
+      </p>
+      <div class="policy-box">
+        <p style="margin-bottom: 4px;">🔒 <strong>Pictolabs Cloud Asset Retention Policy:</strong></p>
+        <p>• Masa simpan berkas digital di cloud storage: <strong>30 Hari</strong>.</p>
+        <p>• Berkas dihapus otomatis untuk kepatuhan privasi (*GDPR/PDP compliance*).</p>
+        <p style="margin-top: 6px; font-size: 11px; color: #64748b;">ID Sesi: ${sessionId} • Status: DIHAPUS (PURGED)</p>
+      </div>
+    </div>
+    <div class="footer">
+      <p>© ${new Date().getFullYear()} PICTOLABS PHOTOBOOTH • ALL RIGHTS RESERVED</p>
+    </div>
+  </div>
+</body>
+</html>`;
+  }
+
+  /**
    * JSON metadata API for kiosk, mobile app, or client query.
    */
   @Get('api/gallery/:sessionId')
-  getGalleryData(@Param('sessionId') sessionId: string) {
+  async getGalleryData(
+    @Param('sessionId') sessionId: string,
+    @Query('expired') expiredQuery?: string
+  ) {
+    const expiration = await this.isSessionExpired(sessionId, expiredQuery);
+    if (expiration.expired) {
+      return {
+        success: true,
+        sessionId,
+        expired: true,
+        message: 'Cloud assets older than 30 days have been automatically purged.',
+        reason: expiration.reason,
+      };
+    }
+
     const assets = this.findSessionAssets(sessionId);
     return {
       success: true,
+      expired: false,
       ...assets,
     };
   }
@@ -216,8 +460,22 @@ export class GalleryController {
    * Compiles Composite Photostrip, individual photos, live videos, and GIF into a single ZIP.
    */
   @Get('api/gallery/:sessionId/zip')
-  async downloadSessionZip(@Param('sessionId') sessionId: string, @Res() res: Response) {
+  async downloadSessionZip(
+    @Param('sessionId') sessionId: string,
+    @Query('expired') expiredQuery: string | undefined,
+    @Res() res: Response
+  ) {
     this.logger.log(`[GalleryController] Customer requested ZIP download for session: ${sessionId}`);
+
+    const expiration = await this.isSessionExpired(sessionId, expiredQuery);
+    if (expiration.expired) {
+      return res.status(410).json({
+        success: false,
+        expired: true,
+        message: 'File softfile sesi ini telah kedaluwarsa sesuai kebijakan retensi 30 hari.',
+      });
+    }
+
     const assets = this.findSessionAssets(sessionId);
 
     if (assets.totalAssets === 0) {
@@ -285,10 +543,23 @@ export class GalleryController {
    * - Individual Live Photo Videos (with smooth viewport autoplay & 1s keyframes)
    * - Animated Boomerang GIF / MP4
    * - One-Tap "Download Semua (.ZIP)"
+   * - Graceful Expiration Notice (HTTP 200) when session >= 30 days
    */
   @Get('d/:sessionId')
-  renderGalleryPage(@Param('sessionId') sessionId: string, @Res() res: Response) {
+  async renderGalleryPage(
+    @Param('sessionId') sessionId: string,
+    @Query('expired') expiredQuery: string | undefined,
+    @Res() res: Response
+  ) {
     this.logger.log(`[GalleryController] Customer scanned QR for session: ${sessionId}`);
+
+    // Check 30-day retention expiration
+    const expiration = await this.isSessionExpired(sessionId, expiredQuery);
+    if (expiration.expired) {
+      this.logger.log(`[GalleryController] Session ${sessionId} is expired (${expiration.reason}). Serving graceful expiration page.`);
+      return res.status(200).type('html').send(this.renderExpiredHtml(sessionId));
+    }
+
     const assets = this.findSessionAssets(sessionId);
     const hasAny = assets.totalAssets > 0;
 

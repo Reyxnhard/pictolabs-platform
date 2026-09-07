@@ -9,6 +9,7 @@
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
+    "test:storage": "ts-node src/storage/storage.e2e.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
