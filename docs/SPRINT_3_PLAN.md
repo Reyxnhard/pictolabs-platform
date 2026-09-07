@@ -1,8 +1,8 @@
 # SPRINT 3 IMPLEMENTATION PLAN: CLOUD STORAGE (R2), ASYNC UPLOAD PIPELINE & DIGITAL DELIVERY
 
 > **Platform**: Pictolabs v1.0 Enterprise Edition  
-> **Status**: Ready for Planning Review  
-> **Sprint Focus**: Cloudflare R2 Object Storage, Presigned Direct Upload, Resilient Offline-First Upload Queue, Public CDN Landing Page, and Local Media Storage Retention  
+> **Status**: Ready for Implementation (Revised with Cloud Asset Retention Policy)  
+> **Sprint Focus**: Cloudflare R2 Object Storage, Presigned Direct Upload, Resilient Offline-First Upload Queue, Public CDN Landing Page, and Dual-Tier Media Retention Policy (7-Day Local & 30-Day Cloud Expiration)  
 > **Source of Truth**: [docs/MASTER_PROJECT_STATUS.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/MASTER_PROJECT_STATUS.md), [docs/SPRINT_1_REVIEW.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/SPRINT_1_REVIEW.md) & [docs/SPRINT_2_REVIEW.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/SPRINT_2_REVIEW.md)  
 > **Target Platform**: Windows 10/11 Kiosk (Client Media Worker) & NestJS Cloud Backend (Storage Orchestrator & Public CDN Gallery)
 
@@ -10,11 +10,14 @@
 
 ## 1. Objectives
 
-1. **Zero-Egress Cloud Storage Migration**: Mengintegrasikan Cloudflare R2 via AWS S3 SDK v3 (`@aws-sdk/client-s3`) untuk penyimpanan jangka panjang berkas foto komposit 300 DPI, klip Live Photo MP4, dan foto mentah tanpa biaya transfer data keluar (*zero egress cost*).
+1. **Zero-Egress Cloud Storage Migration**: Mengintegrasikan Cloudflare R2 via AWS S3 SDK v3 (`@aws-sdk/client-s3`) untuk penyimpanan berkas foto komposit 300 DPI, klip Live Photo MP4, dan foto mentah tanpa biaya transfer data keluar (*zero egress cost*).
 2. **Off-Main-Server Direct Upload (Presigned URLs)**: Mengurangi beban I/O dan memori pada server backend NestJS dengan memfasilitasi pengunggahan langsung (*direct client-to-storage upload*) dari Kiosk ke R2 menggunakan presigned PUT URLs berwaktu kedaluwarsa.
-3. **Resilient Offline-First Upload Worker**: Memastikan Kiosk kebal terhadap internet lambat atau terputus total; seluruh media disimpan di SQLite lokal (`upload_queue`) dan diunggah otomatis di latar belakang (*background worker*) dengan mekanisme *exponential backoff retry* tanpa mengganggu jalannya bilik foto.
+3. **Resilient Offline-First Upload Worker**: Memastikan Kiosk kebal terhadap internet lambat atau terputus total; seluruh media dicatat di SQLite lokal (`upload_queue`) dan diunggah otomatis di latar belakang (*background worker*) dengan mekanisme *exponential backoff retry* tanpa mengganggu jalannya bilik foto.
 4. **Blazing-Fast Customer Download Web Gallery**: Menyajikan antarmuka mobile-first responsif yang memuat aset media secara instan melalui CDN publik Cloudflare kustom (misal `https://dl.pictolabs.id/{sessionId}`), mendukung pengunduhan satu per satu (HD Photo, Strip, MP4, GIF) serta unduhan arsip ZIP terkompresi penuh.
-5. **Automated Kiosk Disk Space Retention**: Mencegah hard disk SSD bilik foto penuh di lokasi fisik (*unattended mall kiosks*) melalui rutinitas pembersihan otomatis (*storage retention daemon*) yang menghapus berkas media lokal yang telah berhasil terunggah dan berumur lebih dari 7 hari.
+5. **Dual-Tier Storage Retention & Privacy Management**:
+   - **Local Kiosk Retention (7 Hari)**: Menjaga ketersediaan kapasitas SSD di PC bilik foto mall (*unattended kiosks*) dengan menghapus berkas lokal lawas (>7 hari) **hanya jika** status pengunggahan telah berstatus `COMPLETED`.
+   - **Cloud R2 Retention (30 Hari)**: Menghapus berkas media di Cloudflare R2 secara otomatis setelah 30 hari demi efisiensi biaya penyimpanan cloud jangka panjang dan kepatuhan privasi data customer (*GDPR/PDP compliance*).
+   - **Graceful Gallery Expiration Notice**: Tautan galeri digital pelanggan (`/d/:sessionId`) tetap valid sebagai URL resmi, namun menampilkan halaman pemberitahuan masa aktif kedaluwarsa yang elegan dan ramah pengguna setelah berkas media terhapus.
 
 ---
 
@@ -47,26 +50,34 @@
   * Status: `PENDING`, `UPLOADING`, `COMPLETED`, `FAILED`.
   * Pencatatan `attempts` (maksimal 5x percobaan per item).
   * Mekanisme jeda adaptif (*Exponential Backoff*): 2s, 4s, 8s, 16s, 32s.
-  * Worker berjalan secara asinkron setiap 4 detik tanpa membebani thread animasi React Kiosk.
+  * Worker berjalan secara asinkron setiap 4 detik tanpa membebani thread antarmuka React Kiosk.
   * Pemutakhiran status sinkronisasi `sessions` lokal (`synced = 1`, `uploaded = 1`).
 
-### D. Public Web Gallery & Mobile Delivery
+### D. Public Web Gallery & Graceful Expiration Page
 * Halaman unduh publik: `GET /d/:sessionId` (dan `/api/gallery/:sessionId`)
-  * Tampilan web mobile-first dengan tema modern, branding Pictolabs, dan preview aset.
-  * Tab navigasi: *Photo Strip*, *Individual Photos*, *Live Photos (MP4)*, dan *Boomerang GIF*.
-  * Tombol unduh instan satu klik untuk masing-masing berkas.
-  * Tombol *Download Semua (ZIP)* yang mengalirkan (*stream*) arsip terkompresi langsung dari R2 atau server lokal.
+  * **Kondisi Aktif (< 30 Hari)**:
+    * Tampilan web mobile-first dengan tema modern, branding Pictolabs, dan preview aset.
+    * Tab navigasi: *Photo Strip*, *Individual Photos*, *Live Photos (MP4)*, dan *Boomerang GIF*.
+    * Tombol unduh instan satu klik untuk masing-masing berkas.
+    * Tombol *Download Semua (ZIP)* yang mengalirkan (*stream*) arsip terkompresi langsung dari R2 atau server lokal.
+  * **Kondisi Kedaluwarsa (>= 30 Hari atau Aset Telah Dihapus)**:
+    * Tautan tetap merupakan URL valid (bukan halaman blank atau error 404/500).
+    * Menampilkan antarmuka elegan bertema *Masa Aktif Galeri Telah Berakhir*.
+    * Penjelasan transparan kepada pengunjung: *"Sesuai kebijakan privasi Pictolabs, berkas foto dan video digital disimpan selama 30 hari sejak sesi pemotretan dan kini telah dihapus secara aman."*
 * Integrasi QR Code Kiosk (`QRScreen.tsx`):
   * URL pada QR code secara otomatis mengarah ke domain publik CDN yang terkonfigurasi.
 
-### E. Automated Media Storage Retention Daemon
-* Rutinitas pembersihan berkas lokal di Kiosk Electron Main Process:
-  * Berjalan saat booting Kiosk dan setiap 24 jam sekali di latar belakang.
-  * Kriteria penghapusan:
-    1. Berkas berada di folder `captures`, `composites`, atau `videos`.
-    2. Berkas berusia lebih dari `RETENTION_DAYS` (default: 7 hari).
-    3. Rekam jejak di SQLite `upload_queue` telah berstatus `COMPLETED` (telah aman tersimpan di cloud).
-  * Pengaman kapasitas disk (*Disk Threshold Safeguard*): Jika sisa ruang hard disk PC Kiosk kurang dari 5 GB, otomatis menghapus media tertua yang sudah terunggah meskipun belum mencapai 7 hari.
+### E. Dual-Tier Storage Retention Policy
+1. **Tier 1: Local Kiosk Retention (7 Hari)**:
+   * Daemon di Kiosk Electron berjalan saat startup dan setiap 24 jam sekali di latar belakang.
+   * Kriteria penghapusan:
+     - Berkas berada di folder `captures`, `composites`, atau `videos`.
+     - Berkas berusia lebih dari 7 hari (`MEDIA_LOCAL_RETENTION_DAYS = 7`).
+     - **Strict Safety Condition**: Berkas **HANYA** boleh dihapus jika rekam jejak di SQLite `upload_queue` telah berstatus `COMPLETED` (telah diverifikasi aman tersimpan di cloud).
+   * *Disk Safeguard*: Jika sisa ruang hard disk PC Kiosk kurang dari 5 GB, otomatis menghapus media tertua yang berstatus `COMPLETED` lebih awal.
+2. **Tier 2: Cloudflare R2 Retention (30 Hari)**:
+   * Konfigurasi Cloudflare R2 Object Lifecycle Rule (`ExpirationInDays: 30`) pada bucket R2 untuk penghapusan otomatis dari cloud.
+   * Backend cron sweeper periodik yang mendeteksi sesi berumur >30 hari dan menandai status metadata di database sebagai `PURGED`.
 
 ---
 
@@ -103,9 +114,11 @@ Fitur-fitur berikut secara tegas **TIDAK TERMASUK** dalam lingkup Sprint 3:
 * [ ] **AC-4.2**: Pengunjung dapat memutar video Live Photo (MP4 H.264) dan melihat preview photo strip resolusi tinggi secara responsif.
 * [ ] **AC-4.3**: Tombol *Download Semua (ZIP)* menghasilkan unduhan arsip ZIP valid yang memuat seluruh foto, strip komposit, video MP4, dan animasi GIF tanpa file korup.
 
-### AC-5: Storage Retention & Disk Safeguard
-* [ ] **AC-5.1**: Media lokal yang berumur $>7$ hari dan telah berstatus `COMPLETED` di `upload_queue` dihapus secara otomatis dari hard disk bilik.
-* [ ] **AC-5.2**: Berkas yang belum berstatus `COMPLETED` (belum berhasil terunggah ke cloud) **DILARANG DIHAPUS**, berapa pun umurnya, guna mencegah kehilangan data customer.
+### AC-5: Dual-Tier Storage Retention & Expiration Policy
+* [ ] **AC-5.1**: Media lokal di hard disk bilik yang berumur $>7$ hari dan telah berstatus `COMPLETED` di `upload_queue` dihapus secara otomatis oleh retention daemon.
+* [ ] **AC-5.2**: Berkas media lokal yang belum berstatus `COMPLETED` (belum berhasil terunggah ke cloud) **DILARANG DIHAPUS**, berapa pun umurnya, guna mencegah kehilangan data customer.
+* [ ] **AC-5.3**: **Cloud assets older than 30 days are automatically removed** dari Cloudflare R2 bucket sesuai lifecycle retention policy.
+* [ ] **AC-5.4**: **Expired gallery links remain valid URLs but show an expiration page** (HTTP 200 dengan tampilan pesan kedaluwarsa yang informatif dan elegan, bukan error 404/500).
 
 ---
 
@@ -117,13 +130,14 @@ Fitur-fitur berikut secara tegas **TIDAK TERMASUK** dalam lingkup Sprint 3:
 | **Cloudflare R2 Bucket Misconfiguration / Credential Expired** | **MEDIUM** | Upload gagal dan customer tidak bisa mengunduh softcopy dari smartphone mereka. | Mekanisme *Dual Storage*: Selalu simpan salinan lokal di Kiosk dan sediakan *local LAN fallback download* jika cloud storage tidak terjangkau. |
 | **Beban Server Lonjak Saat Banyak Pengunjung Unduh ZIP Bersamaan** | **MEDIUM** | Server backend kehabisan memori atau CPU saat mengompresi arsip ZIP. | Gunakan streaming kompresi (`archiver` stream langsung ke HTTP response tanpa buffering seluruh ZIP di RAM server). |
 | **Customer Menghapus Berkas Lokal Sebelum Terunggah (Accidental Data Loss)** | **HIGH** | File hilang permanen sebelum sempat disinkronkan ke cloud. | Validasi ketat di retention daemon: Berkas hanya boleh dihapus jika status di SQLite `upload_queue` adalah `COMPLETED` dan kolom `remote_url` tidak kosong. |
+| **Komplain Customer Saat Mengakses Foto yang Sudah Kedaluwarsa (>30 Hari)** | **LOW** | Customer mengira website bilik foto rusak jika muncul pesan 404 / 500 error. | Tampilkan halaman kedaluwarsa khusus (*Graceful Expiration Page*) yang ramah pengguna dengan penjelasan kebijakan privasi 30 hari. |
 
 ---
 
 ## 6. Dependencies
 
 ### New & Existing Packages
-* **`@aws-sdk/client-s3`** (`apps/backend`): *Sudah terpasang di `package.json`*. Digunakan untuk inisialisasi client S3 API yang kompatibel dengan Cloudflare R2.
+* **`@aws-sdk/client-s3`** (`apps/backend`): *Sudah terpasang di `package.json`*. Digunakan untuk inisialisasi client S3 API yang kompatibel dengan Cloudflare R2 dan lifecycle configuration.
 * **`@aws-sdk/s3-request-presigner`** (`apps/backend`): *Sudah terpasang di `package.json`*. Digunakan untuk membuat presigned PUT/GET URLs.
 * **`archiver` & `@types/archiver`** (`apps/backend`): *Sudah terpasang di `package.json`*. Digunakan untuk streaming kompresi ZIP.
 * **`better-sqlite3`** (`apps/kiosk`): *Sudah terpasang*. Digunakan untuk manajemen antrean lokal `upload_queue`.
@@ -138,8 +152,9 @@ R2_SECRET_ACCESS_KEY=your_r2_secret_access_key_here
 R2_BUCKET_NAME=pictolabs-media
 R2_PUBLIC_DOMAIN=https://dl.pictolabs.id
 
-# Storage Retention Policy (Days)
-MEDIA_RETENTION_DAYS=7
+# Dual-Tier Retention Policy
+MEDIA_LOCAL_RETENTION_DAYS=7
+MEDIA_CLOUD_RETENTION_DAYS=30
 MIN_FREE_DISK_GB=5
 ```
 
@@ -148,13 +163,13 @@ MIN_FREE_DISK_GB=5
 ## 7. Files Likely Affected
 
 ### Backend Modules (`apps/backend`)
-* **[MODIFY]** `src/storage/storage.service.ts`: Implementasi presigned URL generation, multi-file R2 upload helper, dan health check.
+* **[MODIFY]** `src/storage/storage.service.ts`: Implementasi presigned URL generation, multi-file R2 upload helper, R2 lifecycle management, dan health check.
 * **[MODIFY]** `src/storage/storage.controller.ts`: Endpoint `POST /api/storage/presigned-url` dan `POST /api/storage/confirm-upload`.
-* **[MODIFY]** `src/gallery/gallery.controller.ts`: Optimasi penyajian aset langsung dari CDN domain Cloudflare R2 dan fallback stream ZIP.
+* **[MODIFY]** `src/gallery/gallery.controller.ts`: Pengecekan umur sesi (>30 hari), penyajian template halaman kedaluwarsa (*Expired Gallery Notice*), dan fallback stream ZIP.
 
 ### Kiosk Electron (`apps/kiosk/electron`)
 * **[MODIFY]** `electron/services/SyncEngine.ts`: Penyempurnaan worker `processUploadQueue()` dengan presigned direct upload, exponential backoff, dan integrasi retention cleanup.
-* **[NEW]** `electron/services/StorageRetentionService.ts`: Daemon pembersih media lokal lawas (>7 hari) dengan pengecekan integritas upload queue.
+* **[NEW]** `electron/services/StorageRetentionService.ts`: Daemon pembersih media lokal lawas (>7 hari) dengan validasi ketat status `COMPLETED`.
 * **[MODIFY]** `electron/main.ts`: Inisialisasi `StorageRetentionService` pada saat app startup.
 
 ### Kiosk UI Layer (`apps/kiosk/src`)
@@ -165,48 +180,59 @@ MIN_FREE_DISK_GB=5
 ## 8. Step-by-Step Implementation Milestones
 
 ```
-[Milestone 1: Cloud Storage Service & Health Check]
+[Milestone 1: Cloud Storage Service, R2 Lifecycle & Health Check]
   │
   ▼
-[Milestone 2: Presigned Direct Upload API]
+[Milestone 2: Presigned Direct Upload API & Ingestion]
   │
   ▼
-[Milestone 3: Offline-First Upload Worker & Retry Queue]
+[Milestone 3: Offline-First Upload Worker & Adaptive Retry Queue]
   │
   ▼
-[Milestone 4: Public Mobile Web Gallery & Streaming ZIP]
+[Milestone 4: Public Mobile Web Gallery, CDN Delivery & Streaming ZIP]
   │
   ▼
-[Milestone 5: Media Retention & Disk Space Daemon]
+[Milestone 5: Graceful Expiration Page for Purged Sessions (>30 Hari)]
   │
   ▼
-[Milestone 6: Verification & E2E Testing]
+[Milestone 6: Local Kiosk Retention Daemon (7 Hari & Disk Safeguard)]
+  │
+  ▼
+[Milestone 7: Comprehensive Automated Verification & E2E Testing]
 ```
 
-1. **Milestone 1: Cloud Storage Service & Health Check**
+1. **Milestone 1: Cloud Storage Service, R2 Lifecycle & Health Check**
    - Menguji koneksi S3 client ke Cloudflare R2.
+   - Konfigurasi aturan lifecycle 30 hari pada R2 bucket.
    - Menguji graceful degradation saat kredensial kosong (`local_fallback`).
-2. **Milestone 2: Presigned Direct Upload API**
+2. **Milestone 2: Presigned Direct Upload API & Ingestion**
    - Menambahkan endpoint `POST /api/storage/presigned-url`.
    - Menguji pembuatan URL PUT berdurasi 15 menit dengan otentikasi header yang sesuai.
-3. **Milestone 3: Offline-First Upload Worker & Retry Queue**
+   - Endpoint `POST /api/storage/confirm-upload`.
+3. **Milestone 3: Offline-First Upload Worker & Adaptive Retry Queue**
    - Memperbarui `SyncEngine.ts` untuk menggunakan direct upload presigned URL.
    - Mengimplementasikan jeda bertingkat (*exponential backoff*) saat jaringan offline.
-4. **Milestone 4: Public Mobile Web Gallery & Streaming ZIP**
+4. **Milestone 4: Public Mobile Web Gallery, CDN Delivery & Streaming ZIP**
    - Mengoptimalkan respons web gallery agar gambar dan video dimuat langsung dari CDN R2.
    - Memastikan tombol unduh ZIP mengompresi berkas secara streaming tanpa lonjakan RAM.
-5. **Milestone 5: Media Retention & Disk Space Daemon**
+5. **Milestone 5: Graceful Expiration Page for Purged Sessions (>30 Hari)**
+   - Mendeteksi sesi berumur >30 hari di `gallery.controller.ts`.
+   - Merender halaman antarmuka web khusus yang ramah pengguna dengan pesan kedaluwarsa kebijakan privasi resmi Pictolabs.
+6. **Milestone 6: Local Kiosk Retention Daemon (7 Hari & Disk Safeguard)**
    - Membuat `StorageRetentionService.ts` untuk pemindaian berkas lokal lawas.
-   - Menguji penghapusan berkas aman yang hanya menargetkan media yang sudah berstatus `COMPLETED`.
-6. **Milestone 6: Verification & E2E Testing**
-   - Membangun automated test suite untuk pengujian upload queue, presigned URL, web gallery, dan retention cleanup.
+   - Menguji penghapusan berkas aman yang **hanya** menghapus media berstatus `COMPLETED` dan berumur >7 hari.
+7. **Milestone 7: Comprehensive Automated Verification & E2E Testing**
+   - Membangun automated test suite untuk pengujian upload queue, presigned URL, web gallery, expired notice, dan retention cleanup.
 
 ---
 
 ## 9. Definition of Done (DoD)
 
 Sprint 3 dinyatakan selesai (*Complete*) apabila:
-1. Seluruh 5 kriteria penerimaan (AC-1 s/d AC-5) lolos pengujian otomatis dan manual.
+1. Seluruh 5 kriteria penerimaan (AC-1 s/d AC-5) lolos pengujian otomatis dan manual, termasuk verifikasi:
+   - Media lokal berumur >7 hari terhapus jika dan hanya jika berstatus `COMPLETED`.
+   - Aset cloud berumur >30 hari dihapus secara otomatis.
+   - Tautan galeri kedaluwarsa tetap valid dan menampilkan halaman notifikasi kedaluwarsa yang elegan.
 2. Tidak ada penurunan performa atau regresi pada modul kamera DSLR (Sprint 1) dan sistem pembayaran Midtrans QRIS (Sprint 2).
 3. Pengunggahan berkas media lokal ke Cloudflare R2 berjalan otomatis di latar belakang tanpa menghambat antarmuka Kiosk.
 4. Customer dapat memindai QR Code di layar akhir Kiosk menggunakan smartphone dan mengunduh seluruh hasil foto serta video secara instan melalui Web Gallery.
