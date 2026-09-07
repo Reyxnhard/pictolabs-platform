@@ -172,9 +172,11 @@ model FrameAsset {
 
 model Transaction {
   id        String   @id @default(uuid())
+  orderId   String?  @unique
   sessionId String   @unique
   session   Session  @relation(fields: [sessionId], references: [id])
   amount    Float
+  status    String   @default("PENDING") // PENDING, SETTLED, EXPIRED, CANCELLED, FAILED
   payment   Payment?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -183,16 +185,21 @@ model Transaction {
 }
 
 model Payment {
-  id            String        @id @default(uuid())
-  transactionId String        @unique
-  transaction   Transaction   @relation(fields: [transactionId], references: [id])
-  method        String        @default("QRIS")
-  status        String        @default("PENDING")
-  paymentRef    String?
-  amount        Float
-  paidAt        DateTime?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  id                 String      @id @default(uuid())
+  transactionId      String      @unique
+  transaction        Transaction @relation(fields: [transactionId], references: [id])
+  orderId            String?     @unique
+  method             String      @default("QRIS")
+  status             String      @default("PENDING") // PENDING, SUCCESS, EXPIRED, CANCELLED, FAILED
+  paymentRef         String?     // Midtrans transaction_id
+  qrisString         String?     // EMVCo QR payload
+  qrisUrl            String?     // Midtrans QR image URL
+  amount             Float
+  paidAt             DateTime?
+  expiresAt          DateTime?
+  rawWebhookPayload  String?     // JSON audit log
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
 
   @@map("payments")
 }

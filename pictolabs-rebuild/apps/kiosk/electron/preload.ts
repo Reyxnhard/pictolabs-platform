@@ -95,6 +95,49 @@ const kioskApi = {
       ipcRenderer.invoke('session:get-download-url', sessionId),
   },
 
+  // ─── Payment ───────────────────────────────────────────
+  payment: {
+    createQRIS: (payload: {
+      boothId?: string;
+      sessionId?: string;
+      amount?: number;
+      productName?: string;
+      voucherCode?: string;
+    }): Promise<{
+      success: boolean;
+      orderId: string;
+      sessionId: string;
+      amount: number;
+      qrisString: string;
+      qrisUrl?: string;
+      expiresAt: string;
+      error?: string;
+    }> => ipcRenderer.invoke('payment:create-qris', payload),
+
+    checkStatus: (orderId: string): Promise<{
+      orderId: string;
+      status: string;
+      paid: boolean;
+      amount: number;
+      sessionId?: string;
+    }> => ipcRenderer.invoke('payment:check-status', orderId),
+
+    cancel: (orderId: string): Promise<{ success: boolean; orderId?: string }> =>
+      ipcRenderer.invoke('payment:cancel', orderId),
+
+    onPaymentSettled: (cb: (data: { orderId: string; amount: number; sessionId?: string }) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: any) => cb(data);
+      ipcRenderer.on('payment:settled', handler);
+      return () => ipcRenderer.removeListener('payment:settled', handler);
+    },
+
+    onPaymentExpired: (cb: (data: { orderId: string }) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: any) => cb(data);
+      ipcRenderer.on('payment:expired', handler);
+      return () => ipcRenderer.removeListener('payment:expired', handler);
+    },
+  },
+
   // ─── Config ────────────────────────────────────────────
   config: {
     get: (): Promise<Record<string, unknown>> =>

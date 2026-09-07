@@ -131,12 +131,48 @@ export interface KioskSystemAPI {
   restartKiosk(): Promise<void>;
 }
 
+export interface CreateQRISParams {
+  boothId?: string;
+  sessionId?: string;
+  amount?: number;
+  productName?: string;
+  voucherCode?: string;
+}
+
+export interface CreateQRISResult {
+  success: boolean;
+  orderId: string;
+  sessionId: string;
+  amount: number;
+  qrisString: string;
+  qrisUrl?: string;
+  expiresAt: string;
+  error?: string;
+}
+
+export interface PaymentStatusResult {
+  orderId: string;
+  status: string;
+  paid: boolean;
+  amount: number;
+  sessionId?: string;
+}
+
+export interface KioskPaymentAPI {
+  createQRIS(params: CreateQRISParams): Promise<CreateQRISResult>;
+  checkStatus(orderId: string): Promise<PaymentStatusResult>;
+  cancel(orderId: string): Promise<{ success: boolean; orderId?: string }>;
+  onPaymentSettled(cb: (data: { orderId: string; amount: number; sessionId?: string }) => void): () => void;
+  onPaymentExpired(cb: (data: { orderId: string }) => void): () => void;
+}
+
 export interface KioskAPI {
   camera: KioskCameraAPI;
   printer: KioskPrinterAPI;
   render: KioskRenderAPI;
   livePhoto: KioskLivePhotoAPI;
   session: KioskSessionAPI;
+  payment: KioskPaymentAPI;
   config: KioskConfigAPI;
   system: KioskSystemAPI;
 }
@@ -359,12 +395,69 @@ const mockLivePhoto: KioskLivePhotoAPI = {
   },
 };
 
+const mockPayment: KioskPaymentAPI = {
+  async createQRIS(params) {
+    console.log('[MockKiosk] Payment: createQRIS', params);
+    try {
+      const res = await fetch('http://localhost:4000/api/payments/qris', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          boothId: params.boothId || 'dev-secret-booth-01',
+          sessionId: params.sessionId,
+          amount: params.amount || 35000,
+          productName: params.productName,
+          voucherCode: params.voucherCode,
+        }),
+      });
+      return await res.json();
+    } catch {
+      const orderId = `TRX_MOCK_${Date.now()}`;
+      return {
+        success: true,
+        orderId,
+        sessionId: params.sessionId || `session_${Date.now()}`,
+        amount: params.amount || 35000,
+        qrisString: `00020101021226590014ID.LINKAJA.WWW01189360091100222071850215${orderId.padEnd(20, '0')}0303UMI51440014ID.CO.QRIS.WWW0215ID10200210000010303UMI52045812530336054005350005802ID5909PICTOLABS6007JAKARTA61051234062070703A016304`,
+        expiresAt: new Date(Date.now() + 270000).toISOString(),
+      };
+    }
+  },
+  async checkStatus(orderId) {
+    try {
+      const res = await fetch(`http://localhost:4000/api/payments/status/${orderId}`);
+      return await res.json();
+    } catch {
+      return { orderId, status: 'PENDING', paid: false, amount: 35000 };
+    }
+  },
+  async cancel(orderId) {
+    try {
+      const res = await fetch(`http://localhost:4000/api/payments/cancel/${orderId}`, { method: 'POST' });
+      return await res.json();
+    } catch {
+      return { success: true, orderId };
+    }
+  },
+  onPaymentSettled(cb) {
+    const handler = (e: any) => cb(e.detail);
+    window.addEventListener('pictolabs:payment-settled', handler);
+    return () => window.removeEventListener('pictolabs:payment-settled', handler);
+  },
+  onPaymentExpired(cb) {
+    const handler = (e: any) => cb(e.detail);
+    window.addEventListener('pictolabs:payment-expired', handler);
+    return () => window.removeEventListener('pictolabs:payment-expired', handler);
+  },
+};
+
 const mockKiosk: KioskAPI = {
   camera: mockCamera,
   printer: mockPrinter,
   render: mockRender,
   livePhoto: mockLivePhoto,
   session: mockSession,
+  payment: mockPayment,
   config: mockConfig,
   system: mockSystem,
 };
@@ -385,6 +478,7 @@ export const kiosk: KioskAPI = {
   get render() { return (isElectron() ? window.kiosk! : mockKiosk).render; },
   get livePhoto() { return (isElectron() ? window.kiosk! : mockKiosk).livePhoto; },
   get session() { return (isElectron() ? window.kiosk! : mockKiosk).session; },
+  get payment() { return (isElectron() ? window.kiosk! : mockKiosk).payment; },
   get config() { return (isElectron() ? window.kiosk! : mockKiosk).config; },
   get system() { return (isElectron() ? window.kiosk! : mockKiosk).system; },
 };

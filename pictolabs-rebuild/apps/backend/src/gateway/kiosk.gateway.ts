@@ -154,4 +154,32 @@ export class KioskGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.log(`[WebSocket] Pushed CONFIG_UPDATE to booth: ${boothId}`);
     }
   }
+
+  /**
+   * Emits payment settled event to the specific booth and dashboard clients
+   */
+  notifyPaymentSettled(boothId: string, payload: any) {
+    this.logger.log(`[WebSocket] Emitting payment:settled for booth ${boothId}: ${JSON.stringify(payload)}`);
+    if (this.server) {
+      // Emit to booth room
+      this.server.to(`booth:${boothId}`).emit('payment:settled', payload);
+      this.server.to(`booth:${boothId}`).emit('PAYMENT_SETTLED', payload);
+      // Broadcast to kiosks room as well
+      this.server.to('kiosks').emit('payment:settled', payload);
+      this.server.to('dashboards').emit('payment:settled', payload);
+    }
+  }
+
+  /**
+   * Emits payment expired event to the booth
+   */
+  notifyPaymentExpired(boothId: string, payload: any) {
+    this.logger.log(`[WebSocket] Emitting payment:expired for booth ${boothId}: ${JSON.stringify(payload)}`);
+    if (this.server) {
+      this.server.to(`booth:${boothId}`).emit('payment:expired', payload);
+      this.server.to(`booth:${boothId}`).emit('PAYMENT_EXPIRED', payload);
+      this.server.to('dashboards').emit('payment:expired', payload);
+    }
+  }
 }
+

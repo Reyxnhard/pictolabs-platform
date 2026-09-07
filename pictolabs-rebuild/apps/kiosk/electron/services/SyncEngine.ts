@@ -565,6 +565,30 @@ function setupSocketConnection(): void {
     }
   });
 
+  socket.on('payment:settled', (data) => {
+    console.log('[SyncEngine] Received remote payment:settled from Cloud:', data);
+    const windows = BrowserWindow.getAllWindows();
+    for (const win of windows) {
+      win.webContents.send('payment:settled', data);
+    }
+  });
+
+  socket.on('PAYMENT_SETTLED', (data) => {
+    console.log('[SyncEngine] Received remote PAYMENT_SETTLED from Cloud:', data);
+    const windows = BrowserWindow.getAllWindows();
+    for (const win of windows) {
+      win.webContents.send('payment:settled', data);
+    }
+  });
+
+  socket.on('payment:expired', (data) => {
+    console.log('[SyncEngine] Received remote payment:expired from Cloud:', data);
+    const windows = BrowserWindow.getAllWindows();
+    for (const win of windows) {
+      win.webContents.send('payment:expired', data);
+    }
+  });
+
   // Start health ping (transmits real-time hardware telemetry to Cloud Backend)
   healthPingInterval = setInterval(() => {
     if (socket?.connected) {
@@ -677,6 +701,67 @@ export function registerSyncHandlers(engineConfig: SyncEngineConfig): void {
 
   ipcMain.handle('session:get-download-url', async (_event, sessionId: string) => {
     return resolveLanDownloadUrl(`/d/${sessionId}`, config.apiBaseUrl || 'http://localhost:4000');
+  });
+
+  // ─── IPC: Payment Management ───────────────────────────
+  ipcMain.handle(
+    'payment:create-qris',
+    async (
+      _event,
+      params: {
+        boothId?: string;
+        sessionId?: string;
+        amount?: number;
+        productName?: string;
+        voucherCode?: string;
+      }
+    ) => {
+      const baseUrl = config.apiBaseUrl || 'http://localhost:4000';
+      const boothId = params.boothId || config.deviceSecret || 'dev-secret-booth-01';
+      console.log(`[SyncEngine] Requesting QRIS from ${baseUrl}/api/payments/qris for ${boothId}`);
+      try {
+        const res = await fetch(`${baseUrl}/api/payments/qris`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            boothId,
+            sessionId: params.sessionId,
+            amount: params.amount || 35000,
+            productName: params.productName,
+            voucherCode: params.voucherCode,
+          }),
+        });
+        return await res.json();
+      } catch (err: any) {
+        console.error('[SyncEngine] Failed to create QRIS:', err.message);
+        return { success: false, error: err.message };
+      }
+    }
+  );
+
+  ipcMain.handle('payment:check-status', async (_event, orderId: string) => {
+    const baseUrl = config.apiBaseUrl || 'http://localhost:4000';
+    try {
+      const res = await fetch(`${baseUrl}/api/payments/status/${orderId}`);
+      if (!res.ok) {
+        return { status: 'NOT_FOUND', paid: false };
+      }
+      return await res.json();
+    } catch (err: any) {
+      return { status: 'ERROR', paid: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('payment:cancel', async (_event, orderId: string) => {
+    const baseUrl = config.apiBaseUrl || 'http://localhost:4000';
+    try {
+      const res = await fetch(`${baseUrl}/api/payments/cancel/${orderId}`, {
+        method: 'POST',
+      });
+      return await res.json();
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
   });
 }
 

@@ -32,3 +32,30 @@ export interface FrameLayerConfig {
   height: number;
   rotation?: number;
 }
+
+export interface CreateQRISRequest {
+  boothId: string;
+  sessionId?: string;
+  amount: number;
+  productName?: string;
+  voucherCode?: string;
+}
+
+export interface CreateQRISResponse {
+  success: boolean;
+  orderId: string;
+  sessionId: string;
+  amount: number;
+  qrisString: string;
+  qrisUrl?: string;
+  expiresAt: string;
+}
+
+export interface PaymentSettledEvent {
+  orderId: string;
+  sessionId: string;
+  amount: number;
+  status: string;
+  settledAt: string;
+}
+
