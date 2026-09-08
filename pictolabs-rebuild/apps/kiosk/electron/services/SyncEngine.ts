@@ -61,6 +61,7 @@ let config: SyncEngineConfig;
 let syncInterval: ReturnType<typeof setInterval> | null = null;
 let uploadInterval: ReturnType<typeof setInterval> | null = null;
 let healthPingInterval: ReturnType<typeof setInterval> | null = null;
+let httpHeartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let socket: Socket | null = null;
 let isUploading = false;
 
@@ -697,6 +698,60 @@ function setupSocketConnection(): void {
   }, 10_000);
 }
 
+function getPrimaryLocalIp(): string {
+  try {
+    const nets = os.networkInterfaces();
+    for (const name of Object.keys(nets)) {
+      for (const net of nets[name] || []) {
+        if (net.family === 'IPv4' && !net.internal) {
+          return net.address;
+        }
+      }
+    }
+  } catch {}
+  return '127.0.0.1';
+}
+
+/**
+ * Sends authoritative HTTP heartbeat to Cloud Backend (Single Source of Truth).
+ * Updates last_seen, appVersion, gitCommit, machineName, localIp, osVersion,
+ * electronVersion, and releaseChannel in PostgreSQL.
+ */
+async function sendHttpHeartbeat(): Promise<void> {
+  if (!config?.apiBaseUrl || !config?.deviceSecret) return;
+
+  const targetUrl = `${config.apiBaseUrl}/api/booths/${config.deviceSecret}/heartbeat`;
+  const payload = {
+    appVersion: '1.2.5',
+    gitCommit: process.env.GIT_COMMIT || '1457ae6',
+    machineName: os.hostname(),
+    localIp: getPrimaryLocalIp(),
+    osVersion: `${os.type()} ${os.release()} (${os.arch()})`,
+    electronVersion: process.versions.electron || '28.2.0',
+    releaseChannel: 'stable',
+  };
+
+  try {
+    const res = await fetch(targetUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-device-secret': config.deviceSecret,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+      const data = (await res.json()) as any;
+      console.log(`[SyncEngine] ✓ HTTP Heartbeat sent -> Effective Status: ${data.status} (Maintenance: ${data.isMaintenance})`);
+    } else {
+      console.warn(`[SyncEngine] HTTP Heartbeat returned status ${res.status}`);
+    }
+  } catch (err) {
+    console.warn(`[SyncEngine] HTTP Heartbeat network error: ${(err as Error).message}`);
+  }
+}
+
 export function registerSyncHandlers(engineConfig: SyncEngineConfig): void {
   config = engineConfig;
 
@@ -709,6 +764,14 @@ export function registerSyncHandlers(engineConfig: SyncEngineConfig): void {
 
   // Setup WebSocket connection to backend
   setupSocketConnection();
+
+  // Start periodic HTTP heartbeat as single source of truth (every 30 seconds)
+  sendHttpHeartbeat().catch(() => {});
+  httpHeartbeatInterval = setInterval(() => {
+    sendHttpHeartbeat().catch((err) =>
+      console.error('[SyncEngine] HTTP Heartbeat timer error:', err)
+    );
+  }, 30_000);
 
   // Start periodic cloud metadata sync
   syncInterval = setInterval(() => {

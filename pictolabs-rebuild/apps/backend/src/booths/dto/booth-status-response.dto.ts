@@ -15,6 +15,9 @@ export class BoothRuntimePlatformDto {
   @ApiPropertyOptional({ example: '1.2.0' })
   appVersion?: string | null;
 
+  @ApiPropertyOptional({ example: '1457ae6' })
+  gitCommit?: string | null;
+
   @ApiPropertyOptional({ example: 'Windows 11 Pro 23H2 (Build 22631)' })
   osVersion?: string | null;
 

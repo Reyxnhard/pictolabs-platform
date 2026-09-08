@@ -71,28 +71,40 @@ export class BoothsService {
     };
   }
 
+  private async findBoothByIdentifier(identifier: string, include?: any) {
+    const booth = await this.prisma.booth.findFirst({
+      where: {
+        OR: [
+          { id: identifier },
+          { deviceSecret: identifier },
+        ],
+      },
+      include,
+    });
+
+    if (!booth) {
+      throw new NotFoundException(`Booth with identifier "${identifier}" not found`);
+    }
+
+    return booth;
+  }
+
   /**
    * Record operational heartbeat from physical kiosk.
    * Updates last_seen timestamp and platform runtime attributes.
    * Does NOT overwrite the database status column (leaves source of truth un-polluted).
    */
   async recordHeartbeat(boothId: string, dto: BoothHeartbeatDto) {
-    const booth = await this.prisma.booth.findUnique({
-      where: { id: boothId },
-    });
-
-    if (!booth) {
-      throw new NotFoundException(`Booth with id ${boothId} not found`);
-    }
-
+    const booth = await this.findBoothByIdentifier(boothId);
     const now = new Date();
 
     // Update last_seen and runtime attributes, but NEVER overwrite status column with ONLINE/OFFLINE
     const updated = await this.prisma.booth.update({
-      where: { id: boothId },
+      where: { id: booth.id },
       data: {
         lastSeen: now,
         ...(dto.appVersion ? { appVersion: dto.appVersion } : {}),
+        ...(dto.gitCommit ? { gitCommit: dto.gitCommit } : {}),
         ...(dto.machineName ? { machineName: dto.machineName } : {}),
         ...(dto.localIp ? { localIp: dto.localIp } : {}),
         ...(dto.osVersion ? { osVersion: dto.osVersion } : {}),
@@ -104,17 +116,18 @@ export class BoothsService {
     const computed = this.computeEffectiveStatus(now, updated.status);
 
     this.logger.log(
-      `[BoothsService] Heartbeat recorded for ${updated.name} (${boothId}) -> Effective: ${computed.effectiveStatus}`
+      `[BoothsService] Heartbeat recorded for ${updated.name} (${booth.id}) -> Effective: ${computed.effectiveStatus}`
     );
 
     return {
       success: true,
-      boothId,
+      boothId: booth.id,
       status: computed.effectiveStatus,
       isMaintenance: computed.isMaintenance,
       lastSeen: now.toISOString(),
       secondsSinceLastHeartbeat: 0,
       appVersion: updated.appVersion,
+      gitCommit: updated.gitCommit,
       machineName: updated.machineName,
       localIp: updated.localIp,
       osVersion: updated.osVersion,
@@ -128,16 +141,10 @@ export class BoothsService {
    * Set manual administrative override status (e.g. MAINTENANCE or NORMAL).
    */
   async setManualStatus(boothId: string, dto: UpdateBoothStatusDto) {
-    const booth = await this.prisma.booth.findUnique({
-      where: { id: boothId },
-    });
-
-    if (!booth) {
-      throw new NotFoundException(`Booth with id ${boothId} not found`);
-    }
+    const booth = await this.findBoothByIdentifier(boothId);
 
     const updated = await this.prisma.booth.update({
-      where: { id: boothId },
+      where: { id: booth.id },
       data: {
         status: dto.status,
       },
@@ -146,12 +153,12 @@ export class BoothsService {
     const computed = this.computeEffectiveStatus(updated.lastSeen, updated.status);
 
     this.logger.log(
-      `[BoothsService] Manual status updated for ${updated.name} (${boothId}) -> ${dto.status} (Effective: ${computed.effectiveStatus})`
+      `[BoothsService] Manual status updated for ${updated.name} (${booth.id}) -> ${dto.status} (Effective: ${computed.effectiveStatus})`
     );
 
     return {
       success: true,
-      boothId,
+      boothId: booth.id,
       name: updated.name,
       status: computed.effectiveStatus,
       isMaintenance: computed.isMaintenance,
@@ -164,12 +171,9 @@ export class BoothsService {
    * Get detailed diagnostic status report for a single booth.
    */
   async getBoothStatus(boothId: string) {
-    const booth = await this.prisma.booth.findUnique({
-      where: { id: boothId },
-      include: {
-        branch: true,
-        config: true,
-      },
+    const booth = await this.findBoothByIdentifier(boothId, {
+      branch: true,
+      config: true,
     });
 
     if (!booth) {
@@ -192,6 +196,7 @@ export class BoothsService {
       },
       runtime: {
         appVersion: booth.appVersion || null,
+        gitCommit: booth.gitCommit || null,
         osVersion: booth.osVersion || null,
         electronVersion: booth.electronVersion || null,
         releaseChannel: booth.releaseChannel || 'stable',
@@ -226,6 +231,7 @@ export class BoothsService {
         lastSeen: b.lastSeen ? b.lastSeen.toISOString() : null,
         secondsSinceLastHeartbeat: computed.secondsSinceLastHeartbeat,
         appVersion: b.appVersion || null,
+        gitCommit: b.gitCommit || null,
         osVersion: b.osVersion || null,
         electronVersion: b.electronVersion || null,
         releaseChannel: b.releaseChannel || 'stable',
@@ -243,11 +249,7 @@ export class BoothsService {
   }
 
   async findById(id: string) {
-    const booth = await this.prisma.booth.findUnique({
-      where: { id },
-      include: { branch: true, config: true },
-    });
-    if (!booth) throw new NotFoundException('Booth not found');
+    const booth = await this.findBoothByIdentifier(id, { branch: true, config: true });
     const computed = this.computeEffectiveStatus(booth.lastSeen, booth.status);
     return {
       ...booth,

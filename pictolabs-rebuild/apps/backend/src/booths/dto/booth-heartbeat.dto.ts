@@ -11,6 +11,14 @@ export class BoothHeartbeatDto {
   appVersion?: string;
 
   @ApiPropertyOptional({
+    example: '1457ae6',
+    description: 'Active Git commit SHA of the kiosk application build',
+  })
+  @IsOptional()
+  @IsString()
+  gitCommit?: string;
+
+  @ApiPropertyOptional({
     example: 'PICTO-BOOTH-01',
     description: 'Hostname or identifier of the host machine',
   })

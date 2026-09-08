@@ -54,25 +54,12 @@ export class KioskGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    // Mark booth online
-    await this.prisma.booth.update({
-      where: { id: booth.id },
-      data: { status: 'ONLINE' },
-    });
-
     this.connectedBooths.set(client.id, booth.id);
     client.join(`booth:${booth.id}`);
     client.join('kiosks');
     
-    this.logger.log(`✓ Booth Online: ${booth.name} (${booth.id})`);
+    this.logger.log(`✓ Kiosk Socket Connected: ${booth.name} (${booth.id})`);
     
-    // Notify Dashboards
-    this.server.to('dashboards').emit('booth_status_changed', {
-      boothId: booth.id,
-      name: booth.name,
-      status: 'ONLINE',
-    });
-
     // Send latest config immediately on connect
     if (booth.config?.generalSettings) {
       try {
@@ -88,17 +75,13 @@ export class KioskGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const boothId = this.connectedBooths.get(client.id);
     
     if (boothId) {
-      await this.prisma.booth.update({
-        where: { id: boothId },
-        data: { status: 'OFFLINE' },
-      });
-      
-      this.logger.log(`✗ Booth Offline: ${boothId}`);
+      this.logger.log(`✗ Kiosk Socket Disconnected: ${boothId}`);
       this.connectedBooths.delete(client.id);
 
-      this.server.to('dashboards').emit('booth_status_changed', {
+      // Note: Database status is NOT mutated on socket disconnect.
+      // Status is computed dynamically from HTTP heartbeat last_seen.
+      this.server.to('dashboards').emit('booth_socket_disconnected', {
         boothId,
-        status: 'OFFLINE',
       });
     }
   }

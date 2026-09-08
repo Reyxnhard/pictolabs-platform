@@ -56,6 +56,7 @@ model Booth {
   status          String           @default("NORMAL") // Admin override: NORMAL or MAINTENANCE
   lastSeen        DateTime?        @map("last_seen")
   appVersion      String?          @map("app_version")
+  gitCommit       String?          @map("git_commit")
   machineName     String?          @map("machine_name")
   localIp         String?          @map("local_ip")
   osVersion       String?          @map("os_version")
