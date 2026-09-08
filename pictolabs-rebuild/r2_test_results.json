@@ -1,0 +1,11 @@
+{
+  "testFileName": "composite_test_session_1788895853277.jpg",
+  "storageKey": "photos/composite_test_session_1788895853277.jpg",
+  "uploadedBytes": 40611,
+  "r2Provider": "cloudflare_r2",
+  "headObjectStatus": 200,
+  "downloadHttpStatus": 200,
+  "downloadBytes": 40611,
+  "deleteStatus": true,
+  "overallResult": "PASS"
+}

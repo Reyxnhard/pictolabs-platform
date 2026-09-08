@@ -28,6 +28,21 @@ async function bootstrap() {
     },
   });
 
+  // Configure Swagger OpenAPI 3.0 Documentation
+  const { DocumentBuilder, SwaggerModule } = require('@nestjs/swagger');
+  const swaggerConfig = new DocumentBuilder()
+    .setTitle('Pictolabs Photobooth Cloud API')
+    .setDescription('Operational monitoring, fleet telemetry, storage ingestion, and payment gateway APIs')
+    .setVersion('1.0.0')
+    .addTag('Booths', 'Fleet heartbeat, dynamic status tracking, and configuration push')
+    .addTag('Storage', 'Cloudflare R2 object storage and presigned upload ingestion')
+    .addTag('Payments', 'Midtrans QRIS dynamic payment integration')
+    .build();
+
+  const document = SwaggerModule.createDocument(app, swaggerConfig);
+  SwaggerModule.setup('api/docs', app, document);
+  SwaggerModule.setup('docs', app, document);
+
   const port = process.env.PORT || 4000;
   await app.listen(port);
   console.log(`[Pictolabs Backend] Running on http://localhost:${port}`);

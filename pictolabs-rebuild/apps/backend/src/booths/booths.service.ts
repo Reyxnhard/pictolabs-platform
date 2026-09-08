@@ -1,26 +1,260 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { BoothHeartbeatDto } from './dto/booth-heartbeat.dto';
+import { UpdateBoothStatusDto } from './dto/update-booth-status.dto';
 
-export type BoothStatus = 'ONLINE' | 'OFFLINE' | 'MAINTENANCE' | 'CAPTURING' | 'PRINTING' | string;
+export type ComputedStatus = 'ONLINE' | 'DEGRADED' | 'OFFLINE' | 'MAINTENANCE';
 
 @Injectable()
 export class BoothsService {
+  private readonly logger = new Logger(BoothsService.name);
+
   constructor(private prisma: PrismaService) {}
 
-  async findAll() {
-    return this.prisma.booth.findMany({
-      include: { branch: true, config: true },
+  /**
+   * Determine effective status dynamically:
+   * 1. If manual override is MAINTENANCE -> always MAINTENANCE.
+   * 2. Otherwise compute from last_seen delta:
+   *    - ONLINE: < 60 seconds
+   *    - DEGRADED: 60s - 300s (< 5 minutes)
+   *    - OFFLINE: >= 300s (>= 5 minutes) or null
+   */
+  computeEffectiveStatus(
+    lastSeen?: Date | null,
+    manualStatus?: string
+  ): {
+    effectiveStatus: ComputedStatus;
+    secondsSinceLastHeartbeat: number | null;
+    isMaintenance: boolean;
+  } {
+    const isMaintenance = manualStatus === 'MAINTENANCE';
+    const ageSeconds = lastSeen
+      ? Math.max(0, Math.floor((Date.now() - new Date(lastSeen).getTime()) / 1000))
+      : null;
+
+    if (isMaintenance) {
+      return {
+        effectiveStatus: 'MAINTENANCE',
+        secondsSinceLastHeartbeat: ageSeconds,
+        isMaintenance: true,
+      };
+    }
+
+    if (!lastSeen || ageSeconds === null) {
+      return {
+        effectiveStatus: 'OFFLINE',
+        secondsSinceLastHeartbeat: null,
+        isMaintenance: false,
+      };
+    }
+
+    if (ageSeconds < 60) {
+      return {
+        effectiveStatus: 'ONLINE',
+        secondsSinceLastHeartbeat: ageSeconds,
+        isMaintenance: false,
+      };
+    }
+
+    if (ageSeconds < 300) {
+      return {
+        effectiveStatus: 'DEGRADED',
+        secondsSinceLastHeartbeat: ageSeconds,
+        isMaintenance: false,
+      };
+    }
+
+    return {
+      effectiveStatus: 'OFFLINE',
+      secondsSinceLastHeartbeat: ageSeconds,
+      isMaintenance: false,
+    };
+  }
+
+  /**
+   * Record operational heartbeat from physical kiosk.
+   * Updates last_seen timestamp and platform runtime attributes.
+   * Does NOT overwrite the database status column (leaves source of truth un-polluted).
+   */
+  async recordHeartbeat(boothId: string, dto: BoothHeartbeatDto) {
+    const booth = await this.prisma.booth.findUnique({
+      where: { id: boothId },
+    });
+
+    if (!booth) {
+      throw new NotFoundException(`Booth with id ${boothId} not found`);
+    }
+
+    const now = new Date();
+
+    // Update last_seen and runtime attributes, but NEVER overwrite status column with ONLINE/OFFLINE
+    const updated = await this.prisma.booth.update({
+      where: { id: boothId },
+      data: {
+        lastSeen: now,
+        ...(dto.appVersion ? { appVersion: dto.appVersion } : {}),
+        ...(dto.machineName ? { machineName: dto.machineName } : {}),
+        ...(dto.localIp ? { localIp: dto.localIp } : {}),
+        ...(dto.osVersion ? { osVersion: dto.osVersion } : {}),
+        ...(dto.electronVersion ? { electronVersion: dto.electronVersion } : {}),
+        ...(dto.releaseChannel ? { releaseChannel: dto.releaseChannel } : {}),
+      },
+    });
+
+    const computed = this.computeEffectiveStatus(now, updated.status);
+
+    this.logger.log(
+      `[BoothsService] Heartbeat recorded for ${updated.name} (${boothId}) -> Effective: ${computed.effectiveStatus}`
+    );
+
+    return {
+      success: true,
+      boothId,
+      status: computed.effectiveStatus,
+      isMaintenance: computed.isMaintenance,
+      lastSeen: now.toISOString(),
+      secondsSinceLastHeartbeat: 0,
+      appVersion: updated.appVersion,
+      machineName: updated.machineName,
+      localIp: updated.localIp,
+      osVersion: updated.osVersion,
+      electronVersion: updated.electronVersion,
+      releaseChannel: updated.releaseChannel,
+      acknowledged: true,
+    };
+  }
+
+  /**
+   * Set manual administrative override status (e.g. MAINTENANCE or NORMAL).
+   */
+  async setManualStatus(boothId: string, dto: UpdateBoothStatusDto) {
+    const booth = await this.prisma.booth.findUnique({
+      where: { id: boothId },
+    });
+
+    if (!booth) {
+      throw new NotFoundException(`Booth with id ${boothId} not found`);
+    }
+
+    const updated = await this.prisma.booth.update({
+      where: { id: boothId },
+      data: {
+        status: dto.status,
+      },
+    });
+
+    const computed = this.computeEffectiveStatus(updated.lastSeen, updated.status);
+
+    this.logger.log(
+      `[BoothsService] Manual status updated for ${updated.name} (${boothId}) -> ${dto.status} (Effective: ${computed.effectiveStatus})`
+    );
+
+    return {
+      success: true,
+      boothId,
+      name: updated.name,
+      status: computed.effectiveStatus,
+      isMaintenance: computed.isMaintenance,
+      reason: dto.reason || null,
+      updatedAt: updated.updatedAt.toISOString(),
+    };
+  }
+
+  /**
+   * Get detailed diagnostic status report for a single booth.
+   */
+  async getBoothStatus(boothId: string) {
+    const booth = await this.prisma.booth.findUnique({
+      where: { id: boothId },
+      include: {
+        branch: true,
+        config: true,
+      },
+    });
+
+    if (!booth) {
+      throw new NotFoundException(`Booth with id ${boothId} not found`);
+    }
+
+    const computed = this.computeEffectiveStatus(booth.lastSeen, booth.status);
+
+    return {
+      boothId: booth.id,
+      name: booth.name,
+      status: computed.effectiveStatus,
+      isMaintenance: computed.isMaintenance,
+      lastSeen: booth.lastSeen ? booth.lastSeen.toISOString() : null,
+      secondsSinceLastHeartbeat: computed.secondsSinceLastHeartbeat,
+      thresholds: {
+        onlineUnderSeconds: 60,
+        degradedUnderSeconds: 300,
+        offlineOverSeconds: 300,
+      },
+      runtime: {
+        appVersion: booth.appVersion || null,
+        osVersion: booth.osVersion || null,
+        electronVersion: booth.electronVersion || null,
+        releaseChannel: booth.releaseChannel || 'stable',
+        machineName: booth.machineName || null,
+        localIp: booth.localIp || null,
+      },
+    };
+  }
+
+  /**
+   * Retrieve all booths with dynamically evaluated status.
+   */
+  async findAllWithStatus() {
+    const booths = await this.prisma.booth.findMany({
+      include: {
+        branch: true,
+        config: true,
+      },
       orderBy: { updatedAt: 'desc' },
     });
+
+    return booths.map((b) => {
+      const computed = this.computeEffectiveStatus(b.lastSeen, b.status);
+
+      return {
+        id: b.id,
+        name: b.name,
+        branchId: b.branchId,
+        branch: b.branch,
+        status: computed.effectiveStatus,
+        isMaintenance: computed.isMaintenance,
+        lastSeen: b.lastSeen ? b.lastSeen.toISOString() : null,
+        secondsSinceLastHeartbeat: computed.secondsSinceLastHeartbeat,
+        appVersion: b.appVersion || null,
+        osVersion: b.osVersion || null,
+        electronVersion: b.electronVersion || null,
+        releaseChannel: b.releaseChannel || 'stable',
+        machineName: b.machineName || null,
+        localIp: b.localIp || null,
+        config: b.config,
+        createdAt: b.createdAt,
+        updatedAt: b.updatedAt,
+      };
+    });
+  }
+
+  async findAll() {
+    return this.findAllWithStatus();
   }
 
   async findById(id: string) {
     const booth = await this.prisma.booth.findUnique({
       where: { id },
-      include: { branch: true, config: true, healthLogs: { take: 10, orderBy: { createdAt: 'desc' } } },
+      include: { branch: true, config: true },
     });
     if (!booth) throw new NotFoundException('Booth not found');
-    return booth;
+    const computed = this.computeEffectiveStatus(booth.lastSeen, booth.status);
+    return {
+      ...booth,
+      status: computed.effectiveStatus,
+      isMaintenance: computed.isMaintenance,
+      secondsSinceLastHeartbeat: computed.secondsSinceLastHeartbeat,
+    };
   }
 
   async updateConfig(boothId: string, configData: any) {
@@ -41,13 +275,6 @@ export class BoothsService {
         printerState: data.printerState,
         rawPayload: typeof data === 'string' ? data : JSON.stringify(data),
       },
-    });
-  }
-
-  async updateStatus(boothId: string, status: BoothStatus) {
-    return this.prisma.booth.update({
-      where: { id: boothId },
-      data: { status },
     });
   }
 }

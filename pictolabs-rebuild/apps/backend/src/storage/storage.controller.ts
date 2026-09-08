@@ -2,6 +2,8 @@ import {
   Controller,
   Post,
   Get,
+  Delete,
+  Query,
   Req,
   Body,
   Headers,
@@ -161,5 +163,36 @@ export class StorageController {
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
+  }
+
+  @Get('url')
+  getUrl(@Query('key') key: string) {
+    if (!key) {
+      throw new HttpException('Query parameter "key" is required', HttpStatus.BAD_REQUEST);
+    }
+    const publicUrl = this.storageService.getFileUrl(key);
+    return { key, publicUrl };
+  }
+
+  @Get('presigned-download-url')
+  async getPresignedDownloadUrl(
+    @Query('key') key: string,
+    @Query('expiresIn') expiresIn?: string
+  ) {
+    if (!key) {
+      throw new HttpException('Query parameter "key" is required', HttpStatus.BAD_REQUEST);
+    }
+    const seconds = expiresIn ? parseInt(expiresIn, 10) : 3600;
+    const downloadUrl = await this.storageService.getPresignedDownloadUrl(key, seconds);
+    return { key, downloadUrl, expiresInSeconds: seconds };
+  }
+
+  @Delete('file')
+  async deleteFile(@Query('key') key: string) {
+    if (!key) {
+      throw new HttpException('Query parameter "key" is required', HttpStatus.BAD_REQUEST);
+    }
+    const success = await this.storageService.deleteFile(key);
+    return { key, deleted: success };
   }
 }

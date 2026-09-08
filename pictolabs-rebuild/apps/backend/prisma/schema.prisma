@@ -1,6 +1,6 @@
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 generator client {
@@ -53,7 +53,14 @@ model Booth {
   deviceSecret String           @unique
   branchId     String
   branch       Branch           @relation(fields: [branchId], references: [id])
-  status       String           @default("OFFLINE") // ONLINE, OFFLINE, MAINTENANCE, CAPTURING, PRINTING
+  status          String           @default("NORMAL") // Admin override: NORMAL or MAINTENANCE
+  lastSeen        DateTime?        @map("last_seen")
+  appVersion      String?          @map("app_version")
+  machineName     String?          @map("machine_name")
+  localIp         String?          @map("local_ip")
+  osVersion       String?          @map("os_version")
+  electronVersion String?          @map("electron_version")
+  releaseChannel  String?          @default("stable") @map("release_channel")
   config       BoothConfig?
   healthLogs   BoothHealthLog[]
   sessions     Session[]

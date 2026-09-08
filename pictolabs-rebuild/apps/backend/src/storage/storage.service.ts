@@ -185,25 +185,121 @@ export class StorageService implements OnModuleInit {
   }
 
   /**
-   * Delete an object from Cloudflare R2 and local filesystem.
+   * Get public accessible CDN / R2 URL for a given object key.
    */
-  async deleteObject(key: string): Promise<boolean> {
+  getFileUrl(key: string): string {
+    const cleanKey = key.replace(/^\/+/, '');
+    if (this.r2PublicDomain) {
+      const cleanDomain = this.r2PublicDomain.replace(/\/+$/, '');
+      const prefix = cleanDomain.startsWith('http') ? cleanDomain : `https://${cleanDomain}`;
+      return `${prefix}/${cleanKey}`;
+    }
+    if (this.r2Bucket && this.s3Client) {
+      return `https://${this.r2Bucket}.r2.cloudflarestorage.com/${cleanKey}`;
+    }
+    return `/uploads/${path.basename(cleanKey)}`;
+  }
+
+  /**
+   * Generate authenticated Presigned GET URL for secure direct downloads.
+   */
+  async getPresignedDownloadUrl(key: string, expiresInSeconds: number = 3600): Promise<string> {
+    const cleanKey = key.replace(/^\/+/, '');
+    if (this.s3Client && this.r2Bucket) {
+      try {
+        const { GetObjectCommand } = require('@aws-sdk/client-s3');
+        const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+        const command = new GetObjectCommand({
+          Bucket: this.r2Bucket,
+          Key: cleanKey,
+        });
+        return await getSignedUrl(this.s3Client, command, { expiresIn: expiresInSeconds });
+      } catch (err: any) {
+        this.logger.error(`[StorageService] Failed generating presigned download URL: ${err.message}`);
+      }
+    }
+    return this.getFileUrl(cleanKey);
+  }
+
+  /**
+   * Upload file buffer directly to Cloudflare R2 storage (Primary Engine).
+   */
+  async uploadFile(
+    key: string,
+    buffer: Buffer,
+    contentType: string = 'image/jpeg'
+  ): Promise<{ key: string; url: string; publicUrl: string; provider: 'cloudflare_r2' | 'local_fallback' }> {
+    const cleanKey = key.replace(/^\/+/, '');
+    const filename = path.basename(cleanKey);
+    const localFilePath = path.join(this.uploadDir, filename);
+
+    // 1. Primary: Upload to Cloudflare R2 bucket if client is configured
+    if (this.s3Client && this.r2Bucket) {
+      try {
+        const { PutObjectCommand } = require('@aws-sdk/client-s3');
+        const uploadCmd = new PutObjectCommand({
+          Bucket: this.r2Bucket,
+          Key: cleanKey,
+          Body: buffer,
+          ContentType: contentType,
+          CacheControl: 'public, max-age=31536000',
+        });
+
+        await this.s3Client.send(uploadCmd);
+        const publicUrl = this.getFileUrl(cleanKey);
+
+        this.logger.log(`[StorageService] Successfully uploaded to Cloudflare R2: ${publicUrl}`);
+
+        // Maintain local cached copy for zero-latency photobooth kiosk operations
+        try {
+          fs.writeFileSync(localFilePath, buffer);
+        } catch (_) {}
+
+        return {
+          key: cleanKey,
+          url: `/uploads/${filename}`,
+          publicUrl,
+          provider: 'cloudflare_r2',
+        };
+      } catch (err: any) {
+        this.logger.error(`[StorageService] Cloudflare R2 upload error: ${err.message}. Falling back to local storage.`);
+      }
+    }
+
+    // 2. Fallback: Local filesystem storage
+    fs.writeFileSync(localFilePath, buffer);
+    const localUrl = `/uploads/${filename}`;
+    return {
+      key: cleanKey,
+      url: localUrl,
+      publicUrl: localUrl,
+      provider: 'local_fallback',
+    };
+  }
+
+  /**
+   * Delete file from Cloudflare R2 and local filesystem.
+   */
+  async deleteFile(key: string): Promise<boolean> {
+    const cleanKey = key.replace(/^\/+/, '');
     let deleted = false;
+
     if (this.s3Client && this.r2Bucket) {
       try {
         const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
         const cmd = new DeleteObjectCommand({
           Bucket: this.r2Bucket,
-          Key: key,
+          Key: cleanKey,
         });
         await this.s3Client.send(cmd);
         deleted = true;
+        this.logger.log(`[StorageService] Deleted object from Cloudflare R2: ${cleanKey}`);
       } catch (err: any) {
-        this.logger.warn(`[StorageService] Failed to delete R2 object ${key}: ${err.message}`);
+        this.logger.warn(`[StorageService] Failed to delete R2 object ${cleanKey}: ${err.message}`);
       }
     }
 
-    const localFile = path.join(this.uploadDir, path.basename(key));
+    const localFile = path.join(this.uploadDir, path.basename(cleanKey));
     if (fs.existsSync(localFile)) {
       try {
         fs.unlinkSync(localFile);
@@ -215,6 +311,13 @@ export class StorageService implements OnModuleInit {
   }
 
   /**
+   * Delete an object from Cloudflare R2 and local filesystem (alias for deleteFile).
+   */
+  async deleteObject(key: string): Promise<boolean> {
+    return this.deleteFile(key);
+  }
+
+  /**
    * Save uploaded photo composite or raw image buffer directly.
    */
   async saveFile(
@@ -222,45 +325,13 @@ export class StorageService implements OnModuleInit {
     buffer: Buffer,
     mimeType: string = 'image/jpeg'
   ): Promise<StorageUploadResult> {
-    // 1. Always persist a local copy for zero-latency on-premise access & recovery
-    const localFilePath = path.join(this.uploadDir, filename);
-    fs.writeFileSync(localFilePath, buffer);
-    const localUrl = `/uploads/${filename}`;
-
-    // 2. If Cloudflare R2 is configured, upload to R2 bucket
-    if (this.s3Client && this.r2Bucket) {
-      try {
-        const { PutObjectCommand } = require('@aws-sdk/client-s3');
-        const uploadCmd = new PutObjectCommand({
-          Bucket: this.r2Bucket,
-          Key: `photos/${filename}`,
-          Body: buffer,
-          ContentType: mimeType,
-          CacheControl: 'public, max-age=31536000',
-        });
-
-        await this.s3Client.send(uploadCmd);
-        const publicR2Url = this.r2PublicDomain
-          ? `${this.r2PublicDomain.replace(/\/$/, '')}/photos/${filename}`
-          : localUrl;
-
-        this.logger.log(`[StorageService] Uploaded to Cloudflare R2: ${publicR2Url}`);
-        return {
-          filename,
-          url: localUrl,
-          publicUrl: publicR2Url,
-          provider: 'cloudflare_r2',
-        };
-      } catch (err: any) {
-        this.logger.error(`[StorageService] Cloudflare R2 upload error: ${err.message}. Falling back to local storage.`);
-      }
-    }
-
+    const key = `photos/${filename}`;
+    const result = await this.uploadFile(key, buffer, mimeType);
     return {
       filename,
-      url: localUrl,
-      publicUrl: localUrl,
-      provider: 'local_fallback',
+      url: result.url,
+      publicUrl: result.publicUrl,
+      provider: result.provider,
     };
   }
 

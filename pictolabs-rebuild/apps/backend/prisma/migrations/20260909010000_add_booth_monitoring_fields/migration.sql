@@ -1,0 +1,5 @@
+-- AlterTable
+ALTER TABLE "booths" ADD COLUMN IF NOT EXISTS "last_seen" TIMESTAMP(3);
+ALTER TABLE "booths" ADD COLUMN IF NOT EXISTS "app_version" TEXT;
+ALTER TABLE "booths" ADD COLUMN IF NOT EXISTS "machine_name" TEXT;
+ALTER TABLE "booths" ADD COLUMN IF NOT EXISTS "local_ip" TEXT;

@@ -67,7 +67,9 @@ export class GalleryController {
   private getFileUrl(filename: string): string {
     const r2Domain = process.env.R2_PUBLIC_DOMAIN;
     if (r2Domain) {
-      return `https://${r2Domain}/photos/${filename}`;
+      const cleanDomain = r2Domain.replace(/\/+$/, '');
+      const prefix = cleanDomain.startsWith('http') ? cleanDomain : `https://${cleanDomain}`;
+      return `${prefix}/photos/${filename}`;
     }
     return `/uploads/${filename}`;
   }
