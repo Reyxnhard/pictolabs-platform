@@ -99,20 +99,65 @@ model BoothHealthLog {
 }
 
 model Session {
-  id          String        @id @default(uuid())
-  boothId     String
-  booth       Booth         @relation(fields: [boothId], references: [id])
-  status      String        @default("PENDING_PAYMENT")
-  frameId     String?
-  frame       Frame?        @relation(fields: [frameId], references: [id])
-  photos      Photo[]
-  prints      Print[]
-  transaction Transaction?
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id                 String          @id @default(uuid())
+  boothId            String
+  booth              Booth           @relation(fields: [boothId], references: [id])
+  status             String          @default("PENDING_PAYMENT")
+  frameId            String?
+  frame              Frame?          @relation(fields: [frameId], references: [id])
+  customerEmail      String?
+  customerPhone      String?
+  retentionExpiresAt DateTime?
+  photos             Photo[]
+  prints             Print[]
+  transaction        Transaction?
+  events             SessionEvent[]
+  redeliveries       RedeliveryLog[]
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
 
+  @@index([boothId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([customerEmail])
+  @@index([customerPhone])
   @@map("sessions")
 }
+
+model SessionEvent {
+  id           String   @id @default(uuid())
+  sessionId    String
+  session      Session  @relation(fields: [sessionId], references: [id])
+  eventType    String   // SESSION_INIT, PAYMENT_PENDING, PAYMENT_SETTLED, CAPTURE_POSE_1, PRINT_COMPLETED, R2_UPLOAD_COMPLETED, etc.
+  stage        String   // PAYMENT, CAPTURE, PROCESSING, PRINTING, STORAGE, DELIVERY
+  status       String   // SUCCESS, FAILED, WARNING, SKIPPED
+  durationMs   Int?     // Elapsed time in milliseconds
+  errorCode    String?  // e.g. ERR_PRINTER_PAPER_JAM
+  errorMessage String?  // Human-readable diagnostic message
+  payload      String?  // JSON stringified metadata
+  createdAt    DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([eventType])
+  @@map("session_events")
+}
+
+model RedeliveryLog {
+  id              String   @id @default(uuid())
+  sessionId       String
+  session         Session  @relation(fields: [sessionId], references: [id])
+  actionType      String   // RESEND_EMAIL, EXTEND_LINK, CLOUD_RESYNC, PHYSICAL_REPRINT
+  operatorEmail   String
+  recipient       String?  // Target email or target kiosk identifier
+  reason          String   // PAPER_JAM, PRINT_DEFECT, CUSTOMER_TYPO, CUSTOMER_COURTESY
+  status          String   // SUCCESS, FAILED
+  responsePayload String?  // JSON string
+  createdAt       DateTime @default(now())
+
+  @@index([sessionId])
+  @@map("redelivery_logs")
+}
+
 
 model Photo {
   id         String   @id @default(uuid())
@@ -124,6 +169,7 @@ model Photo {
   sequenceNo Int      @default(1)
   createdAt  DateTime @default(now())
 
+  @@index([sessionId])
   @@map("photos")
 }
 

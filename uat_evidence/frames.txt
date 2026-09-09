@@ -1,0 +1,13 @@
+file '01_support_search.png'
+duration 3
+file '02_support_search_filtered.png'
+duration 2
+file '03_session_health.png'
+duration 3
+file '04_session_timeline.png'
+duration 3
+file '05_redelivery_action.png'
+duration 3
+file '06_remediation_audit.png'
+duration 3
+file '06_remediation_audit.png'

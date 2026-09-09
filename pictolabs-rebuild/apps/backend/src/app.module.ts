@@ -7,6 +7,7 @@ import { StorageModule } from './storage/storage.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { GalleryModule } from './gallery/gallery.module';
 import { PaymentsModule } from './payments/payments.module';
+import { SupportModule } from './support/support.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { PaymentsModule } from './payments/payments.module';
     SessionsModule,
     GalleryModule,
     PaymentsModule,
+    SupportModule,
   ],
 })
 export class AppModule {}

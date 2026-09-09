@@ -449,11 +449,47 @@ export class GalleryController {
       };
     }
 
+    let session: any = null;
+    try {
+      session = await this.prisma.session.findUnique({
+        where: { id: sessionId },
+        include: {
+          booth: {
+            include: { branch: true },
+          },
+        },
+      });
+    } catch (_) {}
+
     const assets = this.findSessionAssets(sessionId);
+
     return {
       success: true,
       expired: false,
-      ...assets,
+      sessionId,
+      status: session?.status || 'COMPLETED',
+      createdAt: session?.createdAt ? session.createdAt.toISOString() : null,
+      customerDownloadUrl: `https://pictolabs.id/d/${sessionId}`,
+      booth: session?.booth
+        ? {
+            id: session.booth.id,
+            name: session.booth.name,
+            branchName: session.booth.branch?.name || null,
+          }
+        : null,
+      assets: {
+        photoStrip: assets.composite,
+        photos: assets.photos,
+        livePhotos: assets.videos,
+        gif: assets.gif,
+        totalAssets: assets.totalAssets,
+      },
+      // Backward-compatibility fields
+      composite: assets.composite,
+      photos: assets.photos,
+      videos: assets.videos,
+      gif: assets.gif,
+      totalAssets: assets.totalAssets,
     };
   }
 
