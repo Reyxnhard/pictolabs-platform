@@ -43,6 +43,9 @@ interface SessionAssets {
   totalAssets: number;
 }
 
+import { Public } from '../auth/decorators/public.decorator';
+
+@Public()
 @Controller()
 export class GalleryController {
   private readonly logger = new Logger(GalleryController.name);

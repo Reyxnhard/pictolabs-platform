@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BoothHeartbeatDto } from './dto/booth-heartbeat.dto';
 import { UpdateBoothStatusDto } from './dto/update-booth-status.dto';
 import { BoothStatusResponseDto } from './dto/booth-status-response.dto';
+import { Public } from '../auth/decorators/public.decorator';
 
 @ApiTags('Booths')
 @Controller(['api/booths', 'booths'])
@@ -73,6 +74,7 @@ export class BoothsController {
     return this.boothsService.findById(id);
   }
 
+  @Public()
   @Post(':id/heartbeat')
   @ApiOperation({
     summary: 'Ingest operational heartbeat',
@@ -139,10 +141,18 @@ export class BoothsController {
     };
   }
 
+  @Public()
   @Post(':id/health')
   @ApiOperation({ summary: 'Legacy health log endpoint' })
   @ApiParam({ name: 'id', description: 'Booth UUID' })
   async logHealth(@Param('id') id: string, @Body() healthData: any) {
     return this.boothsService.recordHealth(id, healthData);
+  }
+
+  @Get(':id/health')
+  @ApiOperation({ summary: 'Get aggregated 5-pillar operational health for booth' })
+  @ApiParam({ name: 'id', description: 'Booth UUID' })
+  async getHealth(@Param('id') id: string) {
+    return this.boothsService.get5PillarHealth(id);
   }
 }

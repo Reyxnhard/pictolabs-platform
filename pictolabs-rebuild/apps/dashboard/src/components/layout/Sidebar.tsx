@@ -2,16 +2,18 @@ import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { LayoutDashboard, Monitor, Film, Image as ImageIcon, ShieldCheck, LifeBuoy } from 'lucide-react';
 import { useSocketStore } from '../../stores/socketStore';
+import { useTranslation } from '../../locales/useTranslation';
 
 export const Sidebar: React.FC = () => {
   const isConnected = useSocketStore((state) => state.isConnected);
+  const { t } = useTranslation();
 
   const navItems = [
-    { to: '/', label: 'Overview', icon: LayoutDashboard },
-    { to: '/booths', label: 'Booths Fleet', icon: Monitor },
-    { to: '/sessions', label: 'Sessions Archive', icon: Film },
-    { to: '/gallery', label: 'Gallery & Delivery', icon: ImageIcon },
-    { to: '/support', label: 'Support & Search', icon: LifeBuoy },
+    { to: '/', label: t('nav.overview'), icon: LayoutDashboard },
+    { to: '/booths', label: t('nav.booths'), icon: Monitor },
+    { to: '/sessions', label: t('nav.sessions'), icon: Film },
+    { to: '/gallery', label: t('nav.gallery'), icon: ImageIcon },
+    { to: '/support', label: t('nav.support'), icon: LifeBuoy },
   ];
 
   return (
@@ -90,8 +92,8 @@ export const Sidebar: React.FC = () => {
             <ShieldCheck className="w-4 h-4" />
           </div>
           <div className="overflow-hidden">
-            <p className="text-xs font-semibold text-white truncate">Owner Admin</p>
-            <p className="text-[10px] text-slate-400 font-mono truncate">Fleet Superadmin</p>
+            <p className="text-xs font-semibold text-white truncate">Administrator</p>
+            <p className="text-[10px] text-slate-400 font-mono truncate">Single Admin Mode</p>
           </div>
         </div>
       </div>

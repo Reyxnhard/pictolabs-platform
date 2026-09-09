@@ -5,6 +5,7 @@ import { SessionQueryDto } from './dto/session-query.dto';
 import { CreateSessionEventDto } from './dto/session-timeline.dto';
 import { RedeliveryEmailDto, ExtendLinkDto, ReprintDto } from './dto/redelivery.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { Public } from '../auth/decorators/public.decorator';
 
 @ApiTags('Sessions')
 @Controller('api/sessions')
@@ -54,6 +55,7 @@ export class SessionsController {
     return this.sessionsService.getTimeline(id);
   }
 
+  @Public()
   @Post(':id/timeline')
   @ApiOperation({ summary: 'Record a timeline event for a session' })
   @ApiParam({ name: 'id', description: 'Session identifier' })
@@ -99,6 +101,7 @@ export class SessionsController {
     return this.sessionsService.getRedeliveryHistory(id);
   }
 
+  @Public()
   @Post()
   @ApiOperation({ summary: 'Sync session from kiosk client' })
   async syncSession(

@@ -14,7 +14,9 @@ import {
 import type { Request } from 'express';
 import { StorageService } from './storage.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { Public } from '../auth/decorators/public.decorator';
 
+@Public()
 @Controller('api/storage')
 export class StorageController {
   private readonly logger = new Logger(StorageController.name);

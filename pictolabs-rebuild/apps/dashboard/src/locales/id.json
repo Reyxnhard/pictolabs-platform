@@ -1,0 +1,106 @@
+{
+  "nav": {
+    "overview": "Ringkasan",
+    "booths": "Daftar Booth",
+    "sessions": "Riwayat Sesi",
+    "gallery": "Galeri Media",
+    "support": "Bantuan & Cari"
+  },
+  "auth": {
+    "title": "Masuk ke Dashboard",
+    "subtitle": "Pictolabs Self-Service Photobooth Control Plane",
+    "emailLabel": "Alamat Email",
+    "passwordLabel": "Kata Sandi",
+    "emailPlaceholder": "admin@pictolabs.id",
+    "passwordPlaceholder": "••••••••",
+    "signInButton": "Masuk ke Sistem",
+    "signingIn": "Memverifikasi...",
+    "signOut": "Keluar",
+    "invalidCredentials": "Email atau kata sandi tidak valid",
+    "sessionExpired": "Sesi Anda telah berakhir. Silakan masuk kembali."
+  },
+  "overview": {
+    "title": "Ringkasan Operasional Fleet",
+    "subtitle": "Pantau status armada photobooth, konektivitas, dan transaksi secara real-time.",
+    "kpiTotalBooths": "Total Booth",
+    "kpiOnline": "Terhubung (Online)",
+    "kpiOffline": "Terputus (Offline)",
+    "kpiMaintenance": "Perawatan (Maintenance)",
+    "kpiSessionsToday": "Sesi Hari Ini",
+    "statusCardTitle": "Konektivitas Armada",
+    "recentTransactions": "Transaksi Terkini"
+  },
+  "booths": {
+    "title": "Manajemen Armada Booth",
+    "subtitle": "Kelola mesin photobooth, konfigurasi kamera, dan status pemeliharaan.",
+    "tableHeaderName": "Nama Booth & Lokasi",
+    "tableHeaderStatus": "Status Operasional",
+    "tableHeaderVersion": "Versi App / Commit",
+    "tableHeaderHeartbeat": "Terakhir Dilihat",
+    "tableHeaderActions": "Aksi",
+    "drawerTitle": "Detail & Pengaturan Booth",
+    "maintenanceMode": "Mode Perawatan",
+    "normalMode": "Mode Normal",
+    "maintenanceToggleDesc": "Aktifkan mode perawatan untuk menghentikan transaksi di kiosk saat isi ulang kertas atau servis.",
+    "healthTitle": "Kesehatan Hardware (5 Pilar)"
+  },
+  "health": {
+    "camera": "Kamera DSLR",
+    "printer": "Printer Thermal",
+    "storage": "Penyimpanan Cloud",
+    "heartbeat": "Detak Jantung (Heartbeat)",
+    "payment": "Gateway Pembayaran",
+    "healthy": "Beroperasi Normal",
+    "warning": "Peringatan",
+    "critical": "Gangguan Kritis",
+    "quickActions": "Aksi Cepat",
+    "testPing": "Uji Ping LiveView",
+    "testPrint": "Uji Spooler Print"
+  },
+  "sessions": {
+    "title": "Riwayat & Arsip Sesi",
+    "subtitle": "Cari dan audit sesi pemotretan pelanggan di seluruh cabang.",
+    "searchPlaceholder": "Cari berdasarkan ID Sesi...",
+    "filterBranch": "Pilih Cabang",
+    "filterBooth": "Pilih Booth",
+    "filterStatus": "Pilih Status",
+    "all": "Semua"
+  },
+  "support": {
+    "title": "Pusat Bantuan & Remediasi Pelanggan",
+    "subtitle": "Cari sesi pelanggan secara omni-channel dan lakukan tindakan penyelamatan instan.",
+    "searchChannel": "Saluran Pencarian",
+    "channelEmail": "Email Pelanggan",
+    "channelPhone": "Nomor WhatsApp / HP",
+    "channelOrder": "Midtrans Order ID",
+    "inputPlaceholder": "Masukkan email, nomor WhatsApp, atau order ID...",
+    "btnSearch": "Cari Sesi",
+    "btnSearching": "Mencari...",
+    "resendEmail": "Kirim Ulang Email",
+    "extendLink": "Perpanjang Link 30 Hari",
+    "reprint": "Cetak Ulang Darurat",
+    "timeline": "Timeline Milestone",
+    "healthAudit": "Diagnosa Masalah"
+  },
+  "status": {
+    "ONLINE": "TERHUBUNG",
+    "OFFLINE": "TERPUTUS",
+    "DEGRADED": "TERGANGGU",
+    "MAINTENANCE": "PERAWATAN",
+    "COMPLETED": "SELESAI",
+    "CAPTURED": "TERFOTO",
+    "FAILED": "GAGAL",
+    "ABANDONED": "DIBATALKAN",
+    "PENDING_PAYMENT": "MENUNGGU BAYAR"
+  },
+  "common": {
+    "save": "Simpan",
+    "cancel": "Batal",
+    "loading": "Memuat...",
+    "refresh": "Segarkan",
+    "success": "Berhasil",
+    "error": "Terjadi Kesalahan",
+    "close": "Tutup",
+    "actions": "Aksi"
+  }
+}

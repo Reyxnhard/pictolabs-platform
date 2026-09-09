@@ -47,6 +47,13 @@ async function runSprint5bE2ETests() {
   }
   console.log(`✓ Recorded ${events.length} chronological lifecycle milestones.\n`);
 
+  // Authenticate as Admin for operator/support queries
+  const loginRes = await axios.post(`${BACKEND_URL}/api/auth/login`, {
+    email: 'admin@pictolabs.id',
+    password: 'pictolabs2026',
+  });
+  axios.defaults.headers.common['Authorization'] = `Bearer ${loginRes.data.accessToken}`;
+
   // 3. Query Timeline API
   console.log('3. Testing GET /api/sessions/:id/timeline (AC-1.1 & AC-1.2)...');
   const timelineRes = await axios.get(`${BACKEND_URL}/api/sessions/${testSessionId}/timeline`);

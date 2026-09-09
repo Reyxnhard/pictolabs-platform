@@ -6,6 +6,7 @@ import type { Booth, BoothStatusResponse } from '../../types/booth';
 import { boothsApi } from '../../services/boothsApi';
 import { CopyButton } from '../common/CopyButton';
 import { Monitor, Cpu, GitCommit, HardDrive, Wifi, Shield, RefreshCw } from 'lucide-react';
+import { BoothHealthCard } from './BoothHealthCard';
 
 interface BoothDetailDrawerProps {
   booth: Booth | null;
@@ -102,6 +103,11 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
           onToggle={handleMaintenanceToggle}
           isLoading={isUpdating}
         />
+
+        {/* 5-Pillar Operational Health */}
+        <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
+          <BoothHealthCard boothId={booth.id} onRefresh={fetchStatus} />
+        </div>
 
         {/* Heartbeat & Liveness Timing */}
         <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5 space-y-3">

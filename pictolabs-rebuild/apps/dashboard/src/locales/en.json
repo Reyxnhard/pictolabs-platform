@@ -1,0 +1,106 @@
+{
+  "nav": {
+    "overview": "Overview",
+    "booths": "Booths Fleet",
+    "sessions": "Sessions Ledger",
+    "gallery": "Media Gallery",
+    "support": "Support & Search"
+  },
+  "auth": {
+    "title": "Sign In to Dashboard",
+    "subtitle": "Pictolabs Self-Service Photobooth Control Plane",
+    "emailLabel": "Email Address",
+    "passwordLabel": "Password",
+    "emailPlaceholder": "admin@pictolabs.id",
+    "passwordPlaceholder": "••••••••",
+    "signInButton": "Sign In to Platform",
+    "signingIn": "Verifying...",
+    "signOut": "Sign Out",
+    "invalidCredentials": "Invalid email or password",
+    "sessionExpired": "Your session has expired. Please sign in again."
+  },
+  "overview": {
+    "title": "Fleet Operational Overview",
+    "subtitle": "Monitor photobooth fleet status, real-time connectivity, and daily transactions.",
+    "kpiTotalBooths": "Total Booths",
+    "kpiOnline": "Online",
+    "kpiOffline": "Offline",
+    "kpiMaintenance": "Maintenance",
+    "kpiSessionsToday": "Sessions Today",
+    "statusCardTitle": "Fleet Connectivity",
+    "recentTransactions": "Recent Transactions"
+  },
+  "booths": {
+    "title": "Booths Fleet Management",
+    "subtitle": "Manage kiosk machines, camera settings, and maintenance overrides.",
+    "tableHeaderName": "Booth Name & Location",
+    "tableHeaderStatus": "Operational Status",
+    "tableHeaderVersion": "App Version / Commit",
+    "tableHeaderHeartbeat": "Last Heartbeat",
+    "tableHeaderActions": "Actions",
+    "drawerTitle": "Booth Details & Configuration",
+    "maintenanceMode": "Maintenance Mode",
+    "normalMode": "Normal Mode",
+    "maintenanceToggleDesc": "Toggle maintenance mode to halt kiosk transactions during paper roll reloads or hardware servicing.",
+    "healthTitle": "Hardware Health (5 Pillars)"
+  },
+  "health": {
+    "camera": "DSLR Camera",
+    "printer": "Thermal Printer",
+    "storage": "Cloud Storage",
+    "heartbeat": "Heartbeat Liveness",
+    "payment": "Payment Gateway",
+    "healthy": "Operating Normally",
+    "warning": "Warning",
+    "critical": "Critical Error",
+    "quickActions": "Quick Actions",
+    "testPing": "Test LiveView Ping",
+    "testPrint": "Test Print Spooler"
+  },
+  "sessions": {
+    "title": "Sessions History & Archive",
+    "subtitle": "Search and audit customer photoshoot sessions across all venue branches.",
+    "searchPlaceholder": "Search by Session ID...",
+    "filterBranch": "Select Branch",
+    "filterBooth": "Select Booth",
+    "filterStatus": "Select Status",
+    "all": "All"
+  },
+  "support": {
+    "title": "Customer Support & Remediation",
+    "subtitle": "Omni-channel customer session lookup and instant remediation actions.",
+    "searchChannel": "Search Channel",
+    "channelEmail": "Customer Email",
+    "channelPhone": "WhatsApp / Phone",
+    "channelOrder": "Midtrans Order ID",
+    "inputPlaceholder": "Enter customer email, WhatsApp phone, or Order ID...",
+    "btnSearch": "Search Sessions",
+    "btnSearching": "Searching...",
+    "resendEmail": "Resend Delivery Email",
+    "extendLink": "Extend Link 30 Days",
+    "reprint": "Emergency Reprint",
+    "timeline": "Milestone Timeline",
+    "healthAudit": "Health Diagnosis"
+  },
+  "status": {
+    "ONLINE": "ONLINE",
+    "OFFLINE": "OFFLINE",
+    "DEGRADED": "DEGRADED",
+    "MAINTENANCE": "MAINTENANCE",
+    "COMPLETED": "COMPLETED",
+    "CAPTURED": "CAPTURED",
+    "FAILED": "FAILED",
+    "ABANDONED": "ABANDONED",
+    "PENDING_PAYMENT": "PENDING PAYMENT"
+  },
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "loading": "Loading...",
+    "refresh": "Refresh",
+    "success": "Success",
+    "error": "Error Occurred",
+    "close": "Close",
+    "actions": "Actions"
+  }
+}

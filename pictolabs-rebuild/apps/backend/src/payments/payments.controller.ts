@@ -1,7 +1,9 @@
 import { Controller, Post, Get, Body, Param, HttpCode, HttpStatus, Logger } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import { CreateQRISDto, MidtransWebhookDto } from './dto/payment.dto';
+import { Public } from '../auth/decorators/public.decorator';
 
+@Public()
 @Controller('api/payments')
 export class PaymentsController {
   private readonly logger = new Logger(PaymentsController.name);

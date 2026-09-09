@@ -1,10 +1,14 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedeliveryEmailDto, ExtendLinkDto, ReprintDto } from './dto/redelivery.dto';
+import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class SessionRedeliveryService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly emailService: EmailService,
+  ) {}
 
   async resendEmail(sessionId: string, dto: RedeliveryEmailDto) {
     const session = await this.prisma.session.findUnique({
@@ -21,6 +25,14 @@ export class SessionRedeliveryService {
       data: { customerEmail: dto.recipientEmail },
     });
 
+    // Dispatch real email via Resend API (or mock fallback if unconfigured)
+    const emailResult = await this.emailService.sendSoftfiles({
+      sessionId,
+      recipientEmail: dto.recipientEmail,
+      customerDownloadUrl: `https://pictolabs.id/d/${sessionId}`,
+      venueName: 'Pictolabs Grand Indonesia',
+    });
+
     // Record in redelivery_logs
     const log = await this.prisma.redeliveryLog.create({
       data: {
@@ -32,7 +44,8 @@ export class SessionRedeliveryService {
         status: 'SUCCESS',
         responsePayload: JSON.stringify({
           dispatchedAt: new Date().toISOString(),
-          provider: 'TransactionalEmailWorker',
+          provider: emailResult.provider || 'ResendService',
+          result: emailResult,
         }),
       },
     });
