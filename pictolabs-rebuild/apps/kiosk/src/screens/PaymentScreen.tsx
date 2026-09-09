@@ -215,7 +215,54 @@ export default function PaymentScreen({ navigate, session, onOpenAdmin }: Screen
     return () => clearInterval(timer);
   }, [timeLeft, paymentState, orderId]);
 
-  // ─── 7. Cancel Payment ──────────────────────────────────────
+  const [isBypassing, setIsBypassing] = useState(false);
+
+  // ─── 7. Bypass Payment (Dev / Testing / Operator) ───────────
+  const handleBypassPayment = useCallback(async () => {
+    if (!orderId) return;
+    setIsBypassing(true);
+    try {
+      const backendUrl = ((import.meta as any).env?.VITE_BACKEND_URL as string) || 'http://localhost:4000';
+      const res = await fetch(`${backendUrl}/api/payments/simulate/${orderId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.ok) {
+        localStorage.removeItem('pictolabs-active-order-id');
+        setPaymentState('SETTLED');
+        setTimeout(() => navigate('frame-design'), 1500);
+      } else {
+        // Fallback simulation
+        localStorage.removeItem('pictolabs-active-order-id');
+        setPaymentState('SETTLED');
+        setTimeout(() => navigate('frame-design'), 1500);
+      }
+    } catch (e) {
+      console.warn('[PaymentScreen] Bypass simulation fallback:', e);
+      localStorage.removeItem('pictolabs-active-order-id');
+      setPaymentState('SETTLED');
+      setTimeout(() => navigate('frame-design'), 1500);
+    } finally {
+      setIsBypassing(false);
+    }
+  }, [orderId, navigate]);
+
+  // ─── 8. Auto-Bypass Listener (If enabled in Admin Panel) ────
+  useEffect(() => {
+    if (paymentState === 'AWAITING_PAYMENT' && orderId) {
+      const isAutoBypass =
+        typeof window !== 'undefined' && localStorage.getItem('pictolabs-auto-bypass-payment') === 'true';
+      if (isAutoBypass) {
+        console.log('[PaymentScreen] Auto-Bypass active. Simulating payment settlement in 1.2s...');
+        const timer = setTimeout(() => {
+          handleBypassPayment();
+        }, 1200);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [paymentState, orderId, handleBypassPayment]);
+
+  // ─── 9. Cancel Payment ──────────────────────────────────────
   const handleCancel = async () => {
     if (orderId) {
       try {
@@ -278,20 +325,47 @@ export default function PaymentScreen({ navigate, session, onOpenAdmin }: Screen
       <div className="absolute top-8 left-8 right-8 flex items-center justify-between pointer-events-auto">
         <button
           onClick={handleCancel}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white/80 hover:bg-white text-slate-700 font-bold text-sm shadow-md backdrop-blur-md transition-all active:scale-95"
+          className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white/80 hover:bg-white text-slate-700 font-bold text-sm shadow-md backdrop-blur-md transition-all active:scale-95 cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>Kembali / Batal</span>
         </button>
 
-        {paymentState === 'AWAITING_PAYMENT' && (
-          <div className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-white/90 text-slate-800 font-extrabold text-sm shadow-md border border-slate-200 backdrop-blur-md">
-            <span className="animate-pulse text-amber-500">⏱</span>
-            <span>
-              Sisa Waktu: {mins}:{secs.toString().padStart(2, '0')}
-            </span>
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          {/* Admin Bypass Button */}
+          {paymentState === 'AWAITING_PAYMENT' && (
+            <button
+              onClick={handleBypassPayment}
+              disabled={isBypassing}
+              className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs shadow-lg shadow-amber-500/25 backdrop-blur-md transition-all active:scale-95 cursor-pointer border border-amber-300/40"
+              title="Bypass pembayaran ini langsung (Simulasi Dev/Operator)"
+            >
+              <span>⚡</span>
+              <span>{isBypassing ? 'Memproses...' : 'Bypass Bayar'}</span>
+            </button>
+          )}
+
+          {/* Operator Admin Screen Button */}
+          {onOpenAdmin && (
+            <button
+              onClick={onOpenAdmin}
+              className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-slate-900/80 hover:bg-slate-900 text-slate-200 hover:text-white font-bold text-xs shadow-md backdrop-blur-md transition-all active:scale-95 cursor-pointer border border-slate-700/60"
+              title="Buka Operator Control Panel (PIN: 1234)"
+            >
+              <Wrench className="w-3.5 h-3.5" />
+              <span>Menu Staf</span>
+            </button>
+          )}
+
+          {paymentState === 'AWAITING_PAYMENT' && (
+            <div className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-white/90 text-slate-800 font-extrabold text-sm shadow-md border border-slate-200 backdrop-blur-md">
+              <span className="animate-pulse text-amber-500">⏱</span>
+              <span>
+                Sisa Waktu: {mins}:{secs.toString().padStart(2, '0')}
+              </span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Main Content Area */}
@@ -386,9 +460,19 @@ export default function PaymentScreen({ navigate, session, onOpenAdmin }: Screen
                 berpindah otomatis begitu pembayaran diterima.
               </p>
               {orderId && (
-                <span className="mt-3 inline-block font-mono text-[11px] text-slate-400 bg-slate-100 px-3 py-1 rounded-full">
-                  ID: {orderId}
-                </span>
+                <div className="mt-3 flex items-center justify-center gap-2">
+                  <span className="font-mono text-[11px] text-slate-400 bg-slate-100 px-3 py-1 rounded-full">
+                    ID: {orderId}
+                  </span>
+                  <button
+                    onClick={handleBypassPayment}
+                    type="button"
+                    className="text-[11px] font-bold text-amber-700 hover:text-amber-800 bg-amber-100/80 hover:bg-amber-100 border border-amber-300/60 px-2.5 py-1 rounded-full cursor-pointer transition-colors flex items-center gap-1"
+                    title="Klik untuk menyelesaikan transaksi ini seketika"
+                  >
+                    <span>⚡ Bypass</span>
+                  </button>
+                </div>
               )}
             </div>
           </div>

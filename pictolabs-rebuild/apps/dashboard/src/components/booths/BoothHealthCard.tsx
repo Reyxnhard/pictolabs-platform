@@ -253,7 +253,7 @@ export const BoothHealthCard: React.FC<BoothHealthCardProps> = ({ boothId, onRef
       </div>
 
       {/* 5. Payment Pillar (Full Width) */}
-      <div className="p-4 bg-slate-950/70 border border-slate-800/90 rounded-xl flex items-center justify-between">
+      <div className="p-4 bg-slate-950/70 border border-slate-800/90 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
             <CreditCard className="w-5 h-5" />
@@ -266,7 +266,30 @@ export const BoothHealthCard: React.FC<BoothHealthCardProps> = ({ boothId, onRef
             <p className="text-xs text-slate-400 mt-0.5">{pillars.payment.message}</p>
           </div>
         </div>
-        {getSeverityBadge(pillars.payment.severity)}
+        <div className="flex items-center gap-3 self-end sm:self-auto">
+          <button
+            type="button"
+            onClick={async () => {
+              const orderId = prompt('Masukkan Order ID yang ingin di-bypass (contoh: TRX_...):');
+              if (orderId && orderId.trim()) {
+                try {
+                  await api.post(`/api/payments/simulate/${orderId.trim()}`);
+                  setActionMessage(`✓ Sukses: Pembayaran ${orderId.trim()} berhasil di-bypass!`);
+                  setTimeout(() => setActionMessage(null), 4000);
+                } catch (err: any) {
+                  setActionMessage(`✗ Gagal bypass ${orderId}: ${err.response?.data?.message || err.message}`);
+                  setTimeout(() => setActionMessage(null), 5000);
+                }
+              }
+            }}
+            className="px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+            title="Simulasikan pelunasan order QRIS untuk booth ini"
+          >
+            <Zap className="w-3.5 h-3.5" />
+            Bypass Payment
+          </button>
+          {getSeverityBadge(pillars.payment.severity)}
+        </div>
       </div>
 
       {/* Hardware & System Telemetry */}

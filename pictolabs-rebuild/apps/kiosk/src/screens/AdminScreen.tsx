@@ -15,6 +15,8 @@ import {
   AlertTriangle,
   Lock,
   FlipHorizontal,
+  CreditCard,
+  Zap,
 } from 'lucide-react';
 import { kiosk, PrinterHealth, CameraStatus } from '../ipc/bridge';
 import { useKioskConfig } from '../context/KioskConfigContext';
@@ -29,7 +31,7 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState(false);
-  const [masterPin, setMasterPin] = useState('1234');
+  const [masterPin, setMasterPin] = useState('885926');
   const [failedAttempts, setFailedAttempts] = useState(0);
   const [lockoutSeconds, setLockoutSeconds] = useState(0);
 
@@ -41,6 +43,16 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
   const [isBypassMode, setIsBypassMode] = useState(() => {
     return typeof window !== 'undefined' && localStorage.getItem('pictolabs-bypass-printer') !== 'false';
   });
+
+  // Payment Bypass States
+  const [activeOrderId, setActiveOrderId] = useState<string | null>(() => {
+    return typeof window !== 'undefined' ? localStorage.getItem('pictolabs-active-order-id') : null;
+  });
+  const [isAutoBypassPayment, setIsAutoBypassPayment] = useState(() => {
+    return typeof window !== 'undefined' && localStorage.getItem('pictolabs-auto-bypass-payment') === 'true';
+  });
+  const [customOrderId, setCustomOrderId] = useState('');
+  const [isBypassing, setIsBypassing] = useState(false);
 
   // Camera LiveView test
   const [isLiveViewActive, setIsLiveViewActive] = useState(false);
@@ -82,13 +94,13 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
     return () => clearInterval(interval);
   }, [lockoutSeconds]);
 
-  // ─── PIN Pad Logic ─────────────────────────────────────────
+  // ─── PIN Pad Logic (6-Digit Hardened Security) ─────────────
   const handleDigit = (digit: string) => {
     if (lockoutSeconds > 0) return;
-    if (pin.length < 4) {
+    if (pin.length < 6) {
       const nextPin = pin + digit;
       setPin(nextPin);
-      if (nextPin.length === 4) {
+      if (nextPin.length === 6) {
         verifyPin(nextPin);
       }
     }
@@ -100,7 +112,7 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
     setPinError(false);
   };
 
-  const verifyPin = (candidate: string) => {
+  const verifyPin = async (candidate: string) => {
     if (lockoutSeconds > 0) return;
     if (candidate === masterPin) {
       setIsAuthenticated(true);
@@ -111,9 +123,27 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
       setFailedAttempts(nextFails);
       setPinError(true);
 
-      if (nextFails >= 5) {
-        setLockoutSeconds(30);
+      if (nextFails >= 3) {
+        setLockoutSeconds(600); // 10 minutes lockout (600s)
         setFailedAttempts(0);
+
+        // Dispatch WhatsApp Alert to Admin
+        try {
+          const backendUrl = ((import.meta as any).env?.VITE_BACKEND_URL as string) || 'http://localhost:4000';
+          await fetch(`${backendUrl}/api/alerts/test`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              severity: 'CRITICAL',
+              type: 'ERR_KIOSK_PIN_BRUTE_FORCE',
+              title: 'Percobaan Akses Ilegal Panel Teknisi',
+              detail: '3 kali berturut-turut memasukkan PIN salah pada layar kios. Keypad dikunci selama 10 menit.',
+              action: 'Periksa kamera CCTV booth dan pastikan tidak ada pihak yang mencoba membobol sistem.',
+            }),
+          });
+        } catch (e) {
+          console.warn('[AdminScreen] Failed to dispatch brute force alert:', e);
+        }
       }
 
       setTimeout(() => {
@@ -243,6 +273,48 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
     }
   };
 
+  const handleBypassPayment = async (orderIdToBypass?: string) => {
+    const targetId = orderIdToBypass || activeOrderId || customOrderId;
+    if (!targetId) {
+      showToast('Tidak ada transaksi/order ID aktif untuk di-bypass', 'error');
+      return;
+    }
+
+    setIsBypassing(true);
+    try {
+      const backendUrl = ((import.meta as any).env?.VITE_BACKEND_URL as string) || 'http://localhost:4000';
+      const res = await fetch(`${backendUrl}/api/payments/simulate/${targetId.trim()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (res.ok) {
+        showToast(`✓ Berhasil mem-bypass pembayaran (${targetId})! Transaksi lunas.`, 'success');
+        localStorage.removeItem('pictolabs-active-order-id');
+        setActiveOrderId(null);
+      } else {
+        const text = await res.text();
+        showToast(`✗ Gagal mem-bypass: ${text || 'Server error'}`, 'error');
+      }
+    } catch (err: any) {
+      showToast(`✗ Gagal menghubungi server: ${err.message}`, 'error');
+    } finally {
+      setIsBypassing(false);
+    }
+  };
+
+  const handleToggleAutoBypassPayment = () => {
+    const next = !isAutoBypassPayment;
+    setIsAutoBypassPayment(next);
+    localStorage.setItem('pictolabs-auto-bypass-payment', String(next));
+    showToast(
+      next
+        ? '✓ Auto-Bypass Pembayaran DIAKTIFKAN (Otomatis sukses saat masuk layar QRIS)'
+        : '✓ Auto-Bypass Pembayaran DINONAKTIFKAN (Menunggu pembayaran scan manual)',
+      'success'
+    );
+  };
+
   const handleRestartKiosk = () => {
     setConfirmDialog({
       title: 'Restart Aplikasi Kiosk',
@@ -287,7 +359,7 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
 
           <h2 className="text-xl font-bold tracking-tight">OPERATOR ACCESS</h2>
           <p className="text-xs text-slate-400 mt-1 mb-6 text-center">
-            {isLocked ? 'Keypad dinonaktifkan sementara' : 'Masukkan 4-digit PIN Teknisi untuk masuk'}
+            {isLocked ? 'Keypad dinonaktifkan sementara (10 menit)' : 'Masukkan 6-digit PIN Teknisi untuk masuk'}
           </p>
 
           {/* Lockout Warning Banner */}
@@ -301,12 +373,12 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
               </p>
             </div>
           ) : (
-            /* PIN Indicators */
-            <div className={`flex gap-4 mb-8 ${pinError ? 'animate-shake' : ''}`}>
-              {[0, 1, 2, 3].map((idx) => (
+            /* PIN Indicators (6 Digits) */
+            <div className={`flex gap-3 mb-8 ${pinError ? 'animate-shake' : ''}`}>
+              {[0, 1, 2, 3, 4, 5].map((idx) => (
                 <div
                   key={idx}
-                  className={`w-4 h-4 rounded-full border-2 transition-all duration-200 ${
+                  className={`w-3.5 h-3.5 rounded-full border-2 transition-all duration-200 ${
                     pin.length > idx
                       ? pinError
                         ? 'bg-rose-500 border-rose-500 scale-110'
@@ -746,6 +818,123 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
             >
               <LogOut className="w-4 h-4" />
               Keluar ke Windows
+            </button>
+          </div>
+        </div>
+
+        {/* Gerbang Pembayaran & Bypass QRIS */}
+        <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-xl flex flex-col justify-between md:col-span-2">
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                  <CreditCard className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg">Gerbang Pembayaran & Bypass QRIS</h3>
+                  <p className="text-xs text-slate-400">Midtrans Dynamic QRIS & Simulator Penyelesaian Transaksi</p>
+                </div>
+              </div>
+              <span
+                className={`px-3 py-1 rounded-full text-xs font-bold border ${
+                  activeOrderId
+                    ? 'bg-amber-500/20 text-amber-400 border-amber-500/30 animate-pulse'
+                    : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                }`}
+              >
+                {activeOrderId ? '⏱ MENUNGGU BAYAR' : '✓ STANDBY'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              {/* Active Order Box */}
+              <div className="bg-slate-950/60 rounded-2xl p-4 border border-slate-800/80 space-y-2 text-xs">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400">Order ID Aktif:</span>
+                  <span className="font-mono text-amber-300 font-semibold truncate max-w-[240px]">
+                    {activeOrderId || 'Tidak ada transaksi aktif'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400">Status Gateway:</span>
+                  <span className="font-semibold text-emerald-400">MIDTRANS QRIS SANDBOX / DEV</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400">Simulasi Backend:</span>
+                  <span className="font-mono text-slate-400">POST /api/payments/simulate/:id</span>
+                </div>
+              </div>
+
+              {/* Auto-Bypass Mode Box */}
+              <div className="bg-slate-950/70 rounded-2xl p-4 border border-slate-800/90 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`w-3 h-3 rounded-full ${
+                      isAutoBypassPayment ? 'bg-amber-400 animate-pulse shadow-lg shadow-amber-400/50' : 'bg-slate-600'
+                    }`}
+                  />
+                  <div>
+                    <div className="text-xs font-bold text-slate-200">Mode Auto-Bypass Pembayaran</div>
+                    <div className="text-[11px] text-slate-400">
+                      {isAutoBypassPayment
+                        ? 'Otomatis sukses seketika saat masuk layar QRIS'
+                        : 'Menunggu scan QRIS manual atau tombol bypass'}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleToggleAutoBypassPayment}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer shadow-md flex items-center gap-1.5 ${
+                    isAutoBypassPayment
+                      ? 'bg-amber-600/30 border-amber-500/50 text-amber-300 hover:bg-amber-600/50'
+                      : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${isAutoBypassPayment ? 'bg-amber-400' : 'bg-slate-500'}`} />
+                  {isAutoBypassPayment ? 'AKTIF' : 'NONAKTIF'}
+                </button>
+              </div>
+            </div>
+
+            {/* Manual Order Input if not currently awaiting */}
+            {!activeOrderId && (
+              <div className="mb-4">
+                <label className="text-[11px] text-slate-400 block mb-1.5 font-medium">
+                  Bypass Manual via Order ID (opsional):
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={customOrderId}
+                    onChange={(e) => setCustomOrderId(e.target.value)}
+                    placeholder="Masukkan Order ID (contoh: TRX_BOOTH1_...)"
+                    className="flex-1 px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-white focus:outline-none focus:border-amber-500"
+                  />
+                  <button
+                    onClick={() => handleBypassPayment(customOrderId)}
+                    disabled={isBypassing || !customOrderId.trim()}
+                    className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:pointer-events-none text-slate-950 font-black text-xs transition-all cursor-pointer"
+                  >
+                    Bypass ID Ini
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="pt-2">
+            <button
+              onClick={() => handleBypassPayment()}
+              disabled={isBypassing || (!activeOrderId && !customOrderId.trim())}
+              className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 active:scale-95 disabled:opacity-40 disabled:pointer-events-none text-slate-950 font-black text-xs flex items-center justify-center gap-2 transition-all shadow-lg shadow-amber-500/20 cursor-pointer"
+            >
+              <Zap className="w-4 h-4 text-slate-950" />
+              {isBypassing
+                ? 'Memproses Bypass Pembayaran...'
+                : activeOrderId
+                ? `⚡ Bypass Pembayaran Aktif (${activeOrderId})`
+                : '⚡ Bypass Pembayaran Sukses'}
             </button>
           </div>
         </div>

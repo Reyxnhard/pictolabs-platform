@@ -48,11 +48,11 @@ export default function WelcomeScreen({ navigate, onOpenAdmin }: ScreenProps) {
     };
   }, []);
 
-  // Handle hidden operator gesture
+  // Handle hidden operator gesture (5 rapid taps within 2.5s on brand logo or top-left corner)
   const handleSecretTap = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Do not trigger screen start
+    e.stopPropagation(); // Do not trigger photo session start
     const now = Date.now();
-    const recent = tapTimestampsRef.current.filter((t) => now - t < 3000);
+    const recent = tapTimestampsRef.current.filter((t) => now - t < 2500);
     recent.push(now);
     tapTimestampsRef.current = recent;
 
@@ -89,20 +89,6 @@ export default function WelcomeScreen({ navigate, onOpenAdmin }: ScreenProps) {
       }}
       onClick={handleStart}
     >
-      {/* Operator Admin Screen Button (Mudah Dilihat & Diakses) */}
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          if (onOpenAdmin) onOpenAdmin();
-        }}
-        className="absolute top-4 left-4 z-50 px-3.5 py-1.5 rounded-full bg-slate-900/80 hover:bg-slate-900 text-slate-200 hover:text-white border border-slate-700/80 backdrop-blur-md shadow-xl flex items-center gap-2 text-xs font-bold transition-all cursor-pointer hover:scale-105 active:scale-95"
-        title="Buka Operator Admin Panel (PIN default: 1234)"
-      >
-        <Shield className="w-3.5 h-3.5 text-blue-400" />
-        <span>Admin Panel</span>
-      </button>
-
       {/* Hidden Operator Gesture Hotspot (Top-Left 96x96px Fallback) */}
       <div
         onClick={handleSecretTap}
@@ -171,8 +157,10 @@ export default function WelcomeScreen({ navigate, onOpenAdmin }: ScreenProps) {
           }}
         >
           <div
-            className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl mb-4 text-white shadow-lg transition-colors duration-500"
+            onClick={handleSecretTap}
+            className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl mb-4 text-white shadow-lg transition-colors duration-500 cursor-pointer select-none active:scale-95"
             style={{ backgroundColor: themeColor }}
+            title="Pictolabs"
           >
             📸
           </div>
