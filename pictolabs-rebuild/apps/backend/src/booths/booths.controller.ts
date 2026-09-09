@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Patch, Body, Param, Logger } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Body, Param, Logger, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody } from '@nestjs/swagger';
 import { BoothsService } from './booths.service';
 import { KioskGateway } from '../gateway/kiosk.gateway';
@@ -6,6 +6,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BoothHeartbeatDto } from './dto/booth-heartbeat.dto';
 import { UpdateBoothStatusDto } from './dto/update-booth-status.dto';
 import { BoothStatusResponseDto } from './dto/booth-status-response.dto';
+import { VerifyPinDto } from './dto/verify-pin.dto';
+import { UpdatePinDto } from './dto/update-pin.dto';
 import { Public } from '../auth/decorators/public.decorator';
 
 @ApiTags('Booths')
@@ -147,6 +149,38 @@ export class BoothsController {
   @ApiParam({ name: 'id', description: 'Booth UUID' })
   async logHealth(@Param('id') id: string, @Body() healthData: any) {
     return this.boothsService.recordHealth(id, healthData);
+  }
+
+  @Public()
+  @Post(':id/verify-pin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Verify 6-digit technician administrator PIN',
+    description: 'Validates PIN entered on Kiosk against bcrypt hash stored in DB. Fallback to default 885926 if unconfigured.',
+  })
+  @ApiParam({ name: 'id', description: 'Booth UUID or deviceSecret' })
+  @ApiBody({ type: VerifyPinDto })
+  @ApiResponse({ status: 200, description: 'PIN verification result' })
+  async verifyPin(
+    @Param('id') id: string,
+    @Body() dto: VerifyPinDto,
+  ) {
+    return this.boothsService.verifyPin(id, dto.pin);
+  }
+
+  @Put(':id/pin')
+  @ApiOperation({
+    summary: 'Update 6-digit technician administrator PIN',
+    description: 'Protected endpoint for Admin Dashboard to reset or update a booth PIN. Hashes PIN using bcrypt before storing.',
+  })
+  @ApiParam({ name: 'id', description: 'Booth UUID or deviceSecret' })
+  @ApiBody({ type: UpdatePinDto })
+  @ApiResponse({ status: 200, description: 'PIN updated successfully' })
+  async updatePin(
+    @Param('id') id: string,
+    @Body() dto: UpdatePinDto,
+  ) {
+    return this.boothsService.updatePin(id, dto.newPin);
   }
 
   @Get(':id/health')

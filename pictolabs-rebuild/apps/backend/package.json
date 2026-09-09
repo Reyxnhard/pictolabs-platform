@@ -12,6 +12,7 @@
     "test:storage": "ts-node src/storage/storage.e2e.ts",
     "test:sprint5b": "ts-node src/sessions/sprint5b.e2e.ts",
     "test:sprint5c": "ts-node src/sprint5c.e2e.ts",
+    "test:sprint5e-revision": "ts-node src/sprint5e-revision.e2e.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

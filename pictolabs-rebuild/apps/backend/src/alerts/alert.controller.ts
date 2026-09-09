@@ -1,10 +1,12 @@
 import { Controller, Post, Body } from '@nestjs/common';
 import { AlertService, AlertSeverity } from './alert.service';
+import { Public } from '../auth/decorators/public.decorator';
 
 @Controller(['api/alerts', 'alerts'])
 export class AlertController {
   constructor(private readonly alertService: AlertService) {}
 
+  @Public()
   @Post('test')
   async sendTestAlert(
     @Body()

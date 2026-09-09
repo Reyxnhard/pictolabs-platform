@@ -31,7 +31,7 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState(false);
-  const [masterPin, setMasterPin] = useState('885926');
+  const [isVerifying, setIsVerifying] = useState(false);
   const [failedAttempts, setFailedAttempts] = useState(0);
   const [lockoutSeconds, setLockoutSeconds] = useState(0);
 
@@ -71,19 +71,6 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
     onConfirm: () => void;
   } | null>(null);
 
-  // ─── Fetch Configured Admin PIN on Mount ────────────────────
-  useEffect(() => {
-    kiosk.config
-      .get()
-      .then((cfg: any) => {
-        if (cfg?.adminPin && typeof cfg.adminPin === 'string') {
-          setMasterPin(cfg.adminPin);
-        }
-      })
-      .catch((err) => {
-        console.warn('[AdminScreen] Could not read local config for adminPin:', err);
-      });
-  }, []);
 
   // ─── Lockout Countdown Timer ───────────────────────────────
   useEffect(() => {
@@ -113,43 +100,66 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
   };
 
   const verifyPin = async (candidate: string) => {
-    if (lockoutSeconds > 0) return;
-    if (candidate === masterPin) {
-      setIsAuthenticated(true);
-      setPinError(false);
-      setFailedAttempts(0);
-    } else {
-      const nextFails = failedAttempts + 1;
-      setFailedAttempts(nextFails);
-      setPinError(true);
+    if (lockoutSeconds > 0 || isVerifying) return;
+    setIsVerifying(true);
 
-      if (nextFails >= 3) {
-        setLockoutSeconds(600); // 10 minutes lockout (600s)
+    try {
+      const backendUrl = ((import.meta as any).env?.VITE_BACKEND_URL as string) || 'http://localhost:4000';
+      const boothIdentifier = (config as any)?.deviceSecret || 'dev-secret-booth-01';
+
+      const res = await fetch(`${backendUrl}/api/booths/${boothIdentifier}/verify-pin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: candidate }),
+      });
+
+      const data = await res.json().catch(() => ({ verified: false }));
+
+      if (res.ok && data.verified) {
+        setIsAuthenticated(true);
+        setPinError(false);
         setFailedAttempts(0);
+      } else {
+        const nextFails = failedAttempts + 1;
+        setFailedAttempts(nextFails);
+        setPinError(true);
 
-        // Dispatch WhatsApp Alert to Admin
-        try {
-          const backendUrl = ((import.meta as any).env?.VITE_BACKEND_URL as string) || 'http://localhost:4000';
-          await fetch(`${backendUrl}/api/alerts/test`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              severity: 'CRITICAL',
-              type: 'ERR_KIOSK_PIN_BRUTE_FORCE',
-              title: 'Percobaan Akses Ilegal Panel Teknisi',
-              detail: '3 kali berturut-turut memasukkan PIN salah pada layar kios. Keypad dikunci selama 10 menit.',
-              action: 'Periksa kamera CCTV booth dan pastikan tidak ada pihak yang mencoba membobol sistem.',
-            }),
-          });
-        } catch (e) {
-          console.warn('[AdminScreen] Failed to dispatch brute force alert:', e);
+        if (nextFails >= 3) {
+          setLockoutSeconds(600); // 10 minutes lockout (600s)
+          setFailedAttempts(0);
+
+          // Dispatch WhatsApp Alert to Admin
+          try {
+            await fetch(`${backendUrl}/api/alerts/test`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                severity: 'CRITICAL',
+                type: 'ERR_KIOSK_PIN_BRUTE_FORCE',
+                title: 'Percobaan Akses Ilegal Panel Teknisi',
+                detail: '3 kali berturut-turut memasukkan PIN salah pada layar kios. Keypad dikunci selama 10 menit.',
+                action: 'Periksa kamera CCTV booth dan pastikan tidak ada pihak yang mencoba membobol sistem.',
+              }),
+            });
+          } catch (e) {
+            console.warn('[AdminScreen] Failed to dispatch brute force alert:', e);
+          }
         }
-      }
 
+        setTimeout(() => {
+          setPin('');
+          setPinError(false);
+        }, 800);
+      }
+    } catch (err) {
+      console.error('[AdminScreen] PIN verification network error:', err);
+      setPinError(true);
       setTimeout(() => {
         setPin('');
         setPinError(false);
       }, 800);
+    } finally {
+      setIsVerifying(false);
     }
   };
 

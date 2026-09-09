@@ -5,7 +5,7 @@ import { MaintenanceToggle } from './MaintenanceToggle';
 import type { Booth, BoothStatusResponse } from '../../types/booth';
 import { boothsApi } from '../../services/boothsApi';
 import { CopyButton } from '../common/CopyButton';
-import { Monitor, Cpu, GitCommit, HardDrive, Wifi, Shield, RefreshCw } from 'lucide-react';
+import { Monitor, Cpu, GitCommit, HardDrive, Wifi, Shield, RefreshCw, Lock, KeyRound, Eye, EyeOff, CheckCircle2, AlertCircle } from 'lucide-react';
 import { BoothHealthCard } from './BoothHealthCard';
 
 interface BoothDetailDrawerProps {
@@ -25,6 +25,12 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
 
+  // PIN Management State
+  const [newPin, setNewPin] = useState('');
+  const [showPin, setShowPin] = useState(false);
+  const [isUpdatingPin, setIsUpdatingPin] = useState(false);
+  const [pinFeedback, setPinFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
   const fetchStatus = async () => {
     if (!booth) return;
     setIsLoading(true);
@@ -43,6 +49,8 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
       fetchStatus();
     } else {
       setStatusDetail(null);
+      setPinFeedback(null);
+      setNewPin('');
     }
   }, [isOpen, booth?.id]);
 
@@ -103,6 +111,95 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
           onToggle={handleMaintenanceToggle}
           isLoading={isUpdating}
         />
+
+        {/* Kiosk Admin PIN Management */}
+        <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+              <Lock className="w-4 h-4 text-emerald-400" />
+              Kelola PIN Teknisi (6-Digit Bcrypt)
+            </h4>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              Cloud Hash Sync
+            </span>
+          </div>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            PIN digunakan teknisi untuk membuka Operator Control Panel di layar kios. Hash disimpan aman di backend database.
+          </p>
+
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!/^\d{6}$/.test(newPin)) {
+                setPinFeedback({ type: 'error', message: 'PIN harus tepat 6 digit angka.' });
+                return;
+              }
+              setIsUpdatingPin(true);
+              setPinFeedback(null);
+              try {
+                await boothsApi.updateBoothPin(booth.id, newPin);
+                setPinFeedback({ type: 'success', message: '✓ PIN Teknisi berhasil diubah! Kiosk langsung tersinkron.' });
+                setNewPin('');
+              } catch (err: any) {
+                setPinFeedback({ type: 'error', message: err.response?.data?.message || 'Gagal memperbarui PIN teknisi' });
+              } finally {
+                setIsUpdatingPin(false);
+              }
+            }}
+            className="space-y-3 pt-1"
+          >
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  type={showPin ? 'text' : 'password'}
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={newPin}
+                  onChange={(e) => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="Masukkan 6-digit PIN baru..."
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700/80 text-white font-mono text-sm tracking-widest placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPin(!showPin)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 transition"
+                  title={showPin ? 'Sembunyikan PIN' : 'Lihat PIN'}
+                >
+                  {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              <button
+                type="submit"
+                disabled={isUpdatingPin || newPin.length !== 6}
+                className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 disabled:opacity-40 text-white text-xs font-bold transition flex items-center gap-2 shadow-lg shadow-indigo-600/20"
+              >
+                {isUpdatingPin ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <KeyRound className="w-3.5 h-3.5" />
+                )}
+                Simpan PIN
+              </button>
+            </div>
+
+            {pinFeedback && (
+              <div
+                className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${
+                  pinFeedback.type === 'success'
+                    ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                    : 'bg-rose-950/60 border-rose-500/40 text-rose-300'
+                }`}
+              >
+                {pinFeedback.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-400" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-400" />
+                )}
+                <span>{pinFeedback.message}</span>
+              </div>
+            )}
+          </form>
+        </div>
 
         {/* 5-Pillar Operational Health */}
         <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5">

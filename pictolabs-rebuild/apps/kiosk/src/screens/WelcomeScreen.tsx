@@ -18,9 +18,6 @@ export default function WelcomeScreen({ navigate, onOpenAdmin }: ScreenProps) {
   // Printer Health Validation (Pre-Session Gate)
   const [printerHealth, setPrinterHealth] = useState<PrinterHealth | null>(null);
 
-  // Hidden Gesture Detector: 5 taps within 3 seconds on the top-left area
-  const tapTimestampsRef = useRef<number[]>([]);
-
   const themeColor = config.themeColor || '#3b82f6';
   const eventName = config.eventName || 'PICTOLABS SELF PHOTOBOOTH';
   const subText = config.subText || 'TOUCH SCREEN TO START';
@@ -48,21 +45,6 @@ export default function WelcomeScreen({ navigate, onOpenAdmin }: ScreenProps) {
     };
   }, []);
 
-  // Handle hidden operator gesture (5 rapid taps within 2.5s on brand logo or top-left corner)
-  const handleSecretTap = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Do not trigger photo session start
-    const now = Date.now();
-    const recent = tapTimestampsRef.current.filter((t) => now - t < 2500);
-    recent.push(now);
-    tapTimestampsRef.current = recent;
-
-    if (recent.length >= 5) {
-      tapTimestampsRef.current = [];
-      if (onOpenAdmin) {
-        onOpenAdmin();
-      }
-    }
-  };
 
   // Printer Bypass state (enabled by default so kiosk can be tested without physical printer)
   const [bypassPrinter, setBypassPrinter] = useState(() => {
@@ -89,12 +71,21 @@ export default function WelcomeScreen({ navigate, onOpenAdmin }: ScreenProps) {
       }}
       onClick={handleStart}
     >
-      {/* Hidden Operator Gesture Hotspot (Top-Left 96x96px Fallback) */}
-      <div
-        onClick={handleSecretTap}
-        className="absolute top-0 left-0 w-24 h-24 z-40 cursor-default select-none"
-        aria-hidden="true"
-      />
+      {/* Visible but Discreet Operator / Staff Access Entry Point */}
+      <button
+        type="button"
+        id="btn-kiosk-admin-entry"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (onOpenAdmin) onOpenAdmin();
+        }}
+        className="absolute top-6 right-6 z-30 px-3.5 py-1.5 rounded-full bg-slate-900/35 hover:bg-slate-900/80 text-slate-500 hover:text-white border border-slate-700/30 hover:border-slate-500/60 backdrop-blur-md text-xs font-medium flex items-center gap-1.5 transition-all opacity-40 hover:opacity-100 cursor-pointer shadow-sm group"
+        title="Akses Operator / Staff"
+        aria-label="Staff Access"
+      >
+        <Shield className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-400 transition-colors" />
+        <span className="tracking-wide text-[11px] font-mono">Staff</span>
+      </button>
 
       {/* Halftone pattern overlay */}
       <div
@@ -157,8 +148,7 @@ export default function WelcomeScreen({ navigate, onOpenAdmin }: ScreenProps) {
           }}
         >
           <div
-            onClick={handleSecretTap}
-            className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl mb-4 text-white shadow-lg transition-colors duration-500 cursor-pointer select-none active:scale-95"
+            className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl mb-4 text-white shadow-lg transition-colors duration-500 select-none"
             style={{ backgroundColor: themeColor }}
             title="Pictolabs"
           >

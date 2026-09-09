@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BoothHeartbeatDto } from './dto/booth-heartbeat.dto';
 import { UpdateBoothStatusDto } from './dto/update-booth-status.dto';
+import * as bcrypt from 'bcrypt';
 
 export type ComputedStatus = 'ONLINE' | 'DEGRADED' | 'OFFLINE' | 'MAINTENANCE';
 
@@ -237,6 +238,7 @@ export class BoothsService {
         releaseChannel: b.releaseChannel || 'stable',
         machineName: b.machineName || null,
         localIp: b.localIp || null,
+        hasAdminPin: !!b.adminPinHash,
         config: b.config,
         createdAt: b.createdAt,
         updatedAt: b.updatedAt,
@@ -251,11 +253,66 @@ export class BoothsService {
   async findById(id: string) {
     const booth = await this.findBoothByIdentifier(id, { branch: true, config: true });
     const computed = this.computeEffectiveStatus(booth.lastSeen, booth.status);
+    const { adminPinHash, ...sanitized } = booth as any;
     return {
-      ...booth,
+      ...sanitized,
+      hasAdminPin: !!adminPinHash,
       status: computed.effectiveStatus,
       isMaintenance: computed.isMaintenance,
       secondsSinceLastHeartbeat: computed.secondsSinceLastHeartbeat,
+    };
+  }
+
+  /**
+   * Verify entered 6-digit technician administrator PIN against bcrypt hash stored in DB.
+   * Fallback to default PIN '885926' if adminPinHash has not yet been customized.
+   */
+  async verifyPin(identifier: string, candidatePin: string): Promise<{ success: boolean; verified: boolean; boothId: string }> {
+    const booth = await this.findBoothByIdentifier(identifier);
+
+    let isMatch = false;
+    if (booth.adminPinHash) {
+      isMatch = await bcrypt.compare(candidatePin, booth.adminPinHash);
+    } else {
+      // Default initial PIN for Booth #1
+      isMatch = candidatePin === '885926';
+    }
+
+    this.logger.log(
+      `[BoothsService] PIN verification attempted for ${booth.name} (${booth.id}) -> ${isMatch ? 'VERIFIED' : 'REJECTED'}`
+    );
+
+    return {
+      success: true,
+      verified: isMatch,
+      boothId: booth.id,
+    };
+  }
+
+  /**
+   * Update or reset technician administrator PIN for a booth from the Admin Dashboard.
+   * Validates 6 numeric digits and hashes using bcrypt.
+   */
+  async updatePin(identifier: string, newPin: string): Promise<{ success: boolean; message: string; boothId: string }> {
+    if (!/^\d{6}$/.test(newPin)) {
+      throw new BadRequestException('PIN must be exactly 6 numeric digits');
+    }
+
+    const booth = await this.findBoothByIdentifier(identifier);
+    const saltRounds = 10;
+    const hash = await bcrypt.hash(newPin, saltRounds);
+
+    await this.prisma.booth.update({
+      where: { id: booth.id },
+      data: { adminPinHash: hash },
+    });
+
+    this.logger.log(`[BoothsService] Admin PIN successfully updated for booth ${booth.name} (${booth.id})`);
+
+    return {
+      success: true,
+      message: 'Admin PIN updated successfully',
+      boothId: booth.id,
     };
   }
 

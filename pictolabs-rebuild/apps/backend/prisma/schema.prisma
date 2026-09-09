@@ -62,6 +62,7 @@ model Booth {
   osVersion       String?          @map("os_version")
   electronVersion String?          @map("electron_version")
   releaseChannel  String?          @default("stable") @map("release_channel")
+  adminPinHash    String?          @map("admin_pin_hash")
   config       BoothConfig?
   healthLogs   BoothHealthLog[]
   sessions     Session[]

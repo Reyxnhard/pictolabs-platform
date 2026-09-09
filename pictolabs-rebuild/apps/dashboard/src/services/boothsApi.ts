@@ -21,4 +21,9 @@ export const boothsApi = {
     const res = await api.get<Booth>(`/api/booths/${id}`);
     return res.data;
   },
+
+  async updateBoothPin(id: string, newPin: string): Promise<{ success: boolean; message: string; boothId: string }> {
+    const res = await api.put<{ success: boolean; message: string; boothId: string }>(`/api/booths/${id}/pin`, { newPin });
+    return res.data;
+  },
 };

@@ -77,22 +77,23 @@ $Matrix += [PSCustomObject]@{
     Evidence = "Window snap, help dialogs, and hotkeys locked"
 }
 
-# --- ET-07: Admin Panel Access (Concealed Entry & 6-Digit PIN) ---
+# --- ET-07: Admin Panel Access (Discreet Entry & Backend Sync 6-Digit PIN) ---
 $WelcomeContent = Get-Content (Join-Path $PSScriptRoot "..\apps\kiosk\src\screens\WelcomeScreen.tsx") -Raw
 $AdminContent = Get-Content (Join-Path $PSScriptRoot "..\apps\kiosk\src\screens\AdminScreen.tsx") -Raw
 
-$HasNoVisibleButton = -not ($WelcomeContent -match 'Admin Panel</span>')
-$HasSecretTapOnLogo = ($WelcomeContent -match 'onClick=\{handleSecretTap\}' -and $WelcomeContent -match 'tapTimestampsRef\.current\.filter.*2500')
+$HasDiscreetEntryButton = ($WelcomeContent -match 'btn-kiosk-admin-entry' -and $WelcomeContent -match 'onOpenAdmin')
+$HasBackendPinSync = ($AdminContent -match '/api/booths/.*verify-pin')
 $Has6DigitPin = ($AdminContent -match 'pin\.length < 6' -and $AdminContent -match 'nextPin\.length === 6')
 $Has10MinLockout = ($AdminContent -match 'setLockoutSeconds\(600\)')
+$HasWhatsAppAlert = ($AdminContent -match 'ERR_KIOSK_PIN_BRUTE_FORCE')
 
-$ET07_Pass = ($HasNoVisibleButton -and $HasSecretTapOnLogo -and $Has6DigitPin -and $Has10MinLockout)
+$ET07_Pass = ($HasDiscreetEntryButton -and $HasBackendPinSync -and $Has6DigitPin -and $Has10MinLockout -and $HasWhatsAppAlert)
 $Matrix += [PSCustomObject]@{
     ID = "ET-07"
     Vector = "Admin Panel Access"
     Target = "Technician Menu Brute Force"
     Status = if ($ET07_Pass) { "PASS" } else { "FAIL" }
-    Evidence = "Visible button removed; 5-tap logo gesture; 6-digit PIN; 10m lockout"
+    Evidence = "Discreet Staff button; backend bcrypt PIN sync; 6-digit PIN; 10m lockout & WA alert"
 }
 
 # --- ET-08: App Crash Recovery (Watchdog) ---
