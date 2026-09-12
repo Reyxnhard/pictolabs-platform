@@ -58,36 +58,51 @@ export class StorageController {
       key?: string;
       publicUrl?: string;
       sequenceNo?: number;
-    }
+    },
+    @Headers('x-device-secret') deviceSecret?: string
   ) {
     if (!body?.sessionId || !body?.fileName) {
       throw new HttpException('sessionId and fileName are required', HttpStatus.BAD_REQUEST);
+    }
+
+    if (!deviceSecret) {
+      throw new HttpException('INVALID_DEVICE', HttpStatus.UNAUTHORIZED);
+    }
+
+    const booth = await this.prisma.booth.findUnique({
+      where: { deviceSecret },
+    });
+
+    if (!booth) {
+      throw new HttpException('INVALID_DEVICE', HttpStatus.UNAUTHORIZED);
     }
 
     this.logger.log(
       `[StorageController] Confirming upload for session=${body.sessionId}, file=${body.fileName}, type=${body.fileType}`
     );
 
+    const existingSession = await this.prisma.session.findUnique({
+      where: { id: body.sessionId },
+    });
+
+    if (!existingSession) {
+      throw new HttpException('SESSION_NOT_FOUND', HttpStatus.CONFLICT);
+    }
+
     try {
-      const existingSession = await this.prisma.session.findUnique({
+      await this.prisma.session.update({
         where: { id: body.sessionId },
+        data: { status: 'COMPLETED' },
       });
 
-      if (existingSession) {
-        await this.prisma.photo.create({
-          data: {
-            sessionId: body.sessionId,
-            finalUrl: body.publicUrl || `/uploads/${body.fileName}`,
-            storageKey: body.key || body.fileName,
-            sequenceNo: body.sequenceNo || 1,
-          },
-        });
-
-        await this.prisma.session.update({
-          where: { id: body.sessionId },
-          data: { status: 'COMPLETED' },
-        });
-      }
+      await this.prisma.photo.create({
+        data: {
+          sessionId: body.sessionId,
+          finalUrl: body.publicUrl || `/uploads/${body.fileName}`,
+          storageKey: body.key || body.fileName,
+          sequenceNo: body.sequenceNo || 1,
+        },
+      });
 
       return {
         success: true,
@@ -97,14 +112,11 @@ export class StorageController {
         timestamp: new Date().toISOString(),
       };
     } catch (err: any) {
-      this.logger.warn(`[StorageController] DB confirmation non-fatal warning: ${err.message}`);
-      return {
-        success: true,
-        sessionId: body.sessionId,
-        fileName: body.fileName,
-        confirmed: true,
-        dbWarning: err.message,
-      };
+      this.logger.error(`[StorageController] DB confirmation failed: ${err.message}`);
+      throw new HttpException(
+        `Failed to confirm upload in database: ${err.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
     }
   }
 

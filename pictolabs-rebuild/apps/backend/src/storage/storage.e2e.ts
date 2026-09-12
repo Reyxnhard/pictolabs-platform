@@ -37,6 +37,27 @@ async function runStorageSprint3Tests() {
     fs.mkdirSync(uploadDir, { recursive: true });
   }
 
+  let testBooth = await prisma.booth.findFirst();
+  if (!testBooth) {
+    const company = await prisma.company.create({ data: { name: 'Test Storage Company' } });
+    const branch = await prisma.branch.create({ data: { name: 'Test Storage Branch', companyId: company.id } });
+    testBooth = await prisma.booth.create({
+      data: {
+        name: 'Storage Test Booth',
+        deviceSecret: 'test-secret-storage-01',
+        branchId: branch.id,
+        status: 'ONLINE',
+      },
+    });
+  }
+  await prisma.session.create({
+    data: {
+      id: testSessionId,
+      boothId: testBooth.id,
+      status: 'PENDING_PAYMENT',
+    },
+  });
+
   try {
     // ─────────────────────────────────────────────────────────────────
     // MILESTONE 1: Cloudflare R2 Connection, Fallback & Health Check
@@ -96,7 +117,7 @@ async function runStorageSprint3Tests() {
       fileType: 'composite',
       publicUrl: saveResult.publicUrl,
       key: `sessions/${testSessionId}/composite_${testSessionId}.jpg`,
-    });
+    }, testBooth.deviceSecret);
     assert(confirmResult.success === true && confirmResult.confirmed === true, 'AC-2.5: confirmUpload returns success: true and confirmed: true');
 
     // ─────────────────────────────────────────────────────────────────
@@ -243,6 +264,8 @@ async function runStorageSprint3Tests() {
       if (fs.existsSync(mockKioskDataDir)) fs.rmdirSync(mockKioskDataDir);
       const testLocalFile = path.join(uploadDir, `composite_${testSessionId}.jpg`);
       if (fs.existsSync(testLocalFile)) fs.unlinkSync(testLocalFile);
+      await prisma.photo.deleteMany({ where: { sessionId: testSessionId } });
+      await prisma.session.deleteMany({ where: { id: testSessionId } });
     } catch (_) {}
 
     console.log('\n═══════════════════════════════════════════════════════════════════════');

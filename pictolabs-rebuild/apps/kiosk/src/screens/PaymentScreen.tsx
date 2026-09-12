@@ -22,7 +22,7 @@ type PaymentState =
   | 'EXPIRED'
   | 'ERROR';
 
-export default function PaymentScreen({ navigate, session, onOpenAdmin }: ScreenProps) {
+export default function PaymentScreen({ navigate, session, updateSession, onOpenAdmin }: ScreenProps) {
   const { config } = useKioskConfig();
   const themeColor = config.themeColor || '#3b82f6';
   const price = config.price || 35000;
@@ -94,6 +94,9 @@ export default function PaymentScreen({ navigate, session, onOpenAdmin }: Screen
 
       setOrderId(res.orderId);
       localStorage.setItem('pictolabs-active-order-id', res.orderId);
+      if (res.sessionId) {
+        updateSession({ sessionId: res.sessionId });
+      }
 
       // Render sharp QR Code canvas / dataURL
       const url = await QRCode.toDataURL(res.qrisString, {
@@ -127,6 +130,9 @@ export default function PaymentScreen({ navigate, session, onOpenAdmin }: Screen
           if (res.paid) {
             console.log('[PaymentScreen] Found settled previous order:', savedOrderId);
             localStorage.removeItem('pictolabs-active-order-id');
+            if (res.sessionId) {
+              updateSession({ sessionId: res.sessionId });
+            }
             setPaymentState('SETTLED');
             setTimeout(() => navigate('frame-design'), 1500);
           } else {
@@ -150,6 +156,9 @@ export default function PaymentScreen({ navigate, session, onOpenAdmin }: Screen
       console.log('[PaymentScreen] WebSocket onPaymentSettled received:', data);
       if (!orderId || data.orderId === orderId) {
         localStorage.removeItem('pictolabs-active-order-id');
+        if (data.sessionId) {
+          updateSession({ sessionId: data.sessionId });
+        }
         setPaymentState('SETTLED');
         setTimeout(() => navigate('frame-design'), 1500);
       }
@@ -183,6 +192,9 @@ export default function PaymentScreen({ navigate, session, onOpenAdmin }: Screen
           console.log('[PaymentScreen] Poller detected payment settled:', orderId);
           if (pollingRef.current) clearInterval(pollingRef.current);
           localStorage.removeItem('pictolabs-active-order-id');
+          if (res.sessionId) {
+            updateSession({ sessionId: res.sessionId });
+          }
           setPaymentState('SETTLED');
           setTimeout(() => navigate('frame-design'), 1500);
         } else if (res.status === 'EXPIRED') {

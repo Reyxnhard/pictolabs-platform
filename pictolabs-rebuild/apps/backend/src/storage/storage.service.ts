@@ -201,6 +201,69 @@ export class StorageService implements OnModuleInit {
   }
 
   /**
+   * List all objects stored in Cloudflare R2 under the prefix `sessions/${sessionId}/`.
+   */
+  async listSessionObjects(sessionId: string): Promise<Array<{ key: string; size?: number }>> {
+    const cleanSessionId = path.basename(sessionId);
+    const prefix = `sessions/${cleanSessionId}/`;
+
+    if (this.s3Client && this.r2Bucket) {
+      try {
+        const { ListObjectsV2Command } = require('@aws-sdk/client-s3');
+        const command = new ListObjectsV2Command({
+          Bucket: this.r2Bucket,
+          Prefix: prefix,
+        });
+
+        const response = await this.s3Client.send(command);
+        if (response.Contents && response.Contents.length > 0) {
+          return response.Contents.map((obj: any) => ({
+            key: obj.Key,
+            size: obj.Size,
+          }));
+        }
+      } catch (err: any) {
+        this.logger.warn(`[StorageService] Failed to list R2 objects for session ${cleanSessionId}: ${err.message}`);
+      }
+    }
+
+    return [];
+  }
+
+  /**
+   * Stream object content directly from Cloudflare R2 or local fallback storage.
+   */
+  async getObjectStream(key: string): Promise<NodeJS.ReadableStream | null> {
+    const cleanKey = key.replace(/^\/+/, '');
+
+    // 1. Primary: Stream from Cloudflare R2
+    if (this.s3Client && this.r2Bucket) {
+      try {
+        const { GetObjectCommand } = require('@aws-sdk/client-s3');
+        const command = new GetObjectCommand({
+          Bucket: this.r2Bucket,
+          Key: cleanKey,
+        });
+
+        const response = await this.s3Client.send(command);
+        if (response.Body) {
+          return response.Body as NodeJS.ReadableStream;
+        }
+      } catch (err: any) {
+        this.logger.warn(`[StorageService] Failed to get object stream from R2 for ${cleanKey}: ${err.message}`);
+      }
+    }
+
+    // 2. Fallback: Local filesystem storage
+    const localFile = path.join(this.uploadDir, path.basename(cleanKey));
+    if (fs.existsSync(localFile)) {
+      return fs.createReadStream(localFile);
+    }
+
+    return null;
+  }
+
+  /**
    * Generate authenticated Presigned GET URL for secure direct downloads.
    */
   async getPresignedDownloadUrl(key: string, expiresInSeconds: number = 3600): Promise<string> {

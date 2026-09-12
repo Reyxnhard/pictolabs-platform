@@ -272,6 +272,11 @@ export function createSession(data: Omit<Session, 'id' | 'createdAt' | 'synced'>
       } catch (_) {}
     }
 
+    // Eager Sync session metadata directly to PostgreSQL cloud
+    syncSingleSessionToCloud(id).catch((err: any) =>
+      console.warn(`[SyncEngine] Eager session sync warning for ${id}:`, err?.message)
+    );
+
     // 1. Composite file upload
     if (data.compositePath && fs.existsSync(data.compositePath)) {
       enqueueUpload(id, data.compositePath, 'composite');
@@ -494,13 +499,32 @@ async function processUploadQueue(): Promise<void> {
 
             if (r2PutRes.ok || r2PutRes.status === 204) {
               remoteUrl = presignedData.publicUrl;
-              uploadedSuccessfully = true;
+
+              // Pre-flight Guard: Guarantee session exists in PostgreSQL before confirming upload
+              let isSessionSynced = false;
+              if (db) {
+                try {
+                  const sRow = db.prepare('SELECT synced FROM sessions WHERE id = ?').get(item.session_id) as any;
+                  isSessionSynced = Boolean(sRow?.synced);
+                } catch (_) {}
+              }
+
+              if (!isSessionSynced) {
+                const syncOk = await syncSingleSessionToCloud(item.session_id);
+                if (!syncOk) {
+                  stmtUpdateUploadStatus.run('FAILED', 'Pre-flight session sync failed before confirm-upload', null, now, item.id);
+                  continue; // Do not call confirm-upload, retry on next cycle with backoff
+                }
+              }
 
               // Confirm upload with NestJS
               try {
-                await fetch(`${config.apiBaseUrl}/api/storage/confirm-upload`, {
+                const confirmRes = await fetch(`${config.apiBaseUrl}/api/storage/confirm-upload`, {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'x-device-secret': config.deviceSecret || '',
+                  },
                   body: JSON.stringify({
                     sessionId: item.session_id,
                     fileName: filename,
@@ -509,7 +533,21 @@ async function processUploadQueue(): Promise<void> {
                     publicUrl: remoteUrl,
                   }),
                 });
-              } catch (_) {}
+
+                if (confirmRes.ok) {
+                  const confirmData = (await confirmRes.json()) as { confirmed?: boolean };
+                  if (confirmData.confirmed) {
+                    uploadedSuccessfully = true;
+                  } else {
+                    stmtUpdateUploadStatus.run('FAILED', 'Confirmation unacknowledged by cloud backend', null, now, item.id);
+                  }
+                } else {
+                  const errText = await confirmRes.text();
+                  stmtUpdateUploadStatus.run('FAILED', `Confirm HTTP ${confirmRes.status}: ${errText.slice(0, 100)}`, null, now, item.id);
+                }
+              } catch (confirmErr: any) {
+                stmtUpdateUploadStatus.run('FAILED', `Confirm network error: ${confirmErr.message}`, null, now, item.id);
+              }
             }
           }
         }
@@ -581,6 +619,37 @@ async function processUploadQueue(): Promise<void> {
 }
 
 // ─── Batch Session Metadata Sync to NestJS ──────────────────
+export async function syncSingleSessionToCloud(sessionId: string): Promise<boolean> {
+  if (!config?.apiBaseUrl || !db || !stmtGetSession) return false;
+
+  const row = stmtGetSession.get(sessionId);
+  if (!row) return false;
+
+  const session = rowToSession(row);
+  try {
+    const response = await fetch(`${config.apiBaseUrl}/api/sessions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-device-secret': config.deviceSecret || '',
+      },
+      body: JSON.stringify(session),
+    });
+
+    if (response.ok) {
+      stmtMarkSynced?.run(session.id);
+      console.log(`[SyncEngine] ✓ Synced single session metadata: ${session.id}`);
+      return true;
+    } else {
+      console.warn(`[SyncEngine] Single session sync failed for ${session.id}: HTTP ${response.status}`);
+      return false;
+    }
+  } catch (err: any) {
+    console.warn(`[SyncEngine] Single session sync network error for ${session.id}: ${err.message}`);
+    return false;
+  }
+}
+
 async function syncSessionsToCloud(): Promise<void> {
   if (!config.apiBaseUrl || !db || !stmtGetUnsyncedSessions) return;
 
@@ -591,26 +660,8 @@ async function syncSessionsToCloud(): Promise<void> {
   console.log(`[SyncEngine] Syncing ${unsynced.length} session metadata records to cloud...`);
 
   for (const session of unsynced) {
-    try {
-      const response = await fetch(`${config.apiBaseUrl}/api/sessions`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'x-device-secret': config.deviceSecret || '',
-        },
-        body: JSON.stringify(session),
-      });
-
-      if (response.ok) {
-        stmtMarkSynced?.run(session.id);
-        console.log(`[SyncEngine] ✓ Synced session metadata: ${session.id}`);
-      } else {
-        console.warn(`[SyncEngine] Sync failed for ${session.id}: ${response.status}`);
-      }
-    } catch (err) {
-      console.warn(`[SyncEngine] Network sync error, will retry: ${(err as Error).message}`);
-      break;
-    }
+    const success = await syncSingleSessionToCloud(session.id);
+    if (!success) break;
   }
 }
 

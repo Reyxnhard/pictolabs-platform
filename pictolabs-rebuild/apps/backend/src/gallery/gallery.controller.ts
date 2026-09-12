@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const archiver = require('archiver');
 
@@ -12,6 +13,7 @@ interface SessionAssetPhoto {
   url: string;
   previewUrl: string;
   sizeFormatted: string;
+  storageKey?: string;
 }
 
 interface SessionAssetVideo {
@@ -19,6 +21,7 @@ interface SessionAssetVideo {
   filename: string;
   url: string;
   sizeFormatted: string;
+  storageKey?: string;
 }
 
 interface SessionAssetGif {
@@ -26,12 +29,14 @@ interface SessionAssetGif {
   url: string;
   isMp4: boolean;
   sizeFormatted: string;
+  storageKey?: string;
 }
 
 interface SessionAssetComposite {
   filename: string;
   url: string;
   sizeFormatted: string;
+  storageKey?: string;
 }
 
 interface SessionAssets {
@@ -51,7 +56,10 @@ export class GalleryController {
   private readonly logger = new Logger(GalleryController.name);
   private readonly uploadDir = path.resolve(process.cwd(), 'public', 'uploads');
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storageService: StorageService,
+  ) {}
 
   /**
    * Format byte count into human-readable string (KB, MB).
@@ -65,132 +73,210 @@ export class GalleryController {
   }
 
   /**
-   * Look up public URL for a given filename or fallback.
+   * Look up public URL for a given filename or storage key.
    */
-  private getFileUrl(filename: string): string {
+  private getFileUrl(filename: string, storageKey?: string): string {
+    if (storageKey) {
+      return this.storageService.getFileUrl(storageKey);
+    }
     const r2Domain = process.env.R2_PUBLIC_DOMAIN;
     if (r2Domain) {
       const cleanDomain = r2Domain.replace(/\/+$/, '');
       const prefix = cleanDomain.startsWith('http') ? cleanDomain : `https://${cleanDomain}`;
+      if (filename.startsWith('sessions/') || filename.startsWith('photos/')) {
+        return `${prefix}/${filename}`;
+      }
       return `${prefix}/photos/${filename}`;
     }
     return `/uploads/${filename}`;
   }
 
   /**
-   * Comprehensive Asset Discovery:
-   * Categorizes all files belonging to a session into Composite, Photos, Live Videos, and GIF.
+   * Comprehensive Cloud Asset Discovery:
+   * 1. Reads registered Photo records from PostgreSQL database (Prisma).
+   * 2. Queries Cloudflare R2 bucket objects under prefix `sessions/${sessionId}/`.
+   * 3. Falls back to local directory `public/uploads` for local dev environments.
+   * 4. Categorizes discovered assets into Composite, Photos, Live Videos, and GIF.
    */
-  private findSessionAssets(sessionId: string): SessionAssets {
-    if (!fs.existsSync(this.uploadDir)) {
-      return {
-        sessionId,
-        composite: null,
-        photos: [],
-        videos: [],
-        gif: null,
-        totalAssets: 0,
-      };
+  private async findSessionAssets(sessionId: string): Promise<SessionAssets> {
+    interface DiscoveredAsset {
+      filename: string;
+      storageKey: string;
+      url: string;
+      sizeFormatted: string;
+      sizeBytes?: number;
+      sequenceNo?: number;
     }
 
-    const files = fs.readdirSync(this.uploadDir);
+    const discoveredMap = new Map<string, DiscoveredAsset>();
+
+    // 1. Check PostgreSQL Database (Prisma)
+    try {
+      const dbPhotos = await this.prisma.photo.findMany({
+        where: { sessionId },
+        orderBy: { sequenceNo: 'asc' },
+      });
+
+      for (const p of dbPhotos) {
+        const storageKey = p.storageKey || p.rawUrl || `sessions/${sessionId}/${p.id}.jpg`;
+        const filename = path.basename(storageKey);
+        const url = p.finalUrl || this.storageService.getFileUrl(storageKey);
+        discoveredMap.set(filename, {
+          filename,
+          storageKey,
+          url,
+          sizeFormatted: 'HD',
+          sequenceNo: p.sequenceNo,
+        });
+      }
+    } catch (err: any) {
+      this.logger.warn(`[GalleryController] DB photo lookup warning for ${sessionId}: ${err.message}`);
+    }
+
+    // 2. Query Cloudflare R2 Object Storage (Single Source of Truth)
+    try {
+      const r2Objects = await this.storageService.listSessionObjects(sessionId);
+      for (const obj of r2Objects) {
+        const filename = path.basename(obj.key);
+        const url = this.storageService.getFileUrl(obj.key);
+        const sizeFormatted = obj.size ? this.formatBytes(obj.size) : 'HD';
+
+        const existing = discoveredMap.get(filename);
+        if (existing) {
+          existing.sizeFormatted = sizeFormatted;
+          existing.sizeBytes = obj.size;
+          existing.storageKey = obj.key;
+          if (!existing.url.startsWith('http')) {
+            existing.url = url;
+          }
+        } else {
+          discoveredMap.set(filename, {
+            filename,
+            storageKey: obj.key,
+            url,
+            sizeFormatted,
+            sizeBytes: obj.size,
+          });
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(`[GalleryController] R2 object list warning for ${sessionId}: ${err.message}`);
+    }
+
+    // 3. Fallback: Local filesystem inspection (dev / offline mode)
+    if (discoveredMap.size === 0 && fs.existsSync(this.uploadDir)) {
+      try {
+        const files = fs.readdirSync(this.uploadDir).filter((f) => f.includes(sessionId));
+        for (const f of files) {
+          const fullPath = path.join(this.uploadDir, f);
+          const stat = fs.existsSync(fullPath) ? fs.statSync(fullPath) : null;
+          const url = this.getFileUrl(f);
+          discoveredMap.set(f, {
+            filename: f,
+            storageKey: f,
+            url,
+            sizeFormatted: stat ? this.formatBytes(stat.size) : 'HD',
+            sizeBytes: stat?.size,
+          });
+        }
+      } catch (_) {}
+    }
+
+    const allAssets = Array.from(discoveredMap.values());
 
     // 1. Composite Photostrip File
     let composite: SessionAssetComposite | null = null;
-    const compositeFile = files.find(
-      (f) =>
-        f.startsWith('composite_') &&
-        f.includes(sessionId) &&
-        (f.endsWith('.jpg') || f.endsWith('.jpeg') || f.endsWith('.png'))
+    const compositeAsset = allAssets.find(
+      (a) =>
+        (a.filename.startsWith('composite_') || a.filename.includes('photostrip') || a.filename.includes('strip')) &&
+        (a.filename.endsWith('.jpg') || a.filename.endsWith('.jpeg') || a.filename.endsWith('.png'))
     );
 
-    if (compositeFile) {
-      const fullPath = path.join(this.uploadDir, compositeFile);
-      const stat = fs.existsSync(fullPath) ? fs.statSync(fullPath) : null;
+    if (compositeAsset) {
       composite = {
-        filename: compositeFile,
-        url: this.getFileUrl(compositeFile),
-        sizeFormatted: stat ? this.formatBytes(stat.size) : 'HD',
+        filename: compositeAsset.filename,
+        url: compositeAsset.url,
+        sizeFormatted: compositeAsset.sizeFormatted,
+        storageKey: compositeAsset.storageKey,
       };
     }
 
-    // 2. Individual Pose Photos (excluding thumb_ prefixes)
-    const photoCandidates = files.filter(
-      (f) =>
-        !f.startsWith('thumb_') &&
-        !f.startsWith('composite_') &&
-        f.includes(sessionId) &&
-        (f.startsWith('photo_') || f.includes('_pose_')) &&
-        (f.endsWith('.jpg') || f.endsWith('.jpeg') || f.endsWith('.png'))
+    // 2. Individual Pose Photos (excluding thumb_ and composite_)
+    const photoCandidates = allAssets.filter(
+      (a) =>
+        !a.filename.startsWith('thumb_') &&
+        !a.filename.startsWith('composite_') &&
+        !a.filename.includes('photostrip') &&
+        (a.filename.startsWith('photo_') || a.filename.includes('_pose_') || a.filename.includes('pose')) &&
+        (a.filename.endsWith('.jpg') || a.filename.endsWith('.jpeg') || a.filename.endsWith('.png'))
     );
 
     const photos: SessionAssetPhoto[] = photoCandidates
-      .map((filename, idx) => {
-        const poseMatch = filename.match(/pose_(\d+)/i) || filename.match(/photo[-_](\d+)/i);
-        const pose = poseMatch ? parseInt(poseMatch[1], 10) : idx + 1;
-        const fullPath = path.join(this.uploadDir, filename);
-        const stat = fs.existsSync(fullPath) ? fs.statSync(fullPath) : null;
+      .map((a, idx) => {
+        const poseMatch = a.filename.match(/pose_(\d+)/i) || a.filename.match(/photo[-_](\d+)/i);
+        const pose = poseMatch ? parseInt(poseMatch[1], 10) : (a.sequenceNo || idx + 1);
 
-        // Check if an optimized thumbnail exists for fast web preview
-        const thumbName = `thumb_${filename}`;
-        const hasThumb = fs.existsSync(path.join(this.uploadDir, thumbName));
+        // Check if thumbnail exists in discovered assets
+        const thumbAsset = allAssets.find((t) => t.filename === `thumb_${a.filename}`);
+        const previewUrl = thumbAsset ? thumbAsset.url : a.url;
 
         return {
           pose,
-          filename,
-          url: this.getFileUrl(filename),
-          previewUrl: hasThumb ? this.getFileUrl(thumbName) : this.getFileUrl(filename),
-          sizeFormatted: stat ? this.formatBytes(stat.size) : 'HD',
+          filename: a.filename,
+          url: a.url,
+          previewUrl,
+          sizeFormatted: a.sizeFormatted,
+          storageKey: a.storageKey,
         };
       })
       .sort((a, b) => a.pose - b.pose);
 
     // 3. Separate Live Photo Videos per pose (prefer .mp4 over .webm)
-    const videoCandidates = files.filter(
-      (f) =>
-        !f.startsWith('gif_') &&
-        f.includes(sessionId) &&
-        (f.startsWith('livephoto_') || f.includes('_pose_')) &&
-        (f.endsWith('.mp4') || f.endsWith('.webm'))
+    const videoCandidates = allAssets.filter(
+      (a) =>
+        !a.filename.startsWith('gif_') &&
+        !a.filename.includes('boomerang') &&
+        (a.filename.startsWith('livephoto_') || a.filename.includes('live_') || a.filename.includes('_pose_')) &&
+        (a.filename.endsWith('.mp4') || a.filename.endsWith('.webm'))
     );
 
-    const videoMap = new Map<string, string>();
-    for (const f of videoCandidates) {
-      const base = f.replace(/\.(mp4|webm)$/, '');
-      if (f.endsWith('.mp4') || !videoMap.has(base)) {
-        videoMap.set(base, f);
+    const videoMap = new Map<string, DiscoveredAsset>();
+    for (const v of videoCandidates) {
+      const base = v.filename.replace(/\.(mp4|webm)$/, '');
+      if (v.filename.endsWith('.mp4') || !videoMap.has(base)) {
+        videoMap.set(base, v);
       }
     }
 
     const videos: SessionAssetVideo[] = Array.from(videoMap.values())
-      .map((filename, idx) => {
-        const poseMatch = filename.match(/pose_(\d+)/i) || filename.match(/video[-_](\d+)/i);
+      .map((v, idx) => {
+        const poseMatch = v.filename.match(/pose_(\d+)/i) || v.filename.match(/video[-_](\d+)/i);
         const pose = poseMatch ? parseInt(poseMatch[1], 10) : idx + 1;
-        const fullPath = path.join(this.uploadDir, filename);
-        const stat = fs.existsSync(fullPath) ? fs.statSync(fullPath) : null;
         return {
           pose,
-          filename,
-          url: this.getFileUrl(filename),
-          sizeFormatted: stat ? this.formatBytes(stat.size) : 'HD',
+          filename: v.filename,
+          url: v.url,
+          sizeFormatted: v.sizeFormatted,
+          storageKey: v.storageKey,
         };
       })
       .sort((a, b) => a.pose - b.pose);
 
     // 4. Looping GIF / Motion Video
     let gif: SessionAssetGif | null = null;
-    const gifFile = files.find(
-      (f) => f.startsWith('gif_') && f.includes(sessionId) && (f.endsWith('.mp4') || f.endsWith('.gif'))
+    const gifAsset = allAssets.find(
+      (a) =>
+        (a.filename.startsWith('gif_') || a.filename.includes('boomerang')) &&
+        (a.filename.endsWith('.mp4') || a.filename.endsWith('.gif'))
     );
 
-    if (gifFile) {
-      const fullPath = path.join(this.uploadDir, gifFile);
-      const stat = fs.existsSync(fullPath) ? fs.statSync(fullPath) : null;
+    if (gifAsset) {
       gif = {
-        filename: gifFile,
-        url: this.getFileUrl(gifFile),
-        isMp4: gifFile.endsWith('.mp4'),
-        sizeFormatted: stat ? this.formatBytes(stat.size) : 'HD',
+        filename: gifAsset.filename,
+        url: gifAsset.url,
+        isMp4: gifAsset.filename.endsWith('.mp4'),
+        sizeFormatted: gifAsset.sizeFormatted,
+        storageKey: gifAsset.storageKey,
       };
     }
 
@@ -224,6 +310,13 @@ export class GalleryController {
         if (session) {
           if (session.status === 'PURGED') {
             return { expired: true, reason: 'session_purged_by_lifecycle' };
+          }
+          if (session.retentionExpiresAt) {
+            if (new Date() < session.retentionExpiresAt) {
+              return { expired: false, reason: 'extended_retention_active' };
+            } else {
+              return { expired: true, reason: 'extended_retention_expired' };
+            }
           }
           const ageDays = (Date.now() - session.createdAt.getTime()) / (1000 * 60 * 60 * 24);
           if (ageDays >= 30) {
@@ -464,7 +557,7 @@ export class GalleryController {
       });
     } catch (_) {}
 
-    const assets = this.findSessionAssets(sessionId);
+    const assets = await this.findSessionAssets(sessionId);
 
     return {
       success: true,
@@ -499,6 +592,7 @@ export class GalleryController {
   /**
    * One-Tap "Download All" ZIP Archive Stream.
    * Compiles Composite Photostrip, individual photos, live videos, and GIF into a single ZIP.
+   * Streams binary files directly from Cloudflare R2 object storage.
    */
   @Get('api/gallery/:sessionId/zip')
   async downloadSessionZip(
@@ -517,13 +611,14 @@ export class GalleryController {
       });
     }
 
-    const assets = this.findSessionAssets(sessionId);
+    const assets = await this.findSessionAssets(sessionId);
 
     if (assets.totalAssets === 0) {
       return res.status(404).send('Tidak ada file softfile yang ditemukan untuk sesi ini.');
     }
 
-    const archive = new archiver.ZipArchive({ zlib: { level: 6 } });
+    // Use zlib level 1 (fastest) to stream already-compressed JPEG/MP4 assets with near-zero CPU latency
+    const archive = new archiver.ZipArchive({ zlib: { level: 1 } });
 
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader(
@@ -540,36 +635,40 @@ export class GalleryController {
 
     archive.pipe(res);
 
-    // 1. Composite Photostrip
+    // 1. Composite Photostrip (Stream from Cloudflare R2 / Fallback)
     if (assets.composite) {
-      const filePath = path.join(this.uploadDir, assets.composite.filename);
-      if (fs.existsSync(filePath)) {
-        archive.file(filePath, { name: `01_photostrip_${sessionId}.jpg` });
+      const key = assets.composite.storageKey || `sessions/${sessionId}/${assets.composite.filename}`;
+      const stream = await this.storageService.getObjectStream(key);
+      if (stream) {
+        archive.append(stream, { name: `01_photostrip_${sessionId}.jpg` });
       }
     }
 
-    // 2. Raw Pose Photos
-    assets.photos.forEach((p) => {
-      const filePath = path.join(this.uploadDir, p.filename);
-      if (fs.existsSync(filePath)) {
-        archive.file(filePath, { name: `02_photo_pose_${p.pose}.jpg` });
+    // 2. Raw Pose Photos (Stream from Cloudflare R2 / Fallback)
+    for (const p of assets.photos) {
+      const key = p.storageKey || `sessions/${sessionId}/${p.filename}`;
+      const stream = await this.storageService.getObjectStream(key);
+      if (stream) {
+        archive.append(stream, { name: `02_photo_pose_${p.pose}.jpg` });
       }
-    });
+    }
 
-    // 3. Live Photo Videos
-    assets.videos.forEach((v) => {
-      const filePath = path.join(this.uploadDir, v.filename);
-      if (fs.existsSync(filePath)) {
-        archive.file(filePath, { name: `03_livephoto_pose_${v.pose}.mp4` });
+    // 3. Live Photo Videos (Stream from Cloudflare R2 / Fallback)
+    for (const v of assets.videos) {
+      const key = v.storageKey || `sessions/${sessionId}/${v.filename}`;
+      const stream = await this.storageService.getObjectStream(key);
+      if (stream) {
+        archive.append(stream, { name: `03_livephoto_pose_${v.pose}.mp4` });
       }
-    });
+    }
 
-    // 4. Boomerang GIF / Loop
+    // 4. Boomerang GIF / Loop (Stream from Cloudflare R2 / Fallback)
     if (assets.gif) {
-      const filePath = path.join(this.uploadDir, assets.gif.filename);
-      if (fs.existsSync(filePath)) {
-        const ext = path.extname(assets.gif.filename);
-        archive.file(filePath, { name: `04_boomerang_${sessionId}${ext}` });
+      const key = assets.gif.storageKey || `sessions/${sessionId}/${assets.gif.filename}`;
+      const stream = await this.storageService.getObjectStream(key);
+      if (stream) {
+        const ext = path.extname(assets.gif.filename) || (assets.gif.isMp4 ? '.mp4' : '.gif');
+        archive.append(stream, { name: `04_boomerang_${sessionId}${ext}` });
       }
     }
 
@@ -601,7 +700,7 @@ export class GalleryController {
       return res.status(200).type('html').send(this.renderExpiredHtml(sessionId));
     }
 
-    const assets = this.findSessionAssets(sessionId);
+    const assets = await this.findSessionAssets(sessionId);
     const hasAny = assets.totalAssets > 0;
 
     const html = `<!DOCTYPE html>
