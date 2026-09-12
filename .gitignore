@@ -2,65 +2,73 @@
 extracted-asar/
 kiosk-client-photobooth-template-flipbook-basic/
 
+# Investigation / AI workspace
+.agents/
+uat_evidence/
+
 # Dependencies & Build artifacts
 node_modules/
 **/node_modules/
+
 dist/
 **/dist/
+
 .next/
 .turbo/
 
-# Environment and Secrets
+# Environment & Secrets
+.env
+.env.*
 *.env
 *.env.local
-**/*.env
-**/*.env.local
+*.env.production
+*.env.staging
 
 # Databases & Runtime Data
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
+
 **/*.db
 **/*.db-journal
 **/*.db-wal
 **/*.db-shm
-**/pictolabs-data/
 
-# OS Files
-.DS_Store
-Thumbs.db
+pictolabs-data/
 
-# Docker volumes / runtime
-postgres_data/
+# Uploads
+apps/backend/public/uploads/*
+!apps/backend/public/uploads/.gitkeep
+
+# Logs
+logs/
+*.log
+
+# Docker Data
+docker-data/
 postgres-data/
-redis_data/
 redis-data/
 
-# SSL
+# SSL Certificates
 *.pem
 *.key
 *.crt
+nginx/certs/
+**/nginx/certs/
 
-# Backup
+# Let's Encrypt
+letsencrypt/
+**/letsencrypt/
+
+# Backups
 backups/
-*.sql
-!**/prisma/migrations/**/*.sql
 *.dump
 
 # IDE
 .vscode/
 .idea/
 
-# Local docker env
-.env.production
-.env.staging
-
-# Mac
+# OS Files
 .DS_Store
-
-# Investigation folders
-.agents/
-extracted-asar/
-uat_evidence/
-kiosk-client-photobooth-template-flipbook-basic/
+Thumbs.db
