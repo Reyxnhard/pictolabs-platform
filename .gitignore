@@ -45,6 +45,7 @@ redis-data/
 # Backup
 backups/
 *.sql
+!**/prisma/migrations/**/*.sql
 *.dump
 
 # IDE
