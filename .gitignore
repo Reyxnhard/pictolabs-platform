@@ -30,3 +30,36 @@ dist/
 # OS Files
 .DS_Store
 Thumbs.db
+
+# Docker volumes / runtime
+postgres_data/
+postgres-data/
+redis_data/
+redis-data/
+
+# SSL
+*.pem
+*.key
+*.crt
+
+# Backup
+backups/
+*.sql
+*.dump
+
+# IDE
+.vscode/
+.idea/
+
+# Local docker env
+.env.production
+.env.staging
+
+# Mac
+.DS_Store
+
+# Investigation folders
+.agents/
+extracted-asar/
+uat_evidence/
+kiosk-client-photobooth-template-flipbook-basic/
