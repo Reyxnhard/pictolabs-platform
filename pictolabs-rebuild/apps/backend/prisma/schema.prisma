@@ -17,6 +17,7 @@ model User {
   role      String   @default("OPERATOR") // SUPERADMIN, COMPANY_ADMIN, BRANCH_MANAGER, OPERATOR
   companyId String?
   company   Company? @relation(fields: [companyId], references: [id])
+  activationTokens ActivationToken[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -63,6 +64,8 @@ model Booth {
   electronVersion String?          @map("electron_version")
   releaseChannel  String?          @default("stable") @map("release_channel")
   adminPinHash    String?          @map("admin_pin_hash")
+  device          Device?
+  activationTokens ActivationToken[]
   config       BoothConfig?
   healthLogs   BoothHealthLog[]
   sessions     Session[]
@@ -70,6 +73,47 @@ model Booth {
   updatedAt    DateTime         @updatedAt
 
   @@map("booths")
+}
+
+model Device {
+  id               String           @id @default(uuid())
+  boothId          String           @unique @map("booth_id")
+  booth            Booth            @relation(fields: [boothId], references: [id], onDelete: Cascade)
+  deviceSecret     String           @unique @map("device_secret")
+  machineGuid      String?          @map("machine_guid")
+  macAddress       String?          @map("mac_address")
+  hostname         String?          @map("hostname")
+  osVersion        String?          @map("os_version")
+  appVersion       String?          @map("app_version")
+  status           String           @default("ACTIVE") // ACTIVE, REVOKED, DECOMMISSIONED
+  pairedAt         DateTime         @default(now()) @map("paired_at")
+  lastSeenAt       DateTime?        @map("last_seen_at")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+
+  @@index([boothId])
+  @@index([deviceSecret])
+  @@map("devices")
+}
+
+model ActivationToken {
+  id               String           @id @default(uuid())
+  token            String           @unique // Format: ACT-XXXX-XXXX
+  boothId          String           @map("booth_id")
+  booth            Booth            @relation(fields: [boothId], references: [id], onDelete: Cascade)
+  createdByUserId  String?          @map("created_by_user_id")
+  user             User?            @relation(fields: [createdByUserId], references: [id])
+  expiresAt        DateTime         @map("expires_at")
+  usedAt           DateTime?        @map("used_at")
+  usedByDeviceGuid String?          @map("used_by_device_guid")
+  ipAddress        String?          @map("ip_address")
+  status           String           @default("PENDING") // PENDING, CONSUMED, EXPIRED, REVOKED
+  createdAt        DateTime         @default(now()) @map("created_at")
+
+  @@index([token])
+  @@index([boothId])
+  @@index([status, expiresAt])
+  @@map("activation_tokens")
 }
 
 model BoothConfig {

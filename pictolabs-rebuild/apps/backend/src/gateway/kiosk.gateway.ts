@@ -42,16 +42,34 @@ export class KioskGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    // Authenticate Kiosk by deviceSecret
-    const booth = await this.prisma.booth.findUnique({
-      where: { deviceSecret },
-      include: { config: true },
+    // Authenticate Kiosk by deviceSecret (via Device record or legacy Booth.deviceSecret)
+    const booth = await this.prisma.booth.findFirst({
+      where: {
+        OR: [
+          { deviceSecret },
+          { device: { deviceSecret, status: 'ACTIVE' } },
+        ],
+      },
+      include: { config: true, device: true },
     });
 
     if (!booth) {
-      this.logger.warn(`Kiosk connection rejected: Invalid deviceSecret "${deviceSecret}"`);
+      this.logger.warn(`Kiosk connection rejected: Invalid or revoked deviceSecret "${deviceSecret}"`);
       client.disconnect(true);
       return;
+    }
+
+    // Single-Socket Policy: disconnect any previous socket for this booth to prevent cross-talk
+    for (const [existingSocketId, existingBoothId] of this.connectedBooths.entries()) {
+      if (existingBoothId === booth.id && existingSocketId !== client.id) {
+        this.logger.warn(`[KioskGateway] Terminating stale/duplicate socket for booth ${booth.name} (${existingSocketId})`);
+        const oldSocket = this.server.sockets.sockets?.get(existingSocketId);
+        if (oldSocket) {
+          oldSocket.emit('ERROR', { code: 'DUPLICATE_DEVICE_SESSION', message: 'Another device connected with this booth identity' });
+          oldSocket.disconnect(true);
+        }
+        this.connectedBooths.delete(existingSocketId);
+      }
     }
 
     this.connectedBooths.set(client.id, booth.id);

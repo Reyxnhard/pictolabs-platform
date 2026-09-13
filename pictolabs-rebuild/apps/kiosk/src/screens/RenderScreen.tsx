@@ -38,6 +38,14 @@ export default function RenderScreen({ session, updateSession, navigate }: Scree
         
         const cleanPhotos = session.photos.map((p: string) => p.replace('file://', ''));
 
+        if (session.sessionId) {
+          kiosk.recovery?.checkpoint?.(session.sessionId, 'RENDER_PENDING', cleanPhotos.length, {
+            filter,
+            frameId,
+            photos: cleanPhotos,
+          }).catch(() => {});
+        }
+
         const result = await kiosk.render.composite(
           cleanPhotos,
           frameId,
@@ -84,6 +92,16 @@ export default function RenderScreen({ session, updateSession, navigate }: Scree
           console.log('[RenderScreen] ✓ Session saved in SQLite & upload queued:', createdSessionId);
         } catch (sErr) {
           console.warn('[RenderScreen] SQLite session creation warning:', sErr);
+        }
+
+        const effectiveSessionId = createdSessionId || session.sessionId;
+        if (effectiveSessionId) {
+          kiosk.recovery?.checkpoint?.(effectiveSessionId, 'READY_FOR_PRINT', cleanPhotos.length, {
+            compositePath: filePath,
+            compositeUrl,
+            gifPath,
+            gifUrl,
+          }).catch(() => {});
         }
 
         updateSession({ 

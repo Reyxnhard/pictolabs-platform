@@ -26,19 +26,13 @@ export default function PrintScreen({ session, navigate }: ScreenProps) {
         
         // Ensure UI stays on "Printing" for at least 3.5s for realistic spooler UX
         const minPrintTime = new Promise((r) => setTimeout(r, 3500));
-        const printTask = kiosk.printer.print(cleanPath, 1);
+        const sId = session.sessionId || `session_${Date.now()}`;
+        const printTask = kiosk.printer.enqueue(cleanPath, 1, sId);
 
         const [, result] = await Promise.all([minPrintTime, printTask]);
 
         if (!result.success) {
-          console.warn('Printer warning/error:', result.error);
-        }
-
-        // Update session print status in SQLite
-        if (session.sessionId) {
-          kiosk.session.update(session.sessionId, {
-            printStatus: result.success ? 'printed' : 'failed',
-          }).catch((e) => console.warn('[PrintScreen] Failed to update session printStatus:', e));
+          console.warn('[PrintScreen] Enqueue warning/error:', result.error);
         }
 
         // Trigger celebratory confetti burst!

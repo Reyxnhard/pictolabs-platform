@@ -87,7 +87,9 @@ export const FRAME_DESIGNS: FrameDesignOption[] = [
   },
 ];
 
-export default function FrameDesignScreen({ navigate, updateSession }: ScreenProps) {
+import { kiosk } from '../ipc/bridge';
+
+export default function FrameDesignScreen({ navigate, updateSession, session }: ScreenProps) {
   const [selectedId, setSelectedId] = useState<string>('classic-white');
   const { config } = useKioskConfig();
 
@@ -101,6 +103,16 @@ export default function FrameDesignScreen({ navigate, updateSession }: ScreenPro
       frameDesignTheme: selectedDesign.theme,
       frameDesignBorderColor: selectedDesign.borderColor,
     });
+
+    if (session?.sessionId) {
+      kiosk.recovery?.checkpoint?.(session.sessionId, 'FRAME_SELECTED', 0, {
+        frameDesignId: selectedDesign.id,
+        frameDesignName: selectedDesign.name,
+        frameDesignTheme: selectedDesign.theme,
+        frameDesignBorderColor: selectedDesign.borderColor,
+      }).catch(() => {});
+    }
+
     navigate('capture');
   };
 

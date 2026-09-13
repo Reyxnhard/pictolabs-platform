@@ -22,6 +22,7 @@ export interface SyncEngineConfig {
   syncIntervalMs: number;
   apiBaseUrl?: string;
   deviceSecret?: string;
+  boothId?: string;
 }
 
 export interface Session {
@@ -64,6 +65,7 @@ let healthPingInterval: ReturnType<typeof setInterval> | null = null;
 let httpHeartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let socket: Socket | null = null;
 let isUploading = false;
+let lastUploadActivity = Date.now();
 
 // ─── Prepared Statements Cache ──────────────────────────────
 let stmtInsertSession: Database.Statement | null = null;
@@ -77,6 +79,7 @@ let stmtMarkSynced: Database.Statement | null = null;
 let stmtEnqueueUpload: Database.Statement | null = null;
 let stmtGetPendingUploads: Database.Statement | null = null;
 let stmtUpdateUploadStatus: Database.Statement | null = null;
+let stmtInsertSystemEvent: Database.Statement | null = null;
 
 function initDatabase(dataDir: string): void {
   const dbFile = path.join(dataDir, 'kiosk.db');
@@ -120,7 +123,78 @@ function initDatabase(dataDir: string): void {
       FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_upload_queue_status ON upload_queue(status);
+
+    CREATE TABLE IF NOT EXISTS print_queue (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      printer_name TEXT NOT NULL,
+      copies INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 5,
+      last_error TEXT,
+      next_retry_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_print_queue_status ON print_queue(status);
+    CREATE INDEX IF NOT EXISTS idx_print_queue_session ON print_queue(session_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_print_queue_active ON print_queue(session_id, file_path) WHERE status IN ('PENDING', 'PRINTING');
+    CREATE INDEX IF NOT EXISTS idx_upload_queue_file_path ON upload_queue(file_path);
+    CREATE INDEX IF NOT EXISTS idx_print_queue_file_path ON print_queue(file_path);
+
+    CREATE TABLE IF NOT EXISTS paper_tracker (
+      id INTEGER PRIMARY KEY,
+      roll_capacity INTEGER NOT NULL DEFAULT 700,
+      prints_consumed INTEGER NOT NULL DEFAULT 0,
+      prints_remaining INTEGER NOT NULL DEFAULT 700,
+      warning_threshold INTEGER NOT NULL DEFAULT 10,
+      lockout_threshold INTEGER NOT NULL DEFAULT 2,
+      last_replaced_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS session_recovery_ledger (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'ACTIVE',
+      stage TEXT NOT NULL,
+      last_completed_step INTEGER NOT NULL DEFAULT 0,
+      payload TEXT NOT NULL,
+      error_details TEXT,
+      recovery_attempts INTEGER NOT NULL DEFAULT 0,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_recovery_active ON session_recovery_ledger(status, expires_at);
+    CREATE INDEX IF NOT EXISTS idx_recovery_session ON session_recovery_ledger(session_id);
+
+    CREATE TABLE IF NOT EXISTS kiosk_system_events (
+      id TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      component TEXT NOT NULL,
+      details TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_events_severity ON kiosk_system_events(severity);
+    CREATE INDEX IF NOT EXISTS idx_events_created_at ON kiosk_system_events(created_at);
   `);
+
+  // Seed initial paper tracker if not present
+  try {
+    const existingTracker = db.prepare('SELECT id FROM paper_tracker WHERE id = 1').get();
+    if (!existingTracker) {
+      const now = new Date().toISOString();
+      db.prepare(`
+        INSERT INTO paper_tracker (id, roll_capacity, prints_consumed, prints_remaining, warning_threshold, lockout_threshold, last_replaced_at, updated_at)
+        VALUES (1, 700, 0, 700, 10, 2, ?, ?)
+      `).run(now, now);
+    }
+  } catch (_) {}
 
   // Migrate existing schema if live_video columns don't exist yet
   try {
@@ -134,6 +208,9 @@ function initDatabase(dataDir: string): void {
   } catch (_) {}
   try {
     db.exec('ALTER TABLE sessions ADD COLUMN live_video_urls TEXT;');
+  } catch (_) {}
+  try {
+    db.exec("ALTER TABLE sessions ADD COLUMN local_storage_state TEXT NOT NULL DEFAULT 'HOT';");
   } catch (_) {}
 
   // Prepare statements
@@ -178,8 +255,32 @@ function initDatabase(dataDir: string): void {
     WHERE id = ?
   `);
 
+  stmtInsertSystemEvent = db.prepare(`
+    INSERT INTO kiosk_system_events (id, event_type, severity, component, details, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+
   // Migrate legacy sessions.json if present
   migrateLegacyJson(dataDir);
+}
+
+/**
+ * Authoritative diagnostic system event logging to SQLite.
+ */
+export function recordSystemEvent(
+  eventType: string,
+  severity: 'INFO' | 'WARN' | 'ERROR' | 'CRITICAL',
+  component: string,
+  details?: string
+): void {
+  if (!db || !stmtInsertSystemEvent) return;
+  try {
+    const id = `evt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const now = new Date().toISOString();
+    stmtInsertSystemEvent.run(id, eventType, severity, component, details || null, now);
+  } catch (err: any) {
+    console.warn('[SyncEngine] Failed to record system event:', err.message);
+  }
 }
 
 function migrateLegacyJson(dataDir: string): void {
@@ -423,6 +524,8 @@ async function processUploadQueue(): Promise<void> {
   if (!pending || pending.length === 0) return;
 
   isUploading = true;
+  lastUploadActivity = Date.now();
+
   for (const item of pending) {
     const now = new Date().toISOString();
 
@@ -450,6 +553,7 @@ async function processUploadQueue(): Promise<void> {
         db.prepare('UPDATE upload_queue SET status = "UPLOADING", updated_at = ? WHERE id = ?').run(now, item.id);
       } catch (_) {}
 
+      lastUploadActivity = Date.now();
       console.log(`[SyncEngine] Uploading ${item.file_type} (${filename}) to Cloud (Attempt ${item.attempts + 1})...`);
 
       const mimeType = filename.endsWith('.mp4')
@@ -465,7 +569,7 @@ async function processUploadQueue(): Promise<void> {
       let uploadedSuccessfully = false;
       let remoteUrl = '';
 
-      // 2. Request Presigned Direct Upload URL from NestJS Backend
+      // 2. Request Presigned Direct Upload URL from NestJS Backend (with 30s timeout guard)
       try {
         const presignedRes = await fetch(`${config.apiBaseUrl}/api/storage/presigned-url`, {
           method: 'POST',
@@ -476,6 +580,7 @@ async function processUploadQueue(): Promise<void> {
             fileType: item.file_type,
             contentType: mimeType,
           }),
+          signal: AbortSignal.timeout(30000),
         });
 
         if (presignedRes.ok) {
@@ -487,7 +592,7 @@ async function processUploadQueue(): Promise<void> {
           };
 
           if (presignedData.provider === 'cloudflare_r2' && presignedData.uploadUrl.startsWith('http')) {
-            // Direct PUT to Cloudflare R2
+            // Direct PUT to Cloudflare R2 (with 60s timeout guard)
             const r2PutRes = await fetch(presignedData.uploadUrl, {
               method: 'PUT',
               headers: {
@@ -495,6 +600,7 @@ async function processUploadQueue(): Promise<void> {
                 'Cache-Control': 'public, max-age=31536000',
               },
               body: fileBuffer,
+              signal: AbortSignal.timeout(60000),
             });
 
             if (r2PutRes.ok || r2PutRes.status === 204) {
@@ -517,7 +623,7 @@ async function processUploadQueue(): Promise<void> {
                 }
               }
 
-              // Confirm upload with NestJS
+              // Confirm upload with NestJS (with 30s timeout guard)
               try {
                 const confirmRes = await fetch(`${config.apiBaseUrl}/api/storage/confirm-upload`, {
                   method: 'POST',
@@ -532,6 +638,7 @@ async function processUploadQueue(): Promise<void> {
                     key: presignedData.key,
                     publicUrl: remoteUrl,
                   }),
+                  signal: AbortSignal.timeout(30000),
                 });
 
                 if (confirmRes.ok) {
@@ -555,7 +662,7 @@ async function processUploadQueue(): Promise<void> {
         console.warn(`[SyncEngine] Presigned R2 flow failed: ${presignedErr.message}. Falling back to standard upload.`);
       }
 
-      // 3. Fallback to standard multipart/stream upload endpoint if direct PUT was not used
+      // 3. Fallback to standard multipart/stream upload endpoint if direct PUT was not used (with 60s timeout guard)
       if (!uploadedSuccessfully) {
         const uploadUrl = `${config.apiBaseUrl}/api/storage/upload`;
         const response = await fetch(uploadUrl, {
@@ -568,6 +675,7 @@ async function processUploadQueue(): Promise<void> {
             'x-device-secret': config.deviceSecret || '',
           },
           body: fileBuffer,
+          signal: AbortSignal.timeout(60000),
         });
 
         if (response.ok) {
@@ -616,6 +724,126 @@ async function processUploadQueue(): Promise<void> {
     }
   }
   isUploading = false;
+  lastUploadActivity = Date.now();
+}
+
+/**
+ * Event-Driven trigger to kick off upload queue worker on demand.
+ */
+export function triggerUploadQueue(): void {
+  processUploadQueue().catch((err) => {
+    console.error('[SyncEngine] Trigger upload error:', err);
+  });
+}
+
+/**
+ * Watchdog query for upload queue metrics.
+ */
+export function getUploadQueueHealth(): {
+  isUploading: boolean;
+  pendingCount: number;
+  uploadingCount: number;
+  failedCount: number;
+  deadLetterCount: number;
+  stuckCount: number;
+} {
+  if (!db) {
+    return { isUploading: false, pendingCount: 0, uploadingCount: 0, failedCount: 0, deadLetterCount: 0, stuckCount: 0 };
+  }
+
+  try {
+    const counts = db.prepare(`
+      SELECT 
+        SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) as pendingCount,
+        SUM(CASE WHEN status = 'UPLOADING' THEN 1 ELSE 0 END) as uploadingCount,
+        SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) as failedCount,
+        SUM(CASE WHEN status = 'DEAD_LETTER' THEN 1 ELSE 0 END) as deadLetterCount
+      FROM upload_queue
+    `).get() as any;
+
+    const sixtySecsAgo = new Date(Date.now() - 60_000).toISOString();
+    const stuck = db.prepare(`
+      SELECT COUNT(*) as count FROM upload_queue WHERE status = 'UPLOADING' AND updated_at < ?
+    `).get(sixtySecsAgo) as any;
+
+    return {
+      isUploading,
+      pendingCount: counts?.pendingCount || 0,
+      uploadingCount: counts?.uploadingCount || 0,
+      failedCount: counts?.failedCount || 0,
+      deadLetterCount: counts?.deadLetterCount || 0,
+      stuckCount: stuck?.count || 0,
+    };
+  } catch (_) {
+    return { isUploading, pendingCount: 0, uploadingCount: 0, failedCount: 0, deadLetterCount: 0, stuckCount: 0 };
+  }
+}
+
+/**
+ * Priority 1: Upload Watchdog Self-Healing Routine
+ * Resets stuck in-flight upload items and breaks mutex deadlocks.
+ */
+export function resetStuckUploadWorker(stuckThresholdMs: number = 60_000, triggerWorker: boolean = true): {
+  rescuedCount: number;
+  mutexReset: boolean;
+} {
+  if (!db) return { rescuedCount: 0, mutexReset: false };
+
+  let rescuedCount = 0;
+  let mutexReset = false;
+
+  try {
+    const cutoff = new Date(Date.now() - stuckThresholdMs).toISOString();
+    const stuckItems = db.prepare(`
+      SELECT * FROM upload_queue WHERE status = 'UPLOADING' AND updated_at < ?
+    `).all(cutoff) as any[];
+
+    const now = new Date().toISOString();
+    for (const item of stuckItems) {
+      const newAttempts = (item.attempts || 0) + 1;
+      if (newAttempts >= 5) {
+        db.prepare(`
+          UPDATE upload_queue 
+          SET status = 'DEAD_LETTER', attempts = ?, error_message = 'Upload watchdog: exceeded max retries in UPLOADING state', updated_at = ?
+          WHERE id = ?
+        `).run(newAttempts, now, item.id);
+      } else {
+        db.prepare(`
+          UPDATE upload_queue 
+          SET status = 'PENDING', attempts = ?, error_message = 'Upload watchdog: rescued stuck in-flight upload', updated_at = ?
+          WHERE id = ?
+        `).run(newAttempts, now, item.id);
+      }
+      rescuedCount++;
+    }
+
+    // Mutex deadlock detection: if isUploading is true, but no UPLOADING items exist or inactive > 90s
+    if (isUploading) {
+      const activeUploading = db.prepare("SELECT count(*) as count FROM upload_queue WHERE status = 'UPLOADING'").get() as any;
+      if (!activeUploading || activeUploading.count === 0 || Date.now() - lastUploadActivity > 90_000) {
+        isUploading = false;
+        mutexReset = true;
+        lastUploadActivity = Date.now();
+      }
+    }
+
+    if (rescuedCount > 0 || mutexReset) {
+      console.log(`[SyncEngine] 🛡 Upload Watchdog: Rescued ${rescuedCount} stuck uploads, mutexReset=${mutexReset}`);
+      recordSystemEvent(
+        'UPLOAD_WATCHDOG_RESCUE',
+        'WARN',
+        'SyncEngine',
+        `Rescued ${rescuedCount} stuck uploads. Mutex reset: ${mutexReset}`
+      );
+      if (triggerWorker) {
+        processUploadQueue().catch(() => {});
+      }
+    }
+  } catch (err: any) {
+    console.warn('[SyncEngine] Error in resetStuckUploadWorker:', err.message);
+  }
+
+  return { rescuedCount, mutexReset };
 }
 
 // ─── Batch Session Metadata Sync to NestJS ──────────────────
@@ -634,6 +862,7 @@ export async function syncSingleSessionToCloud(sessionId: string): Promise<boole
         'x-device-secret': config.deviceSecret || '',
       },
       body: JSON.stringify(session),
+      signal: AbortSignal.timeout(20000),
     });
 
     if (response.ok) {
@@ -772,6 +1001,14 @@ async function sendHttpHeartbeat(): Promise<void> {
   if (!config?.apiBaseUrl || !config?.deviceSecret) return;
 
   const targetUrl = `${config.apiBaseUrl}/api/booths/${config.deviceSecret}/heartbeat`;
+  let paperRemaining = 700;
+  try {
+    const row = db?.prepare('SELECT prints_remaining FROM paper_tracker WHERE id = 1').get() as any;
+    if (row && typeof row.prints_remaining === 'number') {
+      paperRemaining = row.prints_remaining;
+    }
+  } catch {}
+
   const payload = {
     appVersion: '1.2.5',
     gitCommit: process.env.GIT_COMMIT || '1457ae6',
@@ -780,6 +1017,7 @@ async function sendHttpHeartbeat(): Promise<void> {
     osVersion: `${os.type()} ${os.release()} (${os.arch()})`,
     electronVersion: process.versions.electron || '28.2.0',
     releaseChannel: 'stable',
+    paperRemaining,
   };
 
   try {
@@ -790,6 +1028,7 @@ async function sendHttpHeartbeat(): Promise<void> {
         'x-device-secret': config.deviceSecret,
       },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10000),
     });
 
     if (res.ok) {
@@ -801,6 +1040,46 @@ async function sendHttpHeartbeat(): Promise<void> {
   } catch (err) {
     console.warn(`[SyncEngine] HTTP Heartbeat network error: ${(err as Error).message}`);
   }
+}
+
+export function initSyncEngine(engineConfig: SyncEngineConfig): void {
+  config = engineConfig;
+  if (!fs.existsSync(config.dataDir)) {
+    fs.mkdirSync(config.dataDir, { recursive: true });
+  }
+  initDatabase(config.dataDir);
+}
+
+/**
+ * Dynamically updates API base URL, deviceSecret, and boothId (e.g. after pairing).
+ * Reconnects real-time WebSocket and immediately transmits authoritative HTTP heartbeat.
+ */
+export function updateSyncCredentials(apiBaseUrl: string, deviceSecret: string, boothId?: string): void {
+  if (config) {
+    config.apiBaseUrl = apiBaseUrl;
+    config.deviceSecret = deviceSecret;
+    if (boothId) config.boothId = boothId;
+  } else {
+    config = {
+      dataDir: path.join(os.homedir(), '.pictolabs'),
+      syncIntervalMs: 30000,
+      apiBaseUrl,
+      deviceSecret,
+      boothId,
+    };
+  }
+
+  console.log(`[SyncEngine] 🔑 Sync credentials updated for booth ${boothId || 'unknown'}. Reconnecting gateway...`);
+
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
+  setupSocketConnection();
+
+  sendHttpHeartbeat().catch((err) => {
+    console.warn('[SyncEngine] Immediate post-pairing heartbeat warning:', err?.message);
+  });
 }
 
 export function registerSyncHandlers(engineConfig: SyncEngineConfig): void {
@@ -923,7 +1202,7 @@ export function registerSyncHandlers(engineConfig: SyncEngineConfig): void {
       }
     ) => {
       const baseUrl = config.apiBaseUrl || 'http://localhost:4000';
-      const boothId = params.boothId || config.deviceSecret || 'dev-secret-booth-01';
+      const boothId = params.boothId || config.boothId || config.deviceSecret || 'dev-secret-booth-01';
       console.log(`[SyncEngine] Requesting QRIS from ${baseUrl}/api/payments/qris for ${boothId}`);
       try {
         const res = await fetch(`${baseUrl}/api/payments/qris`, {
@@ -1006,9 +1285,99 @@ export function getUploadQueueItemByPath(filePath: string): UploadQueueItem | nu
   const filename = path.basename(filePath);
   try {
     const row = db.prepare('SELECT * FROM upload_queue WHERE file_path LIKE ? OR id LIKE ? LIMIT 1').get(`%${filename}%`, `%${filename}%`) as any;
+    if (!row) return null;
+    return {
+      id: row.id,
+      sessionId: row.session_id,
+      filePath: row.file_path,
+      fileType: row.file_type,
+      status: row.status,
+      attempts: row.attempts,
+      errorMessage: row.error_message,
+      remoteUrl: row.remote_url,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+export function getPrintQueueItemByPath(filePath: string): any | null {
+  if (!db) return null;
+  const filename = path.basename(filePath);
+  try {
+    const row = db.prepare('SELECT * FROM print_queue WHERE file_path LIKE ? OR id LIKE ? ORDER BY created_at DESC LIMIT 1')
+      .get(`%${filename}%`, `%${filename}%`) as any;
     return row || null;
   } catch (_) {
     return null;
   }
 }
+
+export function isPrintAssetSettled(filePath: string): boolean {
+  if (!db) return true;
+  const filename = path.basename(filePath);
+  try {
+    const activeRow = db.prepare(`
+      SELECT id FROM print_queue 
+      WHERE (file_path LIKE ? OR file_path LIKE ?) 
+        AND status IN ('PENDING', 'PRINTING') 
+      LIMIT 1
+    `).get(`%${filename}%`, `%${filePath}%`) as any;
+    return !activeRow;
+  } catch (_) {
+    return true;
+  }
+}
+
+export function isSessionPrintSettled(sessionId: string): boolean {
+  if (!db) return true;
+  try {
+    const activeRow = db.prepare(`
+      SELECT id FROM print_queue 
+      WHERE session_id = ? AND status IN ('PENDING', 'PRINTING')
+      LIMIT 1
+    `).get(sessionId) as any;
+    return !activeRow;
+  } catch (_) {
+    return true;
+  }
+}
+
+export function isPathTrackedInSession(filePath: string): boolean {
+  if (!db) return false;
+  const filename = path.basename(filePath);
+  try {
+    const row = db.prepare(`
+      SELECT id FROM sessions 
+      WHERE composite_path LIKE ? 
+         OR photos LIKE ? 
+         OR live_video_path LIKE ? 
+         OR live_video_paths LIKE ? 
+      LIMIT 1
+    `).get(`%${filename}%`, `%${filename}%`, `%${filename}%`, `%${filename}%`) as any;
+    return Boolean(row);
+  } catch (_) {
+    return false;
+  }
+}
+
+export function markSessionStoragePruned(sessionId: string): void {
+  if (!db) return;
+  try {
+    db.prepare("UPDATE sessions SET local_storage_state = 'PRUNED' WHERE id = ?").run(sessionId);
+  } catch (_) {}
+}
+
+export function runDatabaseCompaction(): { success: boolean; message: string } {
+  if (!db) return { success: false, message: 'Database not initialized' };
+  try {
+    db.pragma('wal_checkpoint(TRUNCATE)');
+    return { success: true, message: 'WAL truncated and checkpointed successfully' };
+  } catch (err: any) {
+    return { success: false, message: err.message };
+  }
+}
+
 

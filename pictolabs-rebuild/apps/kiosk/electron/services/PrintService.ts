@@ -71,6 +71,14 @@ export function getCachedPrinterHealth(): PrinterHealth {
   return cachedHealth;
 }
 
+export function getDefaultPrinterName(): string | null {
+  return defaultPrinterName;
+}
+
+export function getIsBypassMode(): boolean {
+  return isBypassMode;
+}
+
 /**
  * Discover available printers via PowerShell.
  */
@@ -276,7 +284,7 @@ async function queryPrinterHealth(printerName: string): Promise<PrinterHealth> {
 /**
  * Print an image file using Windows ImageView_PrintTo.
  */
-function printImage(
+export function printImage(
   imagePath: string,
   printerName: string,
   copies: number

@@ -78,6 +78,7 @@ export class BoothsService {
         OR: [
           { id: identifier },
           { deviceSecret: identifier },
+          { device: { deviceSecret: identifier, status: 'ACTIVE' } },
         ],
       },
       include,
@@ -99,7 +100,7 @@ export class BoothsService {
     const booth = await this.findBoothByIdentifier(boothId);
     const now = new Date();
 
-    // Update last_seen and runtime attributes, but NEVER overwrite status column with ONLINE/OFFLINE
+    // Update last_seen and runtime attributes on both Booth and active Device
     const updated = await this.prisma.booth.update({
       where: { id: booth.id },
       data: {
@@ -113,6 +114,18 @@ export class BoothsService {
         ...(dto.releaseChannel ? { releaseChannel: dto.releaseChannel } : {}),
       },
     });
+
+    try {
+      await this.prisma.device.updateMany({
+        where: { boothId: booth.id, status: 'ACTIVE' },
+        data: {
+          lastSeenAt: now,
+          ...(dto.appVersion ? { appVersion: dto.appVersion } : {}),
+          ...(dto.machineName ? { hostname: dto.machineName } : {}),
+          ...(dto.osVersion ? { osVersion: dto.osVersion } : {}),
+        },
+      });
+    } catch (_) {}
 
     const computed = this.computeEffectiveStatus(now, updated.status);
 

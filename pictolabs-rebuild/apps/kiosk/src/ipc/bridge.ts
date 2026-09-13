@@ -16,6 +16,7 @@ export interface KioskCameraAPI {
   startLiveView(): Promise<void>;
   stopLiveView(): Promise<void>;
   capturePhoto(options?: { mirrorResult?: boolean }): Promise<string>;
+  discardCapture(filePath: string): Promise<{ success: boolean }>;
   getStatus(): Promise<CameraStatus>;
   onLiveViewFrame(cb: (frame: string) => void): () => void;
 }
@@ -45,8 +46,99 @@ export interface ReprintResult {
   error?: string;
 }
 
+export interface PrintQueueItem {
+  id: string;
+  session_id: string;
+  file_path: string;
+  printer_name: string;
+  copies: number;
+  status: 'PENDING' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'DEAD_LETTER' | 'CANCELLED';
+  attempts: number;
+  max_attempts: number;
+  last_error?: string | null;
+  next_retry_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PrintJobDTO {
+  id: string;
+  sessionId: string;
+  printerName: string;
+  filePath: string;
+  status: 'PENDING' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'DEAD_LETTER' | 'CANCELLED';
+  copies: number;
+  attempts: number;
+  maxAttempts: number;
+  lastError: string | null;
+  nextRetryAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QueueMetricsDTO {
+  pending: number;
+  printing: number;
+  failed: number;
+  deadLetter: number;
+  completed: number;
+  cancelled: number;
+  total: number;
+}
+
+export interface EnqueuePrintResult {
+  success: boolean;
+  id?: string;
+  isDuplicate?: boolean;
+  error?: string;
+}
+
+export interface PaperStatus {
+  remaining: number;
+  consumed: number;
+  capacity: number;
+  warningThreshold: number;
+  lockoutThreshold: number;
+  isLow: boolean;
+  isLockedOut: boolean;
+  lastReplacedAt: string;
+  updatedAt: string;
+}
+
+export interface ResetRollResult {
+  success: boolean;
+  paperStatus?: PaperStatus;
+  error?: string;
+}
+
+export interface PrinterHardwareStatus {
+  connected: boolean;
+  ready: boolean;
+  status: 'READY' | 'OFFLINE' | 'PAPER_JAM' | 'PAPER_OUT' | 'DOOR_OPEN' | 'USER_INTERVENTION' | 'DRIVER_ERROR';
+  name: string;
+  message: string;
+  errorCode?: string;
+  rawState?: number;
+  lastCheckedAt: string;
+}
+
 export interface KioskPrinterAPI {
-  print(imagePath: string, copies: number): Promise<PrintResult>;
+  print(imagePath: string, copies?: number): Promise<PrintResult>;
+  enqueue(imagePath: string, copies?: number, sessionId?: string): Promise<EnqueuePrintResult>;
+  getQueueStatus(sessionId: string): Promise<PrintQueueItem | null>;
+  getQueueList(): Promise<PrintQueueItem[]>;
+  getAllPrintJobs?(): Promise<PrintJobDTO[]>;
+  getPrintJob?(id: string): Promise<PrintJobDTO | null>;
+  getPendingPrintJobs?(): Promise<PrintJobDTO[]>;
+  getFailedPrintJobs?(): Promise<PrintJobDTO[]>;
+  retryPrintJob?(jobId: string): Promise<{ success: boolean; error?: string }>;
+  reprintSession?(sessionId: string): Promise<{ success: boolean; id?: string; error?: string }>;
+  cancelPrintJob?(jobId: string): Promise<{ success: boolean; error?: string }>;
+  getQueueMetrics?(): Promise<QueueMetricsDTO>;
+  getHardwareStatus?(): Promise<PrinterHardwareStatus>;
+  getPaperStatus?(): Promise<PaperStatus>;
+  resetPaperRoll?(capacity?: number, pin?: string): Promise<ResetRollResult>;
+  recoverJob?(jobId: string): Promise<{ success: boolean; error?: string }>;
   getPrinterStatus(): Promise<PrinterStatus>;
   getHealth(): Promise<PrinterHealth>;
   listPrinters(): Promise<string[]>;
@@ -166,6 +258,105 @@ export interface KioskPaymentAPI {
   onPaymentExpired(cb: (data: { orderId: string }) => void): () => void;
 }
 
+export type RecoveryStatus = 'ACTIVE' | 'RECOVERED' | 'ABANDONED' | 'COMPLETED';
+
+export type RecoveryStage =
+  | 'PAYMENT_SETTLED'
+  | 'FRAME_SELECTED'
+  | 'CAPTURING'
+  | 'CAPTURE_COMPLETE'
+  | 'RENDER_PENDING'
+  | 'READY_FOR_PRINT'
+  | 'COMPLETED';
+
+export interface RecoveryPayload {
+  orderId?: string;
+  price?: number;
+  productId?: string;
+  productName?: string;
+  frameId?: string;
+  frameName?: string;
+  frameDesignId?: string;
+  frameDesignName?: string;
+  frameDesignTheme?: string;
+  frameDesignBorderColor?: string;
+  photos?: string[];
+  filter?: string;
+  compositePath?: string;
+  compositeUrl?: string;
+  liveVideoPaths?: string[];
+  liveVideoPath?: string;
+  gifPath?: string;
+  gifUrl?: string;
+  printEnqueued?: boolean;
+}
+
+export interface RecoverableSessionDTO {
+  id: string;
+  sessionId: string;
+  status: RecoveryStatus;
+  stage: RecoveryStage;
+  lastCompletedStep: number;
+  payload: RecoveryPayload;
+  recoveryAttempts: number;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+  targetScreen: 'product-select' | 'frame-design' | 'capture' | 'filter' | 'render' | 'qr' | 'welcome';
+}
+
+export interface RescueVoucher {
+  success: boolean;
+  voucherCode: string;
+  sessionId: string;
+  amount: number;
+  productName: string;
+  issuedAt: string;
+  expiresAt: string;
+  signature: string;
+  qrPayload: string;
+  reason?: string;
+}
+
+export interface KioskRecoveryAPI {
+  checkRecoverable(): Promise<RecoverableSessionDTO | null>;
+  resume(sessionId: string): Promise<RecoverableSessionDTO | null>;
+  discard(sessionId: string, reason?: string): Promise<{ success: boolean }>;
+  checkpoint(
+    sessionId: string,
+    stage: RecoveryStage,
+    step: number,
+    payload: Partial<RecoveryPayload>
+  ): Promise<boolean>;
+  claimVoucher(sessionId: string, reason?: string): Promise<RescueVoucher>;
+}
+
+export interface KioskWatchdogAPI {
+  pulseActivity(screen?: string, sessionId?: string): Promise<{ success: boolean }>;
+  setScreen(screen: string, sessionId?: string | null): Promise<{ success: boolean }>;
+  getStatus(): Promise<any>;
+  onForceWelcome?(callback: () => void): () => void;
+  onDiskLockout?(callback: (isLocked: boolean) => void): () => void;
+}
+
+export interface KioskIdentityDTO {
+  isPaired: boolean;
+  provisioningVersion: number;
+  boothId: string | null;
+  boothName: string | null;
+  branchId: string | null;
+  branchName: string | null;
+  location: string | null;
+  apiBaseUrl: string;
+  pairedAt: string | null;
+}
+
+export interface KioskIdentityAPI {
+  getStatus(): Promise<KioskIdentityDTO>;
+  activate(apiBaseUrl: string, token: string): Promise<{ success: boolean; error?: string; identity?: KioskIdentityDTO }>;
+  wipe(): Promise<{ success: boolean }>;
+}
+
 export interface KioskAPI {
   camera: KioskCameraAPI;
   printer: KioskPrinterAPI;
@@ -173,6 +364,9 @@ export interface KioskAPI {
   livePhoto: KioskLivePhotoAPI;
   session: KioskSessionAPI;
   payment: KioskPaymentAPI;
+  recovery: KioskRecoveryAPI;
+  watchdog?: KioskWatchdogAPI;
+  identity?: KioskIdentityAPI;
   config: KioskConfigAPI;
   system: KioskSystemAPI;
 }
@@ -214,6 +408,10 @@ const mockCamera: KioskCameraAPI = {
     ctx.fillText(new Date().toLocaleTimeString(), 320, 270);
     return canvas.toDataURL('image/jpeg', 0.9);
   },
+  async discardCapture(filePath: string) {
+    console.log('[MockKiosk] Camera: discardCapture (simulated)', filePath);
+    return { success: true };
+  },
   async getStatus() {
     return {
       isCanonConnected: false,
@@ -230,6 +428,106 @@ const mockCamera: KioskCameraAPI = {
 const mockPrinter: KioskPrinterAPI = {
   async print(imagePath, copies) {
     console.log(`[MockKiosk] Printer: print ${imagePath} x${copies} (simulated)`);
+    return { success: true };
+  },
+  async enqueue(imagePath, copies = 1, sessionId) {
+    console.log(`[MockKiosk] Printer: enqueue ${imagePath} x${copies} for ${sessionId} (simulated)`);
+    return { success: true, id: `mock_print_${Date.now()}` };
+  },
+  async getQueueStatus(sessionId) {
+    return {
+      id: `mock_print_${sessionId}`,
+      session_id: sessionId,
+      file_path: 'mock.jpg',
+      printer_name: 'Mock Printer (Dev)',
+      copies: 1,
+      status: 'COMPLETED',
+      attempts: 0,
+      max_attempts: 5,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+  },
+  async getQueueList() {
+    return [];
+  },
+  async getAllPrintJobs() {
+    return [];
+  },
+  async getPrintJob(id: string) {
+    return null;
+  },
+  async getPendingPrintJobs() {
+    return [];
+  },
+  async getFailedPrintJobs() {
+    return [];
+  },
+  async retryPrintJob(jobId: string) {
+    console.log(`[MockKiosk] Printer: retryPrintJob ${jobId} (simulated)`);
+    return { success: true };
+  },
+  async reprintSession(sessionId: string) {
+    console.log(`[MockKiosk] Printer: reprintSession ${sessionId} (simulated)`);
+    return { success: true, id: `mock_reprint_${Date.now()}` };
+  },
+  async cancelPrintJob(jobId: string) {
+    console.log(`[MockKiosk] Printer: cancelPrintJob ${jobId} (simulated)`);
+    return { success: true };
+  },
+  async getQueueMetrics() {
+    return {
+      pending: 0,
+      printing: 0,
+      failed: 0,
+      deadLetter: 0,
+      completed: 1,
+      cancelled: 0,
+      total: 1,
+    };
+  },
+  async getHardwareStatus() {
+    return {
+      connected: true,
+      ready: true,
+      status: 'READY',
+      name: 'Mock DNP DS-RX1 (Dev)',
+      message: 'Printer siap (Mock)',
+      lastCheckedAt: new Date().toISOString(),
+    };
+  },
+  async getPaperStatus() {
+    return {
+      remaining: 700,
+      consumed: 0,
+      capacity: 700,
+      warningThreshold: 10,
+      lockoutThreshold: 2,
+      isLow: false,
+      isLockedOut: false,
+      lastReplacedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  },
+  async resetPaperRoll(capacity = 700) {
+    console.log(`[MockKiosk] Printer: resetPaperRoll to ${capacity}`);
+    return {
+      success: true,
+      paperStatus: {
+        remaining: capacity,
+        consumed: 0,
+        capacity,
+        warningThreshold: 10,
+        lockoutThreshold: 2,
+        isLow: false,
+        isLockedOut: false,
+        lastReplacedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    };
+  },
+  async recoverJob(jobId: string) {
+    console.log(`[MockKiosk] Printer: recoverJob ${jobId} (simulated)`);
     return { success: true };
   },
   async getPrinterStatus() {
@@ -451,6 +749,110 @@ const mockPayment: KioskPaymentAPI = {
   },
 };
 
+const mockRecovery: KioskRecoveryAPI = {
+  async checkRecoverable() {
+    try {
+      const stored = localStorage.getItem('pictolabs-mock-recovery-session');
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  },
+  async resume(sessionId) {
+    const stored = localStorage.getItem('pictolabs-mock-recovery-session');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (parsed.sessionId === sessionId) {
+        parsed.recoveryAttempts += 1;
+        localStorage.setItem('pictolabs-mock-recovery-session', JSON.stringify(parsed));
+        return parsed;
+      }
+    }
+    return null;
+  },
+  async discard(sessionId) {
+    localStorage.removeItem('pictolabs-mock-recovery-session');
+    return { success: true };
+  },
+  async checkpoint(sessionId, stage, step, payload) {
+    try {
+      const stored = localStorage.getItem('pictolabs-mock-recovery-session');
+      let existing: any = stored ? JSON.parse(stored) : {
+        id: `mock_ledger_${sessionId}`,
+        sessionId,
+        status: 'ACTIVE',
+        stage,
+        lastCompletedStep: step,
+        payload: {},
+        recoveryAttempts: 0,
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        targetScreen: 'capture',
+      };
+
+      existing.stage = stage;
+      existing.lastCompletedStep = step;
+      existing.payload = { ...existing.payload, ...payload };
+      existing.updatedAt = new Date().toISOString();
+      if (stage === 'COMPLETED') {
+        localStorage.removeItem('pictolabs-mock-recovery-session');
+      } else {
+        localStorage.setItem('pictolabs-mock-recovery-session', JSON.stringify(existing));
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  async claimVoucher(sessionId, reason) {
+    localStorage.removeItem('pictolabs-mock-recovery-session');
+    const voucherCode = `VOUCH-MOCK-${Date.now().toString(36).toUpperCase()}`;
+    return {
+      success: true,
+      voucherCode,
+      sessionId,
+      amount: 35000,
+      productName: 'Photostrip',
+      issuedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      signature: 'mock_sig',
+      qrPayload: JSON.stringify({ voucherCode, amount: 35000 }),
+      reason,
+    };
+  },
+};
+
+const mockWatchdog: KioskWatchdogAPI = {
+  async pulseActivity() { return { success: true }; },
+  async setScreen() { return { success: true }; },
+  async getStatus() { return {}; },
+  onForceWelcome() { return () => {}; },
+  onDiskLockout() { return () => {}; },
+};
+
+const mockIdentity: KioskIdentityAPI = {
+  async getStatus() {
+    return {
+      isPaired: true,
+      provisioningVersion: 1,
+      boothId: 'mock-booth-01',
+      boothName: 'Pictolabs Mock Booth',
+      branchId: 'mock-branch-01',
+      branchName: 'Mock Branch',
+      location: 'Jakarta',
+      apiBaseUrl: 'http://localhost:4000',
+      pairedAt: new Date().toISOString(),
+    };
+  },
+  async activate() {
+    return { success: true };
+  },
+  async wipe() {
+    return { success: true };
+  },
+};
+
 const mockKiosk: KioskAPI = {
   camera: mockCamera,
   printer: mockPrinter,
@@ -458,6 +860,9 @@ const mockKiosk: KioskAPI = {
   livePhoto: mockLivePhoto,
   session: mockSession,
   payment: mockPayment,
+  recovery: mockRecovery,
+  watchdog: mockWatchdog,
+  identity: mockIdentity,
   config: mockConfig,
   system: mockSystem,
 };
@@ -479,6 +884,9 @@ export const kiosk: KioskAPI = {
   get livePhoto() { return (isElectron() ? window.kiosk! : mockKiosk).livePhoto; },
   get session() { return (isElectron() ? window.kiosk! : mockKiosk).session; },
   get payment() { return (isElectron() ? window.kiosk! : mockKiosk).payment; },
+  get recovery() { return (isElectron() ? window.kiosk! : mockKiosk).recovery; },
+  get watchdog() { return (isElectron() ? window.kiosk!.watchdog : mockKiosk.watchdog); },
+  get identity() { return (isElectron() ? window.kiosk!.identity : mockKiosk.identity); },
   get config() { return (isElectron() ? window.kiosk! : mockKiosk).config; },
   get system() { return (isElectron() ? window.kiosk! : mockKiosk).system; },
 };

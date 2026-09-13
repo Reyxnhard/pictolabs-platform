@@ -369,21 +369,7 @@ export function registerCameraHandlers(config: CameraServiceConfig): void {
 
   // ─── Stop Live View ────────────────────────────────────
   ipcMain.handle('camera:stop-live-view', async () => {
-    isLiveViewActive = false;
-    cameraStatus.isLiveView = false;
-
-    if (liveViewInterval) {
-      clearInterval(liveViewInterval);
-      liveViewInterval = null;
-    }
-
-    if (hasCanon && activeCamera) {
-      try {
-        activeCamera.stopLiveView();
-      } catch (err) {
-        console.error('[CameraService] Canon LiveView stop error:', err);
-      }
-    }
+    stopLiveViewInternal();
   });
 
 function readKioskConfig(dataDir?: string): any {
@@ -532,4 +518,46 @@ function readKioskConfig(dataDir?: string): any {
     return `data:image/jpeg;base64,${fileBuffer.toString('base64')}`;
   });
 
+  // ─── Discard Capture (Retake cleanup) ──────────────────
+  ipcMain.handle('camera:discard-capture', async (_event, filePath: string) => {
+    return discardCaptureFile(filePath);
+  });
 }
+
+export function discardCaptureFile(filePath: string): { success: boolean } {
+  if (!filePath) return { success: false };
+  try {
+    const clean = filePath.replace(/^file:\/\/\/?/, '');
+    if (fs.existsSync(clean)) {
+      fs.unlinkSync(clean);
+      console.log(`[CameraService] ✓ Discarded retake photo from disk: ${clean}`);
+      return { success: true };
+    }
+  } catch (err: any) {
+    console.warn(`[CameraService] Could not discard capture:`, err.message);
+  }
+  return { success: false };
+}
+
+/**
+ * Stop live view stream and cleanup timers (can be invoked by Session & Memory Watchdogs).
+ */
+export function stopLiveViewInternal(): void {
+  isLiveViewActive = false;
+  cameraStatus.isLiveView = false;
+
+  if (liveViewInterval) {
+    clearInterval(liveViewInterval);
+    liveViewInterval = null;
+  }
+
+  if (activeCamera) {
+    try {
+      activeCamera.stopLiveView();
+    } catch (err) {
+      console.warn('[CameraService] Canon LiveView stop error:', err);
+    }
+  }
+}
+
+

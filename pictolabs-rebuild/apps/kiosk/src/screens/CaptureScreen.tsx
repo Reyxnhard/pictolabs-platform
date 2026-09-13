@@ -5,8 +5,6 @@ import { useKioskConfig } from '../context/KioskConfigContext';
 import { ArrowRight, RotateCcw } from 'lucide-react';
 
 export default function CaptureScreen({ navigate, updateSession, session }: ScreenProps) {
-  const [currentPose, setCurrentPose] = useState(1);
-  
   // Total poses: Photostrip 2R defaults to 3 poses
   const totalPoses = (() => {
     if (session?.productId === 'photostrip-2r' || session?.frameId === '2R' || session?.frameDesignId) return 3;
@@ -16,8 +14,12 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
     return 3; // Default Photostrip 2R standard
   })();
 
+  const initialPhotos = Array.isArray(session?.photos) ? session.photos : [];
+  const initialPose = initialPhotos.length > 0 ? Math.min(initialPhotos.length + 1, totalPoses) : 1;
+
+  const [currentPose, setCurrentPose] = useState(initialPose);
   const [countdown, setCountdown] = useState<number | null>(null);
-  const [photos, setPhotos] = useState<string[]>([]);
+  const [photos, setPhotos] = useState<string[]>(initialPhotos);
   const [isFlashing, setIsFlashing] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [webcamReady, setWebcamReady] = useState(false);
@@ -44,7 +46,7 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
   const hasCanonFrameRef = useRef(false);
   const isNavigatingRef = useRef(false);
   const isProcessingRef = useRef(false);
-  const photosRef = useRef<string[]>([]);
+  const photosRef = useRef<string[]>(initialPhotos);
   const currentPoseRef = useRef(currentPose);
   currentPoseRef.current = currentPose;
 
@@ -379,6 +381,13 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
           liveVideoPaths: finalizeRes.videoPaths,
           liveVideoPath: finalizeRes.videoPaths?.[0] || finalizeRes.videoPath,
         });
+
+        if (activeSessionIdRef.current) {
+          kiosk.recovery?.checkpoint?.(activeSessionIdRef.current, 'CAPTURE_COMPLETE', totalPoses, {
+            photos: photosRef.current,
+            liveVideoPaths: finalizeRes.videoPaths,
+          }).catch(() => {});
+        }
       } catch (err) {
         console.warn('[CaptureScreen] Live Photo finalization warning:', err);
         updateSession({
@@ -397,11 +406,22 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
   const handleRetake = useCallback(() => {
     if (isNavigatingRef.current || isProcessingRef.current) return;
 
-    // Discard the last captured photo from session
+    // Discard the last captured photo from session and unlink from disk if local path
+    const lastPhoto = photosRef.current[photosRef.current.length - 1];
+    if (lastPhoto && !lastPhoto.startsWith('data:image')) {
+      kiosk.camera?.discardCapture?.(lastPhoto).catch(() => {});
+    }
+
     const updatedPhotos = photosRef.current.slice(0, -1);
     photosRef.current = updatedPhotos;
     setPhotos(updatedPhotos);
     updateSession({ photos: updatedPhotos });
+
+    if (activeSessionIdRef.current) {
+      kiosk.recovery?.checkpoint?.(activeSessionIdRef.current, 'CAPTURING', Math.max(0, currentPoseRef.current - 1), {
+        photos: updatedPhotos,
+      }).catch(() => {});
+    }
 
     // Dismiss preview to return to Live View on the same pose
     setPreviewPhoto(null);
@@ -486,6 +506,12 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
     photosRef.current = nextPhotos;
     updateSession({ photos: nextPhotos });
     setIsCapturing(false);
+
+    if (activeSessionIdRef.current) {
+      kiosk.recovery?.checkpoint?.(activeSessionIdRef.current, 'CAPTURING', currentPoseRef.current, {
+        photos: nextPhotos,
+      }).catch(() => {});
+    }
 
     // Show captured photo preview (clean, waiting for user decision)
     setPreviewPhoto(photoData);

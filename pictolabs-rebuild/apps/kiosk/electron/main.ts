@@ -6,9 +6,15 @@ import { pathToFileURL } from 'url';
 import { registerCameraHandlers, cleanupCamera } from './services/CameraService';
 import { registerRenderHandlers } from './services/RenderEngine';
 import { registerPrintHandlers, stopPrintService } from './services/PrintService';
+import { registerPrintQueueHandlers, startPrintWorker, stopPrintWorker } from './services/PrintQueueService';
+import { registerPaperTrackerHandlers } from './services/PaperTrackerService';
+import { registerPrinterMonitorHandlers, startPrinterMonitor, stopPrinterMonitor } from './services/PrinterMonitorService';
 import { registerSyncHandlers, stopSyncEngine } from './services/SyncEngine';
 import { registerLivePhotoHandlers } from './services/LivePhotoService';
 import { initStorageRetention, stopStorageRetention } from './services/StorageRetentionService';
+import { registerRecoveryLedgerHandlers } from './services/RecoveryLedgerService';
+import { initWatchdogService, stopWatchdogService } from './services/WatchdogService';
+import { registerIdentityHandlers, loadIdentity, getActiveDeviceSecret } from './services/IdentityService';
 
 // Register privileged custom schemes before app.whenReady()
 protocol.registerSchemesAsPrivileged([
@@ -181,12 +187,27 @@ app.whenReady().then(() => {
     videosDir: VIDEOS_DIR,
   });
 
+  // Register Kiosk Identity, DPAPI Storage, & Provisioning Handlers (Phase 3.3)
+  registerIdentityHandlers();
+  const identity = loadIdentity(isDev ? 'http://localhost:4000' : 'https://api.pictolabs.id');
+  const activeSecret = getActiveDeviceSecret() || (isDev ? 'dev-secret-booth-01' : '');
+
   registerSyncHandlers({
     dataDir: DATA_DIR,
     syncIntervalMs: 30_000, // Sync every 30 seconds
-    apiBaseUrl: isDev ? 'http://localhost:4000' : 'https://api.pictolabs.id',
-    deviceSecret: 'dev-secret-booth-01', // Should be injected via env/license in prod
+    apiBaseUrl: identity?.apiBaseUrl || (isDev ? 'http://localhost:4000' : 'https://api.pictolabs.id'),
+    deviceSecret: activeSecret,
+    boothId: identity?.boothId,
   });
+
+  // Register Persistent SQLite Print Queue & Background Worker
+  registerPrintQueueHandlers();
+  startPrintWorker(3000);
+
+  // Register Paper Roll Tracker & Win32 Printer Hardware Monitor
+  registerPaperTrackerHandlers();
+  registerPrinterMonitorHandlers();
+  startPrinterMonitor(5000);
 
   // Initialize Dual-Tier 7-Day Storage Retention Daemon
   initStorageRetention({
@@ -195,22 +216,46 @@ app.whenReady().then(() => {
     minFreeDiskGb: 5,
   });
 
+  // Register Crash Recovery Ledger (Phase 3.2D)
+  registerRecoveryLedgerHandlers();
+
+  // Initialize Phase 3.2E Autonomous Watchdog Supervisor Layer
+  initWatchdogService({
+    checkIntervalMs: 15_000,
+    sessionTimeoutMs: 120_000,
+    captureTimeoutMs: 180_000,
+  });
+
   registerSystemHandlers();
 
   // Create the main window
   createWindow();
 });
 
+// Process-level crash guards
+process.on('uncaughtException', (err) => {
+  console.error('[Main] Uncaught Exception caught by Process Watchdog:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.warn('[Main] Unhandled Rejection caught by Process Watchdog:', reason);
+});
+
 app.on('before-quit', () => {
+  stopWatchdogService();
   cleanupCamera();
   stopSyncEngine();
+  stopPrintWorker();
+  stopPrinterMonitor();
   stopPrintService();
   stopStorageRetention();
 });
 
 app.on('window-all-closed', () => {
+  stopWatchdogService();
   cleanupCamera();
   stopSyncEngine();
+  stopPrintWorker();
+  stopPrinterMonitor();
   stopPrintService();
   stopStorageRetention();
   app.quit();

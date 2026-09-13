@@ -12,6 +12,7 @@ import { SupportModule } from './support/support.module';
 import { EmailModule } from './email/email.module';
 import { AlertModule } from './alerts/alert.module';
 import { HealthModule } from './health/health.module';
+import { ProvisioningModule } from './provisioning/provisioning.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 
 @Module({
@@ -28,6 +29,7 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
     EmailModule,
     AlertModule,
     HealthModule,
+    ProvisioningModule,
   ],
   providers: [
     {

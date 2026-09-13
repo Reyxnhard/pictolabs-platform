@@ -15,25 +15,34 @@ export interface ScreenProps {
 export default function WelcomeScreen({ navigate, onOpenAdmin }: ScreenProps) {
   const { config } = useKioskConfig();
 
-  // Printer Health Validation (Pre-Session Gate)
+  // Printer Health & Paper Status Validation (Pre-Session Gate)
   const [printerHealth, setPrinterHealth] = useState<PrinterHealth | null>(null);
+  const [paperStatus, setPaperStatus] = useState<any | null>(null);
+  const [hardwareStatus, setHardwareStatus] = useState<any | null>(null);
 
   const themeColor = config.themeColor || '#3b82f6';
   const eventName = config.eventName || 'PICTOLABS SELF PHOTOBOOTH';
   const subText = config.subText || 'TOUCH SCREEN TO START';
 
-  // Poll printer health every 5 seconds
+  // Poll printer health, hardware, and paper roll every 5 seconds
   useEffect(() => {
     let isMounted = true;
 
     const checkHealth = async () => {
       try {
-        const health = await kiosk.printer.getHealth();
+        const [health, paper, hw] = await Promise.all([
+          kiosk.printer.getHealth(),
+          kiosk.printer.getPaperStatus ? kiosk.printer.getPaperStatus() : Promise.resolve(null),
+          kiosk.printer.getHardwareStatus ? kiosk.printer.getHardwareStatus() : Promise.resolve(null),
+        ]);
+
         if (isMounted) {
           setPrinterHealth(health);
+          if (paper) setPaperStatus(paper);
+          if (hw) setHardwareStatus(hw);
         }
       } catch (err) {
-        console.warn('[WelcomeScreen] Failed to query printer health:', err);
+        console.warn('[WelcomeScreen] Failed to query printer health/paper:', err);
       }
     };
 
@@ -45,17 +54,20 @@ export default function WelcomeScreen({ navigate, onOpenAdmin }: ScreenProps) {
     };
   }, []);
 
-
   // Printer Bypass state (enabled by default so kiosk can be tested without physical printer)
   const [bypassPrinter, setBypassPrinter] = useState(() => {
     return localStorage.getItem('pictolabs-bypass-printer') !== 'false';
   });
 
-  const isPrinterReady = bypassPrinter || printerHealth === null || printerHealth.ready;
+  const isPaperDepleted = Boolean(paperStatus && paperStatus.isLockedOut);
+  const isHardwareError = Boolean(hardwareStatus && !hardwareStatus.ready);
+  const isHealthError = Boolean(printerHealth && !printerHealth.ready);
+
+  const isPrinterReady = bypassPrinter || (!isPaperDepleted && !isHardwareError && !isHealthError);
 
   const handleStart = () => {
     if (!isPrinterReady) {
-      console.warn('[WelcomeScreen] Start blocked: Printer is not ready');
+      console.warn('[WelcomeScreen] Start blocked: Printer is not ready or paper roll depleted');
       return;
     }
     navigate('product-select');
@@ -105,13 +117,15 @@ export default function WelcomeScreen({ navigate, onOpenAdmin }: ScreenProps) {
             </div>
             <div className="flex-1">
               <h4 className="font-bold text-sm text-white tracking-wide flex items-center gap-2">
-                PEMELIHARAAN PRINTER
+                {isPaperDepleted ? 'KERTAS FOTO HABIS' : 'PEMELIHARAAN PRINTER'}
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-rose-950 text-rose-300 border border-rose-700">
-                  {printerHealth?.code || 'MAINTENANCE'}
+                  {isPaperDepleted ? `SISA ${paperStatus?.remaining ?? 0} SHEET` : (hardwareStatus?.errorCode || printerHealth?.code || 'MAINTENANCE')}
                 </span>
               </h4>
               <p className="text-xs text-rose-200 mt-0.5">
-                {printerHealth?.message || 'Printer sedang kehabisan kertas atau penutup terbuka. Silakan hubungi staf.'}
+                {isPaperDepleted
+                  ? `Bilik foto sedang pengisian ulang kertas (Sisa roll: ${paperStatus?.remaining ?? 0} lembar). Silakan hubungi staf/operator.`
+                  : (hardwareStatus?.message || printerHealth?.message || 'Printer sedang offline atau membutuhkan intervensi. Silakan hubungi staf.')}
               </p>
             </div>
             <button

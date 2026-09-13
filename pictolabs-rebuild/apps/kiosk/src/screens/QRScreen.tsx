@@ -76,7 +76,10 @@ export default function QRScreen({ navigate, session }: ScreenProps) {
     const executePrintTask = async () => {
       try {
         if (cleanPath) {
-          const res = await kiosk.printer.print(cleanPath, 1);
+          const sId = session.sessionId || `session_${Date.now()}`;
+          const enqueueRes = await kiosk.printer.enqueue(cleanPath, 1, sId);
+          console.log('[QRScreen] ✓ Print job enqueued in SQLite:', enqueueRes);
+
           if (!isMounted) return;
           clearInterval(progressInterval);
           setPrintProgress(100);
@@ -90,12 +93,6 @@ export default function QRScreen({ navigate, session }: ScreenProps) {
               origin: { y: 0.8 },
             });
           } catch {}
-
-          if (session.sessionId) {
-            kiosk.session.update(session.sessionId, {
-              printStatus: 'printed',
-            }).catch(() => {});
-          }
         } else {
           // Simulation mode
           clearInterval(progressInterval);
@@ -244,12 +241,15 @@ export default function QRScreen({ navigate, session }: ScreenProps) {
   // Auto return countdown (1 minute = 60s)
   useEffect(() => {
     if (countdown <= 0) {
+      if (session.sessionId) {
+        kiosk.recovery?.checkpoint?.(session.sessionId, 'COMPLETED', 0, {}).catch(() => {});
+      }
       navigate('welcome');
       return;
     }
     const timer = setInterval(() => setCountdown((c) => c - 1), 1000);
     return () => clearInterval(timer);
-  }, [countdown, navigate]);
+  }, [countdown, navigate, session.sessionId]);
 
   const countdownMins = Math.floor(countdown / 60);
   const countdownSecs = (countdown % 60).toString().padStart(2, '0');
@@ -615,7 +615,12 @@ export default function QRScreen({ navigate, session }: ScreenProps) {
             </div>
 
             <button
-              onClick={() => navigate('welcome')}
+              onClick={() => {
+                if (session.sessionId) {
+                  kiosk.recovery?.checkpoint?.(session.sessionId, 'COMPLETED', 0, {}).catch(() => {});
+                }
+                navigate('welcome');
+              }}
               style={{
                 backgroundColor: themeColor,
                 boxShadow: `0 8px 20px -5px ${themeColor}50`,

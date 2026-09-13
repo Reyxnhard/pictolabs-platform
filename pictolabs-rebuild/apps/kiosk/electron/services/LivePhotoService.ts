@@ -88,6 +88,13 @@ export async function saveLiveClip(
         mp4Path,
       ]);
       console.log(`[LivePhotoService] ✓ Converted pose ${poseIndex} to universal MP4: ${mp4Path}`);
+      // Immediate Transient Cleanup: unlink source WebM file to free disk space immediately
+      if (fs.existsSync(mp4Path) && fs.statSync(mp4Path).size > 1024) {
+        try {
+          fs.unlinkSync(webmPath);
+          console.log(`[LivePhotoService] ✓ Cleaned up transient WebM source: ${path.basename(webmPath)}`);
+        } catch (_) {}
+      }
       return { success: true, filePath: mp4Path, mp4Path };
     } catch (err: any) {
       console.warn(`[LivePhotoService] FFmpeg transcode warning for pose ${poseIndex}: ${err.message}`);
@@ -142,6 +149,12 @@ export async function finalizeSessionLivePhotos(
               '-movflags', '+faststart',
               mp4Path,
             ]);
+            if (fs.existsSync(mp4Path) && fs.statSync(mp4Path).size > 1024) {
+              try {
+                fs.unlinkSync(srcWebm);
+                console.log(`[LivePhotoService] ✓ Cleaned up finalized WebM: ${path.basename(srcWebm)}`);
+              } catch (_) {}
+            }
             videoPaths.push(mp4Path);
             continue;
           } catch (_) {}
@@ -164,6 +177,24 @@ export async function finalizeSessionLivePhotos(
 }
 
 /**
+ * Clean up transient or orphaned video clips for a given session.
+ */
+export function cleanupSessionClips(sessionId: string, config: LivePhotoConfig = serviceConfig): void {
+  if (!config?.videosDir || !fs.existsSync(config.videosDir)) return;
+  try {
+    const files = fs.readdirSync(config.videosDir);
+    for (const f of files) {
+      if (f.includes(sessionId) && (f.endsWith('.webm') || f.endsWith('.txt') || f.endsWith('.tmp'))) {
+        try {
+          fs.unlinkSync(path.join(config.videosDir, f));
+          console.log(`[LivePhotoService] Cleaned up transient file: ${f}`);
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+}
+
+/**
  * Generate animated looping GIF / MP4 slideshow from captured photos.
  */
 export async function generateSessionGif(
@@ -179,6 +210,8 @@ export async function generateSessionGif(
   if (!ffmpegPath || !photoPaths || photoPaths.length === 0) {
     return { success: false };
   }
+
+  const concatFilePath = path.join(config.videosDir, `gif_${sessionId}_concat.txt`);
 
   try {
     const validPhotos = photoPaths
@@ -200,7 +233,6 @@ export async function generateSessionGif(
       }
     }
 
-    const concatFilePath = path.join(config.videosDir, `gif_${sessionId}_concat.txt`);
     const durationPerFrame = 0.45; // 450ms per frame
     let concatContent = '';
     for (const p of sequence) {
@@ -239,10 +271,6 @@ export async function generateSessionGif(
       ]);
     } catch (_) {}
 
-    try {
-      fs.unlinkSync(concatFilePath);
-    } catch (_) {}
-
     console.log(`[LivePhotoService] ✓ Generated GIF loop for ${sessionId}: ${outputMp4}`);
     return {
       success: true,
@@ -252,6 +280,12 @@ export async function generateSessionGif(
   } catch (err: any) {
     console.warn(`[LivePhotoService] GIF generation warning: ${err.message}`);
     return { success: false };
+  } finally {
+    if (fs.existsSync(concatFilePath)) {
+      try {
+        fs.unlinkSync(concatFilePath);
+      } catch (_) {}
+    }
   }
 }
 
