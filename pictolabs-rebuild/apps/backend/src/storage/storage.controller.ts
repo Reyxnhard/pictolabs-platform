@@ -138,6 +138,20 @@ export class StorageController {
       `[StorageController] Incoming upload: session=${sessionId}, file=${headerFileName}, type=${fileType}`
     );
 
+    if (!sessionId) {
+      throw new HttpException('SESSION_ID_REQUIRED: Missing x-session-id header', HttpStatus.BAD_REQUEST);
+    }
+
+    // Pre-flight Guard: Guarantee session exists in PostgreSQL before accepting media upload
+    const existingSession = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+    });
+
+    if (!existingSession) {
+      this.logger.warn(`[StorageController] Upload rejected: Session ${sessionId} does not exist in database`);
+      throw new HttpException('SESSION_NOT_FOUND: Cannot upload media for uncommitted session', HttpStatus.CONFLICT);
+    }
+
     // Read raw body stream into buffer
     const chunks: Buffer[] = [];
     try {
@@ -161,6 +175,20 @@ export class StorageController {
         : 'image/jpeg';
       const result = await this.storageService.saveFile(safeFilename, buffer, mimeType);
 
+      // Register photo record in PostgreSQL
+      try {
+        await this.prisma.photo.create({
+          data: {
+            sessionId,
+            finalUrl: result.publicUrl || result.url || `/uploads/${safeFilename}`,
+            storageKey: result.filename,
+            sequenceNo: 1,
+          },
+        });
+      } catch (photoErr: any) {
+        this.logger.warn(`[StorageController] Photo registration notice: ${photoErr.message}`);
+      }
+
       return {
         success: true,
         sessionId,
@@ -171,6 +199,9 @@ export class StorageController {
         sizeBytes: buffer.length,
       };
     } catch (err: any) {
+      if (err instanceof HttpException) {
+        throw err;
+      }
       this.logger.error(`[StorageController] Upload failed: ${err.message}`);
       throw new HttpException(
         `Failed to process upload: ${err.message}`,

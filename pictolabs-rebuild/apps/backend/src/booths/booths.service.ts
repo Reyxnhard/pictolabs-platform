@@ -228,6 +228,7 @@ export class BoothsService {
       include: {
         branch: true,
         config: true,
+        device: true,
       },
       orderBy: { updatedAt: 'desc' },
     });
@@ -240,6 +241,7 @@ export class BoothsService {
         name: b.name,
         branchId: b.branchId,
         branch: b.branch,
+        device: b.device || null,
         status: computed.effectiveStatus,
         isMaintenance: computed.isMaintenance,
         lastSeen: b.lastSeen ? b.lastSeen.toISOString() : null,
@@ -264,7 +266,15 @@ export class BoothsService {
   }
 
   async findById(id: string) {
-    const booth = await this.findBoothByIdentifier(id, { branch: true, config: true });
+    const booth = await this.findBoothByIdentifier(id, {
+      branch: true,
+      config: true,
+      device: true,
+      activationTokens: {
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      },
+    });
     const computed = this.computeEffectiveStatus(booth.lastSeen, booth.status);
     const { adminPinHash, ...sanitized } = booth as any;
     return {
@@ -275,6 +285,7 @@ export class BoothsService {
       secondsSinceLastHeartbeat: computed.secondsSinceLastHeartbeat,
     };
   }
+
 
   /**
    * Verify entered 6-digit technician administrator PIN against bcrypt hash stored in DB.

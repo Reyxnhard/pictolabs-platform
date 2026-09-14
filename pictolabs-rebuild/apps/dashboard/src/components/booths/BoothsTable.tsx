@@ -1,19 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { StatusBadge } from '../common/StatusBadge';
 import type { Booth } from '../../types/booth';
-import { MapPin, Settings2 } from 'lucide-react';
+import { MapPin, Settings2, Laptop } from 'lucide-react';
 
 interface BoothsTableProps {
   booths: Booth[];
   onInspect: (booth: Booth) => void;
+  onPair?: (booth: Booth) => void;
   isLoading?: boolean;
 }
+
 
 export const BoothsTable: React.FC<BoothsTableProps> = ({
   booths,
   onInspect,
+  onPair,
   isLoading = false,
 }) => {
+
   // Relative time ticker updating every second
   const [, setTicker] = useState(0);
   useEffect(() => {
@@ -101,15 +105,31 @@ export const BoothsTable: React.FC<BoothsTableProps> = ({
                 </div>
               </td>
 
-              {/* Host Machine */}
+              {/* Host Machine & Paired Status */}
               <td className="py-4 px-6 font-mono text-[11px]">
-                <div className="text-slate-200 truncate max-w-[160px]">
-                  {booth.machineName || 'kiosk-host'}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-slate-200 truncate max-w-[140px] font-semibold">
+                    {booth.machineName || 'kiosk-host'}
+                  </span>
+                  {booth.device?.status === 'ACTIVE' ? (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold">
+                      PAIRED
+                    </span>
+                  ) : booth.device?.status === 'REVOKED' ? (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-rose-500/10 text-rose-400 border border-rose-500/20 font-bold">
+                      REVOKED
+                    </span>
+                  ) : (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-slate-800 text-slate-400 border border-slate-700">
+                      UNPAIRED
+                    </span>
+                  )}
                 </div>
-                <div className="text-slate-500">
+                <div className="text-slate-500 text-[10px]">
                   {booth.localIp || '127.0.0.1'}
                 </div>
               </td>
+
 
               {/* Last Seen relative */}
               <td className="py-4 px-6 font-mono text-slate-300">
@@ -120,15 +140,29 @@ export const BoothsTable: React.FC<BoothsTableProps> = ({
 
               {/* Action */}
               <td className="py-4 px-6 text-right" onClick={(e) => e.stopPropagation()}>
-                <button
-                  type="button"
-                  onClick={() => onInspect(booth)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-700/60 bg-slate-800/80 hover:bg-indigo-600 hover:border-indigo-500 text-slate-200 hover:text-white transition text-xs font-medium shadow-sm"
-                >
-                  <Settings2 className="w-3.5 h-3.5" />
-                  Inspect
-                </button>
+                <div className="flex items-center justify-end gap-2">
+                  {(!booth.device || booth.device.status !== 'ACTIVE') && onPair && (
+                    <button
+                      type="button"
+                      onClick={() => onPair(booth)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500/40 text-emerald-300 hover:text-white transition text-xs font-bold shadow-sm"
+                      title="Hubungkan laptop kiosk fisik ke booth ini"
+                    >
+                      <Laptop className="w-3.5 h-3.5" />
+                      Pair
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onInspect(booth)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-700/60 bg-slate-800/80 hover:bg-indigo-600 hover:border-indigo-500 text-slate-200 hover:text-white transition text-xs font-medium shadow-sm"
+                  >
+                    <Settings2 className="w-3.5 h-3.5" />
+                    Inspect
+                  </button>
+                </div>
               </td>
+
             </tr>
           ))}
         </tbody>

@@ -9,6 +9,7 @@ import { BoothsPage } from './pages/BoothsPage';
 import { SessionsPage } from './pages/SessionsPage';
 import { GalleryPage } from './pages/GalleryPage';
 import { SupportSearchPage } from './pages/SupportSearchPage';
+import { ProvisioningTestPage } from './pages/ProvisioningTestPage';
 import { useAuthStore } from './stores/useAuthStore';
 
 export const App: React.FC = () => {
@@ -22,8 +23,10 @@ export const App: React.FC = () => {
     <ErrorBoundary>
       <BrowserRouter>
         <Routes>
-          {/* Public Login Route */}
+          {/* Public Login & Test Routes */}
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/provisioning-test" element={<ProvisioningTestPage />} />
+
 
           {/* Protected Operational Dashboard Routes */}
           <Route

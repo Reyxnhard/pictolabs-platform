@@ -7,6 +7,7 @@ import { boothsApi } from '../../services/boothsApi';
 import { CopyButton } from '../common/CopyButton';
 import { Monitor, Cpu, GitCommit, HardDrive, Wifi, Shield, RefreshCw, Lock, KeyRound, Eye, EyeOff, CheckCircle2, AlertCircle } from 'lucide-react';
 import { BoothHealthCard } from './BoothHealthCard';
+import { BoothProvisioningSection } from './BoothProvisioningSection';
 
 interface BoothDetailDrawerProps {
   booth: Booth | null;
@@ -22,6 +23,7 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
   onStatusUpdated,
 }) => {
   const [statusDetail, setStatusDetail] = useState<BoothStatusResponse | null>(null);
+  const [detailedBooth, setDetailedBooth] = useState<Booth | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
 
@@ -35,8 +37,12 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
     if (!booth) return;
     setIsLoading(true);
     try {
-      const data = await boothsApi.getBoothStatus(booth.id);
-      setStatusDetail(data);
+      const [statusData, boothData] = await Promise.all([
+        boothsApi.getBoothStatus(booth.id),
+        boothsApi.getBoothById(booth.id),
+      ]);
+      setStatusDetail(statusData);
+      setDetailedBooth(boothData);
     } catch (err) {
       console.error('Failed to load booth status detail:', err);
     } finally {
@@ -49,10 +55,12 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
       fetchStatus();
     } else {
       setStatusDetail(null);
+      setDetailedBooth(null);
       setPinFeedback(null);
       setNewPin('');
     }
   }, [isOpen, booth?.id]);
+
 
   if (!booth) return null;
 
@@ -112,7 +120,17 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
           isLoading={isUpdating}
         />
 
+        {/* Hardware Provisioning & Identity */}
+        <BoothProvisioningSection
+          booth={detailedBooth || booth}
+          onRefresh={async () => {
+            await fetchStatus();
+            if (onStatusUpdated) onStatusUpdated();
+          }}
+        />
+
         {/* Kiosk Admin PIN Management */}
+
         <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5 space-y-3">
           <div className="flex items-center justify-between">
             <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">

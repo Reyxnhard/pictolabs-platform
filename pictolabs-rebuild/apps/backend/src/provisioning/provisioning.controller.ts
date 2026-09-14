@@ -3,12 +3,25 @@ import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { ProvisioningService } from './provisioning.service';
 import { GenerateActivationTokenDto } from './dto/generate-token.dto';
 import { ActivateDeviceDto } from './dto/activate-device.dto';
+import { RePairDto } from './dto/re-pair.dto';
 import { Public } from '../auth/decorators/public.decorator';
 
 @ApiTags('Provisioning')
 @Controller(['api/provisioning', 'provisioning'])
 export class ProvisioningController {
   constructor(private readonly provisioningService: ProvisioningService) {}
+
+  @Get('devices')
+  @ApiOperation({ summary: 'List all provisioned devices and their paired status' })
+  async listDevices() {
+    return this.provisioningService.listDevices();
+  }
+
+  @Get('booths')
+  @ApiOperation({ summary: 'List all booths with provisioning telemetry' })
+  async listBooths() {
+    return this.provisioningService.listBooths();
+  }
 
   @Post('tokens/generate')
   @ApiOperation({ summary: 'Generate a 15-minute single-use booth activation token (Admin Only)' })
@@ -38,9 +51,9 @@ export class ProvisioningController {
 
   @Post('re-pair')
   @ApiOperation({ summary: 'Re-pair hardware after laptop failure (Laptop Swap)' })
-  async rePairHardware(@Body('boothId') boothId: string, @Req() req: any) {
+  async rePairHardware(@Body() dto: RePairDto, @Req() req: any) {
     const userId = req.user?.id || req.user?.sub;
-    return this.provisioningService.rePairHardware(boothId, userId);
+    return this.provisioningService.rePairHardware(dto.boothId, userId);
   }
 
   @Post('devices/:boothId/revoke')
@@ -49,3 +62,4 @@ export class ProvisioningController {
     return this.provisioningService.revokeDevice(boothId);
   }
 }
+

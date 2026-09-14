@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Query, Headers, Logger } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, Headers, Logger, HttpException, HttpStatus, HttpCode } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { SessionsService } from './sessions.service';
 import { SessionQueryDto } from './dto/session-query.dto';
@@ -103,6 +103,7 @@ export class SessionsController {
 
   @Public()
   @Post()
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Sync session from kiosk client' })
   async syncSession(
     @Body() sessionData: any,
@@ -110,18 +111,58 @@ export class SessionsController {
   ) {
     this.logger.log(`[SessionsController] Incoming session sync: ${sessionData?.id}`);
 
+    // 1. Validate payload existence and ID
+    if (!sessionData || !sessionData.id) {
+      this.logger.warn(`[SessionsController] Session sync rejected: missing session id`);
+      throw new HttpException('INVALID_SESSION_PAYLOAD: Missing session id', HttpStatus.BAD_REQUEST);
+    }
+
+    // 2. Validate device secret header
+    if (!deviceSecret) {
+      this.logger.warn(`[SessionsController] Session sync rejected: missing x-device-secret header`);
+      throw new HttpException('MISSING_DEVICE_SECRET', HttpStatus.UNAUTHORIZED);
+    }
+
+    // 3. Resolve booth identity: Check Device table first, then fallback to Booth table
+    let booth: any = null;
     try {
-      const booth = await this.prisma.booth.findUnique({
-        where: { deviceSecret: deviceSecret || 'dev-secret-booth-01' },
+      booth = await this.prisma.booth.findUnique({
+        where: { deviceSecret },
       });
 
       if (!booth) {
-        this.logger.warn(`[SessionsController] Booth not registered for deviceSecret: ${deviceSecret}`);
-        return { success: true, acknowledged: true, warning: 'Booth unregistered' };
+        const device = await this.prisma.device.findUnique({
+          where: { deviceSecret },
+          include: { booth: true },
+        });
+        if (device && device.status === 'ACTIVE' && device.booth) {
+          booth = device.booth;
+        }
       }
+    } catch (dbErr: any) {
+      this.logger.error(`[SessionsController] Database error resolving booth identity: ${dbErr.message}`);
+      throw new HttpException(`DATABASE_UNAVAILABLE: ${dbErr.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
 
-      const status = sessionData.printStatus === 'printed' ? 'COMPLETED' : (sessionData.status || 'CAPTURED');
+    if (!booth) {
+      this.logger.warn(`[SessionsController] Booth not registered for deviceSecret: ${deviceSecret}`);
+      throw new HttpException('INVALID_DEVICE_SECRET: Booth not registered', HttpStatus.UNAUTHORIZED);
+    }
 
+    // 4. Validate date format if present
+    let createdAt = new Date();
+    if (sessionData.createdAt) {
+      const parsedDate = new Date(sessionData.createdAt);
+      if (isNaN(parsedDate.getTime())) {
+        this.logger.warn(`[SessionsController] Session sync rejected: invalid createdAt date (${sessionData.createdAt})`);
+        throw new HttpException('INVALID_SESSION_PAYLOAD: Invalid createdAt date', HttpStatus.BAD_REQUEST);
+      }
+      createdAt = parsedDate;
+    }
+
+    const status = sessionData.printStatus === 'printed' ? 'COMPLETED' : (sessionData.status || 'CAPTURED');
+
+    try {
       const session = await this.prisma.session.upsert({
         where: { id: sessionData.id },
         update: {
@@ -136,15 +177,15 @@ export class SessionsController {
           status,
           customerEmail: sessionData.customerEmail,
           customerPhone: sessionData.customerPhone,
-          createdAt: sessionData.createdAt ? new Date(sessionData.createdAt) : new Date(),
+          createdAt,
         },
       });
 
       this.logger.log(`[SessionsController] ✓ Session synced to database: ${session.id}`);
       return { success: true, sessionId: session.id };
     } catch (err: any) {
-      this.logger.error(`[SessionsController] Error syncing session: ${err.message}`);
-      return { success: true, error: err.message };
+      this.logger.error(`[SessionsController] Database error syncing session: ${err.message}`);
+      throw new HttpException(`SESSION_PERSISTENCE_FAILED: ${err.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 }

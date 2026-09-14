@@ -34,6 +34,7 @@ RUN npx prisma generate
 RUN npm run build
 
 # Prune devDependencies to keep final image small
+WORKDIR /app
 RUN npm prune --omit=dev
 
 # --- Stage 2: Production Runtime ---
@@ -52,14 +53,13 @@ RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nestjs
 
 # Create uploads directory and set permissions
-RUN mkdir -p /app/apps/backend/public/uploads && \
+RUN mkdir -p /app/apps/backend/public/uploads /app/apps/backend/node_modules && \
     chown -R nestjs:nodejs /app
 
 # Copy runtime node_modules from builder
 COPY --from=builder --chown=nestjs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nestjs:nodejs /app/packages/shared/dist ./packages/shared/dist
 COPY --from=builder --chown=nestjs:nodejs /app/packages/shared/package.json ./packages/shared/package.json
-COPY --from=builder --chown=nestjs:nodejs /app/apps/backend/node_modules ./apps/backend/node_modules
 COPY --from=builder --chown=nestjs:nodejs /app/apps/backend/dist ./apps/backend/dist
 COPY --from=builder --chown=nestjs:nodejs /app/apps/backend/package.json ./apps/backend/package.json
 COPY --from=builder --chown=nestjs:nodejs /app/apps/backend/prisma ./apps/backend/prisma

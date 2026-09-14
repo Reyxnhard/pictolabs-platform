@@ -308,4 +308,49 @@ export class ProvisioningService {
       message: `Device for booth ${booth.name} has been revoked.`,
     };
   }
+
+  /**
+   * List all devices with associated booth information
+   */
+  async listDevices() {
+    return this.prisma.device.findMany({
+      include: {
+        booth: {
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            lastSeen: true,
+            deviceSecret: true,
+            branch: {
+              select: {
+                id: true,
+                name: true,
+                location: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+
+  /**
+   * List all booths with their active devices and branch info
+   */
+  async listBooths() {
+    return this.prisma.booth.findMany({
+      include: {
+        branch: true,
+        device: true,
+        activationTokens: {
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
 }
+

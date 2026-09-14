@@ -1,0 +1,244 @@
+[
+  {
+    "step": "STEP_1",
+    "title": "Admin Login",
+    "request": {
+      "endpoint": "POST /api/auth/login",
+      "body": {
+        "email": "admin@pictolabs.id",
+        "password": "pictolabs2026"
+      }
+    },
+    "status": 201,
+    "response": {
+      "user": {
+        "id": "ee5806d3-22e8-451b-ad2a-c5f8048cc0fc",
+        "email": "admin@pictolabs.id",
+        "name": "Pictolabs Admin",
+        "role": "ADMIN"
+      },
+      "tokenReceived": true
+    },
+    "notes": "Successfully authenticated as Administrator and received JWT accessToken."
+  },
+  {
+    "step": "STEP_2_3",
+    "title": "Generate Provisioning Token",
+    "before": "-[ RECORD 1 ]------------------------------------\nid         | ab024b55-fa20-44ae-98bc-bd577a3bc141\ntoken      | ACT-T9ET-8B84\nbooth_id   | 80e05c47-50f9-4d8a-a6f5-a958f1be5df3\nstatus     | PENDING\nexpires_at | 2026-09-13 17:42:46.278\ncreated_at | 2026-09-13 17:27:46.289",
+    "request": {
+      "endpoint": "POST /api/provisioning/tokens/generate",
+      "body": {
+        "boothId": "80e05c47-50f9-4d8a-a6f5-a958f1be5df3",
+        "ttlMinutes": 15
+      }
+    },
+    "status": 201,
+    "response": {
+      "success": true,
+      "token": "ACT-D4J5-VKAH",
+      "boothId": "80e05c47-50f9-4d8a-a6f5-a958f1be5df3",
+      "boothName": "PICTOLABS-DEV-01",
+      "branchName": "Grand Indonesia Kiosk",
+      "expiresAt": "2026-09-13T17:45:43.484Z",
+      "qrPayload": "{\"version\":1,\"token\":\"ACT-D4J5-VKAH\",\"boothId\":\"80e05c47-50f9-4d8a-a6f5-a958f1be5df3\",\"boothName\":\"PICTOLABS-DEV-01\",\"branchName\":\"Grand Indonesia Kiosk\",\"expiresAt\":\"2026-09-13T17:45:43.484Z\"}"
+    },
+    "after": "-[ RECORD 1 ]------------------------------------\nid         | ff28ce8e-0dd2-4e66-9d69-36e48771b13a\ntoken      | ACT-D4J5-VKAH\nbooth_id   | 80e05c47-50f9-4d8a-a6f5-a958f1be5df3\nstatus     | PENDING\nexpires_at | 2026-09-13 17:45:43.484\ncreated_at | 2026-09-13 17:30:43.495\n-[ RECORD 2 ]------------------------------------\nid         | ab024b55-fa20-44ae-98bc-bd577a3bc141\ntoken      | ACT-T9ET-8B84\nbooth_id   | 80e05c47-50f9-4d8a-a6f5-a958f1be5df3\nstatus     | REVOKED\nexpires_at | 2026-09-13 17:42:46.278\ncreated_at | 2026-09-13 17:27:46.289",
+    "notes": "Token generated: ACT-D4J5-VKAH. In DB status is PENDING and expires_at is +15m. Any previous pending tokens are REVOKED."
+  },
+  {
+    "step": "STEP_4",
+    "title": "Validate Token Before Activation",
+    "request": {
+      "endpoint": "GET /api/provisioning/tokens/ACT-D4J5-VKAH/validate"
+    },
+    "status": 200,
+    "response": {
+      "valid": true,
+      "boothId": "80e05c47-50f9-4d8a-a6f5-a958f1be5df3",
+      "boothName": "PICTOLABS-DEV-01",
+      "branchName": "Grand Indonesia Kiosk",
+      "expiresAt": "2026-09-13T17:45:43.484Z"
+    },
+    "notes": "Public validation endpoint confirms token is valid, returns target booth name and expiration."
+  },
+  {
+    "step": "STEP_5",
+    "title": "Activate Device Handshake",
+    "before": "-[ RECORD 1 ]-+--------------------\nid            | \nbooth_id      | \nstatus        | \ndevice_secret | \nmachine_guid  | \nhostname      | \nbooth_secret  | dev-secret-booth-01\nbooth_status  | NORMAL",
+    "request": {
+      "endpoint": "POST /api/provisioning/activate",
+      "body": {
+        "token": "ACT-D4J5-VKAH",
+        "deviceFingerprint": {
+          "machineGuid": "WIN-GUID-E2E-TEST-001",
+          "hostname": "PICTO-KIOSK-GI-01",
+          "macAddress": "00:1A:2B:3C:4D:5E",
+          "osVersion": "Windows 11 Pro 23H2 (Build 22631)",
+          "electronVersion": "28.2.0",
+          "appVersion": "1.2.0"
+        }
+      }
+    },
+    "status": 200,
+    "response": {
+      "success": true,
+      "boothId": "80e05c47-50f9-4d8a-a6f5-a958f1be5df3",
+      "boothName": "PICTOLABS-DEV-01",
+      "branchId": "838b622c-4843-44f8-99c3-c340ff55ea62",
+      "branchName": "Grand Indonesia Kiosk",
+      "companyId": "9d4210f2-4286-4b52-a27f-ef6395716cfc",
+      "location": "Jakarta",
+      "deviceSecret": "sec_live_252a06d897e38b49c918ca814b1c3f03de252d043984fba0b26597f760b64fff",
+      "config": {},
+      "pairedAt": "2026-09-13T17:30:43.778Z"
+    },
+    "after": "-[ RECORD 1 ]-------+--------------------------------------------------------------------------\ndevice_id           | 8a05d15d-e096-4831-b19d-373f61547e99\nbooth_id            | 80e05c47-50f9-4d8a-a6f5-a958f1be5df3\ndevice_status       | ACTIVE\ndevice_secret       | sec_live_252a06d897e38b49c918ca814b1c3f03de252d043984fba0b26597f760b64fff\nmachine_guid        | WIN-GUID-E2E-TEST-001\nhostname            | PICTO-KIOSK-GI-01\npaired_at           | 2026-09-13 17:30:43.778\nbooth_secret        | sec_live_252a06d897e38b49c918ca814b1c3f03de252d043984fba0b26597f760b64fff\nbooth_status        | NORMAL\ntoken_status        | CONSUMED\nused_at             | 2026-09-13 17:30:43.778\nused_by_device_guid | WIN-GUID-E2E-TEST-001\nip_address          | ::ffff:172.18.0.1",
+    "notes": "Device successfully paired! Token is marked CONSUMED, Device upserted with status ACTIVE, and Booth secret synchronized."
+  },
+  {
+    "step": "STEP_6",
+    "title": "Booth Authentication Verification",
+    "request": {
+      "endpoint": "POST /api/auth/booth-auth",
+      "body": {
+        "deviceSecret": "sec_live_252a06d897e38b49c918ca814b1c3f03de252d043984fba0b26597f760b64fff"
+      }
+    },
+    "status": 201,
+    "response": {
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI4MGUwNWM0Ny01MGY5LTRkOGEtYTZmNS1hOTU4ZjFiZTVkZjMiLCJ0eXBlIjoiQk9PVEgiLCJpYXQiOjE3ODkzMjA2NDMsImV4cCI6MTc4OTkyNTQ0M30.ap6aH7OwV3-a1i0FOwx6ICU8H66s_t_-xrtffxX-nPI",
+      "booth": {
+        "id": "80e05c47-50f9-4d8a-a6f5-a958f1be5df3",
+        "name": "PICTOLABS-DEV-01",
+        "branch": "Grand Indonesia Kiosk",
+        "config": {
+          "id": "cc45bb0d-d3a8-422c-99e7-69d8b847582c",
+          "boothId": "80e05c47-50f9-4d8a-a6f5-a958f1be5df3",
+          "cameraSettings": "{}",
+          "printerSettings": "{}",
+          "generalSettings": "{}",
+          "createdAt": "2026-09-08T18:35:02.551Z",
+          "updatedAt": "2026-09-08T18:35:02.551Z"
+        }
+      }
+    },
+    "notes": "Newly issued deviceSecret successfully authenticates the booth with backend services."
+  },
+  {
+    "step": "SCENARIO_B",
+    "title": "Business Rule: Non-existent Token Rejection",
+    "request": {
+      "validate": "GET /api/provisioning/tokens/ACT-0000-0000/validate",
+      "activate": "POST /api/provisioning/activate (token: ACT-0000-0000)"
+    },
+    "status": "Validate: 200, Activate: 400",
+    "response": {
+      "validateResult": {
+        "valid": false,
+        "reason": "TOKEN_NOT_FOUND"
+      },
+      "activateResult": {
+        "message": "INVALID_OR_EXPIRED_TOKEN",
+        "error": "Bad Request",
+        "statusCode": 400
+      }
+    },
+    "notes": "Non-existent token is correctly rejected by validate (TOKEN_NOT_FOUND) and activate (400 Bad Request)."
+  },
+  {
+    "step": "SCENARIO_C",
+    "title": "Business Rule: Expired Token Rejection",
+    "request": {
+      "token": "ACT-672R-5CRJ",
+      "validate": "GET /api/provisioning/tokens/ACT-672R-5CRJ/validate",
+      "activate": "POST /api/provisioning/activate"
+    },
+    "status": "Validate: 200, Activate: 400",
+    "response": {
+      "validateResult": {
+        "valid": false,
+        "reason": "TOKEN_EXPIRED"
+      },
+      "activateResult": {
+        "message": "INVALID_OR_EXPIRED_TOKEN",
+        "error": "Bad Request",
+        "statusCode": 400
+      }
+    },
+    "notes": "Expired token is correctly rejected by validate (TOKEN_EXPIRED) and activate (400 Bad Request)."
+  },
+  {
+    "step": "SCENARIO_D_E",
+    "title": "Business Rule: Consumed Token / Activate Twice Rejection",
+    "request": {
+      "token": "ACT-D4J5-VKAH",
+      "validate": "GET /api/provisioning/tokens/ACT-D4J5-VKAH/validate",
+      "activate": "POST /api/provisioning/activate"
+    },
+    "status": "Validate: 200, Activate: 400",
+    "response": {
+      "validateResult": {
+        "valid": false,
+        "reason": "TOKEN_CONSUMED"
+      },
+      "activateResult": {
+        "message": "INVALID_OR_EXPIRED_TOKEN",
+        "error": "Bad Request",
+        "statusCode": 400
+      }
+    },
+    "notes": "Already consumed token is rejected by validate (TOKEN_CONSUMED) and activate (400 Bad Request). Cannot activate twice."
+  },
+  {
+    "step": "SCENARIO_F",
+    "title": "Business Rule: Re-pair Hardware (Laptop Swap)",
+    "before": "-[ RECORD 1 ]-+--------------------------------------------------------------------------\nid            | 8a05d15d-e096-4831-b19d-373f61547e99\nbooth_id      | 80e05c47-50f9-4d8a-a6f5-a958f1be5df3\nstatus        | ACTIVE\ndevice_secret | sec_live_252a06d897e38b49c918ca814b1c3f03de252d043984fba0b26597f760b64fff\nmachine_guid  | WIN-GUID-E2E-TEST-001\nhostname      | PICTO-KIOSK-GI-01",
+    "request": {
+      "endpoint": "POST /api/provisioning/re-pair",
+      "body": {
+        "boothId": "80e05c47-50f9-4d8a-a6f5-a958f1be5df3"
+      }
+    },
+    "status": 201,
+    "response": {
+      "repairResult": {
+        "success": true,
+        "token": "ACT-XQJT-9X4H",
+        "boothId": "80e05c47-50f9-4d8a-a6f5-a958f1be5df3",
+        "boothName": "PICTOLABS-DEV-01",
+        "branchName": "Grand Indonesia Kiosk",
+        "expiresAt": "2026-09-13T17:45:44.318Z",
+        "qrPayload": "{\"version\":1,\"token\":\"ACT-XQJT-9X4H\",\"boothId\":\"80e05c47-50f9-4d8a-a6f5-a958f1be5df3\",\"boothName\":\"PICTOLABS-DEV-01\",\"branchName\":\"Grand Indonesia Kiosk\",\"expiresAt\":\"2026-09-13T17:45:44.318Z\"}"
+      },
+      "swapActivation": {
+        "success": true,
+        "boothId": "80e05c47-50f9-4d8a-a6f5-a958f1be5df3",
+        "boothName": "PICTOLABS-DEV-01",
+        "branchId": "838b622c-4843-44f8-99c3-c340ff55ea62",
+        "branchName": "Grand Indonesia Kiosk",
+        "companyId": "9d4210f2-4286-4b52-a27f-ef6395716cfc",
+        "location": "Jakarta",
+        "deviceSecret": "sec_live_b1aa8d2e544282e764b0f819422d58921f85808ca27b399318692fca3d770d8a",
+        "config": {},
+        "pairedAt": "2026-09-13T17:30:44.462Z"
+      }
+    },
+    "after": "-[ RECORD 1 ]-+--------------------------------------------------------------------------\nid            | 8a05d15d-e096-4831-b19d-373f61547e99\nbooth_id      | 80e05c47-50f9-4d8a-a6f5-a958f1be5df3\nstatus        | ACTIVE\ndevice_secret | sec_live_b1aa8d2e544282e764b0f819422d58921f85808ca27b399318692fca3d770d8a\nmachine_guid  | WIN-GUID-SWAP-LAPTOP-002\nhostname      | PICTO-SWAP-LAPTOP-02\nbooth_secret  | sec_live_b1aa8d2e544282e764b0f819422d58921f85808ca27b399318692fca3d770d8a",
+    "notes": "Old deviceSecret (sec_live_252a06d...) is REJECTED (401). New deviceSecret (sec_live_b1aa8d2...) is ACCEPTED (201). Hardware successfully swapped!"
+  },
+  {
+    "step": "SCENARIO_G",
+    "title": "Business Rule: Emergency Revocation (Stolen/Compromised)",
+    "before": "-[ RECORD 1 ]-+--------------------------------------------------------------------------\nid            | 8a05d15d-e096-4831-b19d-373f61547e99\nbooth_id      | 80e05c47-50f9-4d8a-a6f5-a958f1be5df3\nstatus        | ACTIVE\ndevice_secret | sec_live_b1aa8d2e544282e764b0f819422d58921f85808ca27b399318692fca3d770d8a\nbooth_secret  | sec_live_b1aa8d2e544282e764b0f819422d58921f85808ca27b399318692fca3d770d8a\nbooth_status  | NORMAL",
+    "request": {
+      "endpoint": "POST /api/provisioning/devices/80e05c47-50f9-4d8a-a6f5-a958f1be5df3/revoke"
+    },
+    "status": 201,
+    "response": {
+      "success": true,
+      "message": "Device for booth PICTOLABS-DEV-01 has been revoked."
+    },
+    "after": "-[ RECORD 1 ]-+--------------------------------------------------------------------------\nid            | 8a05d15d-e096-4831-b19d-373f61547e99\nbooth_id      | 80e05c47-50f9-4d8a-a6f5-a958f1be5df3\ndevice_status | REVOKED\ndevice_secret | sec_live_b1aa8d2e544282e764b0f819422d58921f85808ca27b399318692fca3d770d8a\nbooth_secret  | sec_revoked_1789320644767\nbooth_status  | MAINTENANCE",
+    "notes": "Device status set to REVOKED, Booth secret changed to sentinel (sec_revoked_*), Booth status set to MAINTENANCE. Stolen device secret rejected with 401."
+  }
+]

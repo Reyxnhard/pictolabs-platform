@@ -664,6 +664,23 @@ async function processUploadQueue(): Promise<void> {
 
       // 3. Fallback to standard multipart/stream upload endpoint if direct PUT was not used (with 60s timeout guard)
       if (!uploadedSuccessfully) {
+        // Pre-flight Guard: Guarantee session exists in PostgreSQL before streaming upload
+        let isSessionSynced = false;
+        if (db) {
+          try {
+            const sRow = db.prepare('SELECT synced FROM sessions WHERE id = ?').get(item.session_id) as any;
+            isSessionSynced = Boolean(sRow?.synced);
+          } catch (_) {}
+        }
+
+        if (!isSessionSynced) {
+          const syncOk = await syncSingleSessionToCloud(item.session_id);
+          if (!syncOk) {
+            stmtUpdateUploadStatus.run('FAILED', 'Pre-flight session sync failed before stream upload', null, now, item.id);
+            continue; // Do not call upload, retry on next cycle with backoff
+          }
+        }
+
         const uploadUrl = `${config.apiBaseUrl}/api/storage/upload`;
         const response = await fetch(uploadUrl, {
           method: 'POST',
@@ -866,11 +883,21 @@ export async function syncSingleSessionToCloud(sessionId: string): Promise<boole
     });
 
     if (response.ok) {
-      stmtMarkSynced?.run(session.id);
-      console.log(`[SyncEngine] ✓ Synced single session metadata: ${session.id}`);
-      return true;
+      const data = (await response.json().catch(() => null)) as any;
+      if (data?.success === true && data?.sessionId && !data.error && !data.warning) {
+        stmtMarkSynced?.run(session.id);
+        console.log(`[SyncEngine] ✓ Synced single session metadata: ${session.id}`);
+        return true;
+      } else {
+        console.warn(
+          `[SyncEngine] Single session sync rejected or unacknowledged for ${session.id}:`,
+          data?.error || data?.warning || 'Missing valid sessionId'
+        );
+        return false;
+      }
     } else {
-      console.warn(`[SyncEngine] Single session sync failed for ${session.id}: HTTP ${response.status}`);
+      const errText = await response.text().catch(() => '');
+      console.warn(`[SyncEngine] Single session sync failed for ${session.id}: HTTP ${response.status} - ${errText.slice(0, 100)}`);
       return false;
     }
   } catch (err: any) {

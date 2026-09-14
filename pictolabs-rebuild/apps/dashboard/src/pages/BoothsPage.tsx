@@ -2,10 +2,12 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { BoothsTable } from '../components/booths/BoothsTable';
 import { BoothDetailDrawer } from '../components/booths/BoothDetailDrawer';
+import { PairDeviceModal } from '../components/booths/PairDeviceModal';
 import { SearchInput } from '../components/common/SearchInput';
 import type { Booth } from '../types/booth';
 import { boothsApi } from '../services/boothsApi';
 import { useSocketStore } from '../stores/socketStore';
+import { Plus } from 'lucide-react';
 
 export const BoothsPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -15,6 +17,10 @@ export const BoothsPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [selectedBooth, setSelectedBooth] = useState<Booth | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Global Kiosk Activation Modal state
+  const [isGlobalActivateOpen, setIsGlobalActivateOpen] = useState(false);
+  const [boothToPair, setBoothToPair] = useState<Booth | null>(null);
 
   // Subscribe to WebSocket status changes
   const updatesCount = useSocketStore((state) => state.updatesCount);
@@ -78,17 +84,32 @@ export const BoothsPage: React.FC = () => {
             Booths Fleet Management
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Monitor real-time connectivity, runtime software platform versions, and toggle maintenance locks.
+            Monitor real-time connectivity, hardware provisioning, and operational fleet health.
           </p>
         </div>
 
-        {/* Search Bar */}
-        <div className="w-full sm:w-80">
-          <SearchInput
-            value={search}
-            onChange={setSearch}
-            placeholder="Search booth, branch, IP, hostname..."
-          />
+        {/* Action Toolbar: Search + Global Activate CTA */}
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          <div className="w-full sm:w-72">
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="Search booth, branch, IP..."
+            />
+          </div>
+          <button
+            type="button"
+            id="btn-global-activate-kiosk"
+            onClick={() => {
+              setBoothToPair(null);
+              setIsGlobalActivateOpen(true);
+            }}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-xs font-bold transition shadow-lg shadow-emerald-600/20 whitespace-nowrap"
+            title="Aktivasi laptop baru untuk dipasangkan ke booth"
+          >
+            <Plus className="w-4 h-4" />
+            <span>+ Activate New Kiosk</span>
+          </button>
         </div>
       </div>
 
@@ -124,6 +145,10 @@ export const BoothsPage: React.FC = () => {
       <BoothsTable
         booths={displayedBooths}
         onInspect={(booth) => setSelectedBooth(booth)}
+        onPair={(booth) => {
+          setBoothToPair(booth);
+          setIsGlobalActivateOpen(true);
+        }}
         isLoading={isLoading}
       />
 
@@ -134,6 +159,21 @@ export const BoothsPage: React.FC = () => {
         onClose={() => setSelectedBooth(null)}
         onStatusUpdated={fetchBooths}
       />
+
+      {/* Global Kiosk Activation Modal */}
+      <PairDeviceModal
+        booth={boothToPair}
+        allBooths={booths}
+        isOpen={isGlobalActivateOpen}
+        onClose={() => {
+          setIsGlobalActivateOpen(false);
+          setBoothToPair(null);
+        }}
+        onPaired={() => {
+          fetchBooths();
+        }}
+      />
     </div>
   );
 };
+
