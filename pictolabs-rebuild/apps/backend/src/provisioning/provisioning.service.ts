@@ -258,16 +258,28 @@ export class ProvisioningService {
       throw new NotFoundException(`Booth ${boothId} not found`);
     }
 
-    // Mark previous device as DECOMMISSIONED
-    if (booth.device) {
-      await this.prisma.device.update({
-        where: { id: booth.device.id },
-        data: { status: 'DECOMMISSIONED' },
-      });
-      this.logger.warn(`[ProvisioningService] Decommissioned device ${booth.device.id} for booth ${booth.name}`);
-    }
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Mark previous device as DECOMMISSIONED
+      if (booth.device) {
+        await tx.device.update({
+          where: { id: booth.device.id },
+          data: { status: 'DECOMMISSIONED' },
+        });
+        this.logger.warn(`[ProvisioningService] Decommissioned device ${booth.device.id} for booth ${booth.name}`);
+      }
 
-    // Issue swap token (15 mins)
+      // 2. Immediately invalidate booth device secret with transition sentinel to close unauthorized window
+      const swapSecret = `sec_swap_pending_${Date.now()}`;
+      await tx.booth.update({
+        where: { id: booth.id },
+        data: {
+          deviceSecret: swapSecret,
+          status: 'MAINTENANCE',
+        },
+      });
+    });
+
+    // 3. Issue swap token (15 mins)
     return this.generateToken({ boothId: booth.id, ttlMinutes: 15 }, userId);
   }
 

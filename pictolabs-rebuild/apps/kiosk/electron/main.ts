@@ -43,8 +43,10 @@ const DATA_DIR = path.join(app.getPath('userData'), 'pictolabs-data');
 const CAPTURES_DIR = path.join(DATA_DIR, 'captures');
 const COMPOSITES_DIR = path.join(DATA_DIR, 'composites');
 const VIDEOS_DIR = path.join(DATA_DIR, 'videos');
-const FRAMES_DIR = isDev
-  ? path.join(__dirname, '..', 'resources', 'frames')
+const FRAMES_DIR = !app.isPackaged
+  ? (fs.existsSync(path.join(__dirname, '..', '..', 'resources', 'frames'))
+      ? path.join(__dirname, '..', '..', 'resources', 'frames')
+      : path.join(__dirname, '..', 'resources', 'frames'))
   : path.join(process.resourcesPath, 'frames');
 
 let mainWindow: BrowserWindow | null = null;

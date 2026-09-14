@@ -4,9 +4,28 @@
   "directories": {
     "output": "release"
   },
+  "npmRebuild": false,
   "files": [
     "dist/**/*",
     "package.json"
+  ],
+  "asar": true,
+  "asarUnpack": [
+    "**/node_modules/@photolab/canon/**",
+    "**/node_modules/better-sqlite3/**",
+    "**/node_modules/@img/**",
+    "**/*.node",
+    "**/*.dll"
+  ],
+  "extraResources": [
+    {
+      "from": "resources/bin/ffmpeg.exe",
+      "to": "ffmpeg.exe"
+    },
+    {
+      "from": "resources/frames",
+      "to": "frames"
+    }
   ],
   "win": {
     "target": "nsis"

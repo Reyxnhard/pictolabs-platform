@@ -71,10 +71,11 @@ export class StorageController {
 
     const booth = await this.prisma.booth.findUnique({
       where: { deviceSecret },
+      include: { device: true },
     });
 
-    if (!booth) {
-      throw new HttpException('INVALID_DEVICE', HttpStatus.UNAUTHORIZED);
+    if (!booth || (booth.device && booth.device.status !== 'ACTIVE')) {
+      throw new HttpException('INVALID_DEVICE: Device decommissioned or unlinked', HttpStatus.UNAUTHORIZED);
     }
 
     this.logger.log(

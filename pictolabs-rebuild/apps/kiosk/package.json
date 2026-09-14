@@ -2,13 +2,15 @@
   "name": "@pictolabs/kiosk",
   "version": "1.0.0",
   "private": true,
+  "description": "Pictolabs Photobooth Kiosk Desktop Client",
+  "author": "Pictolabs Engineering",
   "main": "dist/main/main.js",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "electron:dev": "tsc -p tsconfig.electron.json && electron .",
-    "electron:build": "npm run build && tsc -p tsconfig.electron.json && electron-builder"
+    "electron:build": "npm run build && npx tsc -p tsconfig.electron.json && electron-builder --win"
   },
   "dependencies": {
     "@photolab/canon": "file:../../../extracted-asar/node_modules/@photolab/canon",
@@ -34,7 +36,7 @@
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
-    "electron": "^44.1.1",
+    "electron": "44.1.1",
     "electron-builder": "^26.15.3",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.9.3",

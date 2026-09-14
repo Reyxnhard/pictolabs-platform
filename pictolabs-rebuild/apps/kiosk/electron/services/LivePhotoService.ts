@@ -18,13 +18,13 @@ let serviceConfig: LivePhotoConfig;
  */
 export function findFfmpegPath(): string | null {
   const candidates = [
-    // 1. Photolab reverse-engineering template directory in workspace
-    path.resolve(__dirname, '../../../../kiosk-client-photobooth-template-flipbook-basic/ffmpeg.exe'),
-    path.resolve(process.cwd(), '../kiosk-client-photobooth-template-flipbook-basic/ffmpeg.exe'),
-    path.resolve(process.cwd(), '../../kiosk-client-photobooth-template-flipbook-basic/ffmpeg.exe'),
-    'c:\\Users\\ezarh\\.gemini\\antigravity-ide\\scratch\\Pictolabs\\kiosk-client-photobooth-template-flipbook-basic\\ffmpeg.exe',
-    // 2. Production packaged resources
+    // 1. Production packaged resources (via extraResources in electron-builder)
     path.join(process.resourcesPath || '', 'ffmpeg.exe'),
+    // 2. Local development workspace bundled binary
+    path.resolve(__dirname, '../resources/bin/ffmpeg.exe'),
+    path.resolve(__dirname, '../../resources/bin/ffmpeg.exe'),
+    path.resolve(process.cwd(), 'resources/bin/ffmpeg.exe'),
+    path.resolve(process.cwd(), 'apps/kiosk/resources/bin/ffmpeg.exe'),
   ];
 
   for (const c of candidates) {
