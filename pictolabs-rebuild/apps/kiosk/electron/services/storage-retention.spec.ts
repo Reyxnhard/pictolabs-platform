@@ -168,7 +168,7 @@ async function runStorageRetentionTests() {
   fs.writeFileSync(oldRetakeCapture, Buffer.alloc(8000, 0));
   fs.utimesSync(oldRetakeCapture, TWO_HOURS_AGO, TWO_HOURS_AGO);
 
-  const janitorResult = runOrphanJanitor([capturesDir, videosDir]);
+  const janitorResult = await runOrphanJanitor([capturesDir, videosDir]);
   console.log(`  Janitor Cleaned: ${janitorResult.cleanedCount} orphan files, Freed: ${janitorResult.freedBytes} bytes`);
 
   if (fs.existsSync(oldWebm)) throw new Error('Test 2 Failed: Abandoned WebM was not purged!');
@@ -180,10 +180,11 @@ async function runStorageRetentionTests() {
   // TEST 3: FULL RETENTION CLEANUP CYCLE
   // ─────────────────────────────────────────────────────────────────────────────
   console.log('[TEST 3: FULL RETENTION CLEANUP CYCLE]');
-  const cleanupResult = runRetentionCleanupNow({
+  const cleanupResult = await runRetentionCleanupNow({
     mediaDirectories: [capturesDir, compositesDir, videosDir],
     retentionDays: 7,
     minFreeDiskGb: 0, // Normal retention run
+    skipPairingCheck: true,
   });
 
   console.log(`  Scanned: ${cleanupResult.scannedFiles}, Purged: ${cleanupResult.purgedFiles}, Skipped Uncompleted: ${cleanupResult.skippedUncompletedFiles}, Skipped Active Print: ${cleanupResult.skippedActivePrintFiles}`);
@@ -274,10 +275,11 @@ async function runStorageRetentionTests() {
   `).run(emergencyRaw, THREE_DAYS_AGO.toISOString(), THREE_DAYS_AGO.toISOString());
 
   // Run cleanup with minFreeDiskGb = 9999 to simulate low disk space!
-  const emergencyResult = runRetentionCleanupNow({
+  const emergencyResult = await runRetentionCleanupNow({
     mediaDirectories: [capturesDir, compositesDir, videosDir],
     retentionDays: 7, // Even though normal retention is 7d, emergency waterfall targets completed files >48h
     minFreeDiskGb: 9999, // Force emergency purge condition
+    skipPairingCheck: true,
   });
 
   console.log(`  Emergency Purged Files: ${emergencyResult.purgedFiles}, Freed: ${emergencyResult.freedFormatted}`);

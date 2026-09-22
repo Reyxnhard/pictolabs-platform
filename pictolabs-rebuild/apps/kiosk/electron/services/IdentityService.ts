@@ -213,6 +213,17 @@ function mirrorToSQLite(identity: BoothIdentity): void {
   }
 }
 
+type PairingListener = (identity: BoothIdentity) => void;
+const pairingListeners: PairingListener[] = [];
+
+export function onKioskPairingSuccess(listener: PairingListener): () => void {
+  pairingListeners.push(listener);
+  return () => {
+    const idx = pairingListeners.indexOf(listener);
+    if (idx !== -1) pairingListeners.splice(idx, 1);
+  };
+}
+
 /**
  * Save newly paired identity to disk and SQLite
  */
@@ -273,6 +284,15 @@ export function saveIdentity(
   console.log(`[IdentityService] ✓ Identity persisted for ${identity.boothName} (${identity.boothId})`);
   recordSystemEvent('IDENTITY_SAVED', 'INFO', 'IdentityService', `Paired to booth ${identity.boothName} (${identity.boothId})`);
 
+  // Notify pairing listeners (e.g. StorageRetentionService scheduling deferred initial cleanup)
+  pairingListeners.forEach((fn) => {
+    try {
+      fn(identity);
+    } catch (err: any) {
+      console.warn('[IdentityService] Pairing listener error:', err?.message);
+    }
+  });
+
   return identity;
 }
 
@@ -314,9 +334,13 @@ export function loadIdentity(defaultApiUrl: string = 'http://localhost:4000', al
     } catch (_) {}
   }
 
-  // Backward compatibility migration for Pilot Booth #1
-  const isDev = Boolean(app?.isPackaged === false || process.env.NODE_ENV !== 'production');
-  const allowPilotAutoSeed = allowLegacyAutoSeed && (isDev || process.env.PICTOLABS_PILOT_MIGRATION === 'true');
+  // Backward compatibility migration for Pilot Booth #1 (strictly disabled in packaged builds)
+  const isPackaged = Boolean(app && app.isPackaged);
+  const allowPilotAutoSeed =
+    !isPackaged &&
+    allowLegacyAutoSeed &&
+    (process.env.PICTOLABS_PILOT_MIGRATION === 'true' || process.env.NODE_ENV !== 'production');
+
   if (allowPilotAutoSeed) {
     console.log('[IdentityService] ℹ️ Auto-migrating legacy Pilot Booth #1 (dev-secret-booth-01)');
     return saveIdentity(
@@ -333,6 +357,7 @@ export function loadIdentity(defaultApiUrl: string = 'http://localhost:4000', al
     );
   }
 
+  console.log('[IdentityService] ℹ️ No identity found on disk. Kiosk is UNPAIRED.');
   activeIdentity = null;
   activeDeviceSecret = null;
   return null;

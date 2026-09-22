@@ -11,6 +11,7 @@ import {
 } from './SyncEngine';
 import { isPrintJobPendingOrPrinting } from './PrintQueueService';
 import { isPathTrackedInActiveLedger } from './RecoveryLedgerService';
+import { isKioskPaired, onKioskPairingSuccess } from './IdentityService';
 
 /**
  * StorageRetentionService — Local Kiosk Media Storage Lifecycle & Purge Daemon
@@ -52,6 +53,7 @@ export interface StorageRetentionOptions {
   criticalFreeDiskGb?: number; // default: 2 GB
   runIntervalMs?: number; // default: 24 hours
   dryRun?: boolean;
+  skipPairingCheck?: boolean;
 }
 
 export interface RetentionCleanupResult {
@@ -201,12 +203,13 @@ export function evaluateThreeKeyLock(
 /**
  * Run orphan and transient janitor to remove abandoned temp files and retake discards.
  */
-export function runOrphanJanitor(directories: string[]): { cleanedCount: number; freedBytes: number } {
+export async function runOrphanJanitor(directories: string[]): Promise<{ cleanedCount: number; freedBytes: number }> {
   let cleanedCount = 0;
   let freedBytes = 0;
   const now = Date.now();
   const ONE_HOUR = 60 * 60 * 1000;
   const TWO_HOURS = 2 * ONE_HOUR;
+  let scannedFiles = 0;
 
   for (const dir of directories) {
     if (!fs.existsSync(dir)) continue;
@@ -219,6 +222,12 @@ export function runOrphanJanitor(directories: string[]): { cleanedCount: number;
     }
 
     for (const entry of entries) {
+      scannedFiles++;
+      // Yield to Windows message pump every 10 files to keep Electron GUI responsive
+      if (scannedFiles % 10 === 0) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
       const fullPath = path.join(dir, entry);
       let stat: fs.Stats | null;
       try {
@@ -292,8 +301,25 @@ function unlinkSafe(targetPath: string): boolean {
 /**
  * Run comprehensive storage retention cleanup cycle.
  */
-export function runRetentionCleanupNow(optionsOverride?: Partial<StorageRetentionOptions>): RetentionCleanupResult {
+export async function runRetentionCleanupNow(optionsOverride?: Partial<StorageRetentionOptions>): Promise<RetentionCleanupResult> {
   const opts = { ...retentionOptions, ...optionsOverride };
+
+  // P0 Emergency Safeguard: Do not run retention cleanup while kiosk is unpaired
+  if (!isKioskPaired() && !opts.skipPairingCheck && process.env.NODE_ENV !== 'test') {
+    console.log('[StorageRetentionService] 🔒 Kiosk is UNPAIRED. Retention cleanup skipped.');
+    return {
+      scannedFiles: 0,
+      purgedFiles: 0,
+      orphansCleaned: 0,
+      skippedUncompletedFiles: 0,
+      skippedActivePrintFiles: 0,
+      freedBytes: 0,
+      freedFormatted: '0 B',
+      diskFreeGb: getFreeDiskSpaceGb(),
+      timestamp: new Date().toISOString(),
+    };
+  }
+
   const retentionDays = opts.retentionDays ?? 7;
   const minFreeDiskGb = opts.minFreeDiskGb ?? 5;
   const now = Date.now();
@@ -307,7 +333,7 @@ export function runRetentionCleanupNow(optionsOverride?: Partial<StorageRetentio
   console.log(`[StorageRetentionService] Starting media retention cleanup (Three-Key Lock: >${retentionDays}d, upload=COMPLETED, print=SETTLED)...`);
 
   // STEP 1: Run Orphan Janitor for transient & abandoned files
-  const janitorResult = runOrphanJanitor(opts.mediaDirectories);
+  const janitorResult = await runOrphanJanitor(opts.mediaDirectories);
   freedBytes += janitorResult.freedBytes;
 
   interface CandidateFile {
@@ -332,11 +358,15 @@ export function runRetentionCleanupNow(optionsOverride?: Partial<StorageRetentio
     }
 
     for (const entry of entries) {
+      scannedCount++;
+      // Yield to Windows message pump every 10 files
+      if (scannedCount % 10 === 0) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
       const fullPath = path.join(dir, entry);
       const stat = statSyncSafe(fullPath);
       if (!stat || !stat.isFile()) continue;
-
-      scannedCount++;
 
       const evaluation = evaluateThreeKeyLock(fullPath, stat, retentionDays);
       const uploadItem = getUploadQueueItemByPath(fullPath);
@@ -430,6 +460,8 @@ export function runRetentionCleanupNow(optionsOverride?: Partial<StorageRetentio
       if (currentDiskFreeGb >= emergencyDiskGb) break;
       if (!fs.existsSync(candidate.filePath)) continue;
 
+      await new Promise((resolve) => setImmediate(resolve));
+
       if (unlinkSafe(candidate.filePath)) {
         purgedCount++;
         freedBytes += candidate.size;
@@ -484,6 +516,24 @@ export function getRetentionStats(): RetentionStats {
   };
 }
 
+let postPairingRetentionTimer: NodeJS.Timeout | null = null;
+
+export function schedulePostPairingRetentionCleanup(delayMs: number = 60000): void {
+  if (postPairingRetentionTimer) {
+    clearTimeout(postPairingRetentionTimer);
+  }
+  console.log(`[StorageRetentionService] Kiosk paired. Scheduling first retention cleanup in ${Math.round(delayMs / 1000)}s...`);
+  postPairingRetentionTimer = setTimeout(async () => {
+    try {
+      if (isKioskPaired()) {
+        await runRetentionCleanupNow();
+      }
+    } catch (err: any) {
+      console.warn(`[StorageRetentionService] Post-pairing cleanup error:`, err.message);
+    }
+  }, delayMs);
+}
+
 /**
  * Initialize Storage Retention Daemon on kiosk startup.
  */
@@ -516,20 +566,35 @@ export function initStorageRetention(options: StorageRetentionOptions): void {
     });
   }
 
-  // Run once shortly after startup (deferred 5 seconds to allow sync engine init)
-  setTimeout(() => {
-    try {
-      runRetentionCleanupNow();
-    } catch (err: any) {
-      console.warn(`[StorageRetentionService] Initial cleanup run error:`, err.message);
-    }
-  }, 5000);
+  // Register pairing listener to schedule initial cleanup 60s post-pairing
+  onKioskPairingSuccess((identity) => {
+    console.log(`[StorageRetentionService] Kiosk paired to ${identity.boothName}. Scheduling first retention cleanup in 60s...`);
+    schedulePostPairingRetentionCleanup(60000);
+  });
 
-  // Schedule daily periodic execution
+  // Startup cleanup: strictly deferred if unpaired; delayed 60s if already paired
+  if (isKioskPaired()) {
+    console.log('[StorageRetentionService] Kiosk is already paired at startup. Deferring initial cleanup by 60s...');
+    setTimeout(async () => {
+      try {
+        if (isKioskPaired()) {
+          await runRetentionCleanupNow();
+        }
+      } catch (err: any) {
+        console.warn(`[StorageRetentionService] Initial startup cleanup error:`, err.message);
+      }
+    }, 60000);
+  } else {
+    console.log('[StorageRetentionService] 🔒 Kiosk is UNPAIRED. Startup cleanup deferred until successful pairing.');
+  }
+
+  // Schedule daily periodic execution (guarded by isKioskPaired)
   const intervalMs = retentionOptions.runIntervalMs || 24 * 60 * 60 * 1000;
-  retentionInterval = setInterval(() => {
+  retentionInterval = setInterval(async () => {
     try {
-      runRetentionCleanupNow();
+      if (isKioskPaired()) {
+        await runRetentionCleanupNow();
+      }
     } catch (err: any) {
       console.warn(`[StorageRetentionService] Periodic cleanup error:`, err.message);
     }
@@ -561,6 +626,14 @@ export function setDiskLockedOut(locked: boolean): void {
  */
 export function evaluateDiskSpaceWatchdog(): DiskWatchdogStatus {
   const freeDiskGb = getFreeDiskSpaceGb();
+  if (!isKioskPaired()) {
+    return {
+      freeDiskGb,
+      watermark: 'NORMAL',
+      isLockedOut: false,
+      purgedFiles: 0,
+    };
+  }
   const warningDiskGb = retentionOptions.warningFreeDiskGb ?? RETENTION_POLICY.WARNING_DISK_GB; // 10 GB
   const emergencyDiskGb = retentionOptions.minFreeDiskGb ?? RETENTION_POLICY.EMERGENCY_DISK_GB; // 5 GB
   const criticalDiskGb = retentionOptions.criticalFreeDiskGb ?? RETENTION_POLICY.CRITICAL_DISK_GB; // 2 GB
@@ -575,8 +648,11 @@ export function evaluateDiskSpaceWatchdog(): DiskWatchdogStatus {
       `[StorageRetentionService] 🚨 CRITICAL DISK WATCHDOG: ${freeDiskGb} GB < ${criticalDiskGb} GB. Maintenance lockout ENGAGED.`
     );
     try {
-      const res = runRetentionCleanupNow();
-      purgedFiles = res.purgedFiles;
+      runRetentionCleanupNow().then((res) => {
+        purgedFiles = res.purgedFiles;
+      }).catch((err) => {
+        console.warn('[StorageRetentionService] Critical watchdog cleanup error:', err?.message);
+      });
     } catch (_) {}
   } else if (freeDiskGb < emergencyDiskGb) {
     watermark = 'EMERGENCY';
@@ -584,8 +660,11 @@ export function evaluateDiskSpaceWatchdog(): DiskWatchdogStatus {
       `[StorageRetentionService] ⚠️ EMERGENCY DISK WATCHDOG: ${freeDiskGb} GB < ${emergencyDiskGb} GB. Running Waterfall Purge.`
     );
     try {
-      const res = runRetentionCleanupNow();
-      purgedFiles = res.purgedFiles;
+      runRetentionCleanupNow().then((res) => {
+        purgedFiles = res.purgedFiles;
+      }).catch((err) => {
+        console.warn('[StorageRetentionService] Emergency watchdog cleanup error:', err?.message);
+      });
     } catch (_) {}
   } else if (freeDiskGb < warningDiskGb) {
     watermark = 'WARNING';

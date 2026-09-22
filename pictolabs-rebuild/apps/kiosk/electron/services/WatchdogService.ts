@@ -135,7 +135,10 @@ export function runWatchdogCycle(): {
 
   // 3. Priority 3: Session Watchdog (Inactivity)
   try {
-    const isCustomerScreen = currentScreen !== 'welcome' && currentScreen !== 'admin';
+    const isCustomerScreen =
+      currentScreen !== 'welcome' &&
+      currentScreen !== 'admin' &&
+      currentScreen !== 'activation';
     const effectiveTimeout = currentScreen === 'capture' ? options.captureTimeoutMs : options.sessionTimeoutMs;
     const idleTime = Date.now() - lastActivityTimestamp;
 

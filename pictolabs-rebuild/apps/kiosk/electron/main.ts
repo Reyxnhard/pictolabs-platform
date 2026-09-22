@@ -191,7 +191,7 @@ app.whenReady().then(() => {
 
   // Register Kiosk Identity, DPAPI Storage, & Provisioning Handlers (Phase 3.3)
   registerIdentityHandlers();
-  const identity = loadIdentity(isDev ? 'http://localhost:4000' : 'https://api.pictolabs.id');
+  const identity = loadIdentity(isDev ? 'http://localhost:4000' : 'https://api.pictolabs.id', isDev);
   const activeSecret = getActiveDeviceSecret() || (isDev ? 'dev-secret-booth-01' : '');
 
   registerSyncHandlers({
@@ -211,7 +211,7 @@ app.whenReady().then(() => {
   registerPrinterMonitorHandlers();
   startPrinterMonitor(5000);
 
-  // Initialize Dual-Tier 7-Day Storage Retention Daemon
+  // Dual-Tier 7-Day Storage Retention Daemon (guarded by P0 unpaired protection)
   initStorageRetention({
     mediaDirectories: [CAPTURES_DIR, COMPOSITES_DIR, VIDEOS_DIR],
     retentionDays: 7,
