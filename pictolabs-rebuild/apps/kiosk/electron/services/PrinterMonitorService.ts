@@ -27,8 +27,8 @@ let cachedHardwareStatus: PrinterHardwareStatus = {
   connected: true,
   ready: true,
   status: 'READY',
-  name: 'Default Printer',
-  message: 'Inisialisasi printer...',
+  name: 'DS-RX1',
+  message: 'Printer siap mencetak',
   lastCheckedAt: new Date().toISOString(),
 };
 
@@ -43,14 +43,19 @@ function queryWin32PrinterState(printerName: string): Promise<{
   detectedErrorState: number;
   extendedPrinterStatus: number;
   workOffline: boolean;
+  name?: string;
   rawJson?: any;
 }> {
   return new Promise((resolve) => {
     const escapedName = printerName.replace(/'/g, "''");
     const script = `
+      $ProgressPreference = 'SilentlyContinue'
       $p = Get-CimInstance -ClassName Win32_Printer -Filter "Name = '${escapedName}'" -ErrorAction SilentlyContinue
       if (-not $p) {
-        $p = Get-CimInstance -ClassName Win32_Printer | Where-Object { $_.Default -eq $true }
+        $p = Get-CimInstance -ClassName Win32_Printer | Where-Object { $_.Name -eq '${escapedName}' -or $_.DriverName -like '*DS-RX1*' -or $_.DriverName -like '*RX1*' } | Select-Object -First 1
+      }
+      if (-not $p) {
+        $p = Get-CimInstance -ClassName Win32_Printer | Where-Object { $_.Default -eq $true } | Select-Object -First 1
       }
       if ($p) {
         [PSCustomObject]@{
@@ -67,9 +72,10 @@ function queryWin32PrinterState(printerName: string): Promise<{
       }
     `;
 
+    const b64 = Buffer.from(script, 'utf16le').toString('base64');
     exec(
-      `powershell -NoProfile -NonInteractive -Command "${script.replace(/\n/g, ' ')}"`,
-      { timeout: 4000 },
+      `powershell -NoProfile -NonInteractive -EncodedCommand ${b64}`,
+      { timeout: 8000 },
       (err, stdout) => {
         if (err || !stdout.trim()) {
           resolve({ connected: false, detectedErrorState: 0, extendedPrinterStatus: 0, workOffline: true });
@@ -88,6 +94,7 @@ function queryWin32PrinterState(printerName: string): Promise<{
             detectedErrorState: Number(parsed.DetectedErrorState || 0),
             extendedPrinterStatus: Number(parsed.ExtendedPrinterStatus || 0),
             workOffline: Boolean(parsed.WorkOffline),
+            name: parsed.Name,
             rawJson: parsed,
           });
         } catch (_) {
@@ -98,87 +105,101 @@ function queryWin32PrinterState(printerName: string): Promise<{
   });
 }
 
+let activeHardwarePromise: Promise<PrinterHardwareStatus> | null = null;
+
 /**
  * Perform a hardware health check cycle.
  */
 export async function checkPrinterHardware(): Promise<PrinterHardwareStatus> {
-  const now = new Date().toISOString();
-
-  // Bypass Mode for Dev / Testing
-  if (getIsBypassMode()) {
-    cachedHardwareStatus = {
-      connected: true,
-      ready: true,
-      status: 'READY',
-      name: 'Virtual DNP DS-RX1 (Dev Bypass)',
-      message: 'Printer siap (Bypass Mode)',
-      lastCheckedAt: now,
-    };
-    return cachedHardwareStatus;
+  if (activeHardwarePromise) {
+    return activeHardwarePromise;
   }
 
-  const targetPrinter = getDefaultPrinterName() || 'DNP DS-RX1';
-  const query = await queryWin32PrinterState(targetPrinter);
+  activeHardwarePromise = (async () => {
+    try {
+      const now = new Date().toISOString();
 
-  if (!query.connected) {
-    consecutiveErrorCount++;
-    if (consecutiveErrorCount >= DEBOUNCE_THRESHOLD) {
+      // Bypass Mode for Dev / Testing
+      if (getIsBypassMode()) {
+        cachedHardwareStatus = {
+          connected: true,
+          ready: true,
+          status: 'READY',
+          name: 'Virtual DNP DS-RX1 (Dev Bypass)',
+          message: 'Printer siap (Bypass Mode)',
+          lastCheckedAt: now,
+        };
+        return cachedHardwareStatus;
+      }
+
+      const targetPrinter = getDefaultPrinterName() || 'DS-RX1';
+      const query = await queryWin32PrinterState(targetPrinter);
+
+      if (!query.connected) {
+        consecutiveErrorCount++;
+        if (consecutiveErrorCount >= DEBOUNCE_THRESHOLD) {
+          cachedHardwareStatus = {
+            connected: false,
+            ready: false,
+            status: 'OFFLINE',
+            name: query.name || targetPrinter,
+            message: 'Printer tidak terhubung atau kabel USB terputus',
+            errorCode: 'PRINTER_OFFLINE',
+            lastCheckedAt: now,
+          };
+        }
+        return cachedHardwareStatus;
+      }
+
+      // Reset error debounce counter when connection is confirmed
+      consecutiveErrorCount = 0;
+
+      // Evaluate Win32 DetectedErrorState and PrinterState bitmasks
+      // DetectedErrorState: 4: No Paper, 6: No Toner/Ribbon, 7: Door Open, 8: Jammed
+      let statusCode: PrinterHardwareStatusCode = 'READY';
+      let message = 'Printer siap mencetak';
+      let isReady = true;
+
+      if (query.detectedErrorState === 8) {
+        statusCode = 'PAPER_JAM';
+        message = 'Kertas tersangkut pada printer (Paper Jam)';
+        isReady = false;
+      } else if (query.detectedErrorState === 4 || query.detectedErrorState === 6) {
+        statusCode = 'PAPER_OUT';
+        message = 'Kertas atau ribbon printer habis (Paper/Ribbon Out)';
+        isReady = false;
+      } else if (query.detectedErrorState === 7) {
+        statusCode = 'DOOR_OPEN';
+        message = 'Penutup printer terbuka (Door Open)';
+        isReady = false;
+      } else if (query.detectedErrorState === 10) {
+        statusCode = 'USER_INTERVENTION';
+        message = 'Printer membutuhkan intervensi teknisi';
+        isReady = false;
+      } else if (query.detectedErrorState !== 0 && query.detectedErrorState !== 2) {
+        statusCode = 'DRIVER_ERROR';
+        message = `Status driver error: Code ${query.detectedErrorState}`;
+        isReady = false;
+      }
+
       cachedHardwareStatus = {
-        connected: false,
-        ready: false,
-        status: 'OFFLINE',
-        name: targetPrinter,
-        message: 'Printer tidak terhubung atau kabel USB terputus',
-        errorCode: 'PRINTER_OFFLINE',
+        connected: true,
+        ready: isReady,
+        status: statusCode,
+        name: query.name || targetPrinter,
+        message,
+        errorCode: statusCode !== 'READY' ? statusCode : undefined,
+        rawState: query.detectedErrorState,
         lastCheckedAt: now,
       };
+
+      return cachedHardwareStatus;
+    } finally {
+      activeHardwarePromise = null;
     }
-    return cachedHardwareStatus;
-  }
+  })();
 
-  // Reset error debounce counter when connection is confirmed
-  consecutiveErrorCount = 0;
-
-  // Evaluate Win32 DetectedErrorState and PrinterState bitmasks
-  // DetectedErrorState: 4: No Paper, 6: No Toner/Ribbon, 7: Door Open, 8: Jammed
-  let statusCode: PrinterHardwareStatusCode = 'READY';
-  let message = 'Printer siap mencetak';
-  let isReady = true;
-
-  if (query.detectedErrorState === 8) {
-    statusCode = 'PAPER_JAM';
-    message = 'Kertas tersangkut pada printer (Paper Jam)';
-    isReady = false;
-  } else if (query.detectedErrorState === 4 || query.detectedErrorState === 6) {
-    statusCode = 'PAPER_OUT';
-    message = 'Kertas atau ribbon printer habis (Paper/Ribbon Out)';
-    isReady = false;
-  } else if (query.detectedErrorState === 7) {
-    statusCode = 'DOOR_OPEN';
-    message = 'Penutup printer terbuka (Door Open)';
-    isReady = false;
-  } else if (query.detectedErrorState === 10) {
-    statusCode = 'USER_INTERVENTION';
-    message = 'Printer membutuhkan intervensi teknisi';
-    isReady = false;
-  } else if (query.detectedErrorState !== 0 && query.detectedErrorState !== 2) {
-    statusCode = 'DRIVER_ERROR';
-    message = `Status driver error: Code ${query.detectedErrorState}`;
-    isReady = false;
-  }
-
-  cachedHardwareStatus = {
-    connected: true,
-    ready: isReady,
-    status: statusCode,
-    name: targetPrinter,
-    message,
-    errorCode: statusCode !== 'READY' ? statusCode : undefined,
-    rawState: query.detectedErrorState,
-    lastCheckedAt: now,
-  };
-
-  return cachedHardwareStatus;
+  return activeHardwarePromise;
 }
 
 /**

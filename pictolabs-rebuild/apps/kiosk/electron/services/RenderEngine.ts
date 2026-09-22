@@ -81,18 +81,26 @@ const DEFAULT_FRAMES: Record<string, FrameConfig> = {
 
 // Simple CSS-filter-like operations via Sharp
 const FILTER_PRESETS: Record<string, (img: Sharp) => Sharp> = {
-  none: (img) => img,
-  grayscale: (img) => img.grayscale(),
+  // Canonical FilterScreen UI IDs
+  original: (img) => img,
+  bw: (img) =>
+    img.grayscale().linear(1.4, -30),
   sepia: (img) =>
     img.tint({ r: 112, g: 66, b: 20 }),
-  warm: (img) =>
-    img.modulate({ saturation: 1.2 }).tint({ r: 255, g: 200, b: 150 }),
-  cool: (img) =>
-    img.modulate({ saturation: 0.9 }).tint({ r: 150, g: 200, b: 255 }),
   vivid: (img) =>
     img.modulate({ saturation: 1.5, brightness: 1.05 }),
+  cool: (img) =>
+    img.modulate({ saturation: 0.9 }).tint({ r: 150, g: 200, b: 255 }),
+  vintage: (img) =>
+    img.modulate({ saturation: 0.85, brightness: 1.1 }).linear(0.9, 10),
+
+  // Backward-compatibility preset aliases
+  none: (img) => img,
+  grayscale: (img) => img.grayscale(),
   bw_high_contrast: (img) =>
     img.grayscale().linear(1.4, -30),
+  warm: (img) =>
+    img.modulate({ saturation: 1.2 }).tint({ r: 255, g: 200, b: 150 }),
 };
 
 interface RenderEngineConfig {

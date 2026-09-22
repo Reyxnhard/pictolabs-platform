@@ -9,6 +9,19 @@ import { FRAME_DESIGNS } from './FrameDesignScreen';
 
 type PreviewMode = 'photo' | 'live-photo' | 'gif';
 
+const FILTER_STYLES: Record<string, string> = {
+  original: 'none',
+  none: 'none',
+  bw: 'grayscale(100%) contrast(115%)',
+  bw_high_contrast: 'grayscale(100%) contrast(115%)',
+  grayscale: 'grayscale(100%)',
+  sepia: 'sepia(60%) saturate(130%)',
+  vivid: 'saturate(170%) contrast(110%)',
+  cool: 'hue-rotate(180deg) saturate(110%)',
+  vintage: 'contrast(90%) brightness(110%) saturate(85%)',
+  warm: 'sepia(30%) saturate(120%)',
+};
+
 export default function QRScreen({ navigate, session }: ScreenProps) {
   // Countdown 1 menit (60 detik) sesuai permintaan pengguna
   const [countdown, setCountdown] = useState(60);
@@ -47,6 +60,9 @@ export default function QRScreen({ navigate, session }: ScreenProps) {
   // Resolve frame design theme
   const selectedDesign =
     FRAME_DESIGNS.find((d) => d.id === session.frameDesignId) || FRAME_DESIGNS[0];
+
+  // Resolve visual filter styling for live interactive preview
+  const activeFilterStyle = FILTER_STYLES[session.filter || 'original'] || 'none';
 
   // Available live video clips
   const videoClips = session.liveVideoPaths && session.liveVideoPaths.length > 0
@@ -395,7 +411,8 @@ export default function QRScreen({ navigate, session }: ScreenProps) {
                       <img
                         src={photoUrl}
                         alt={`Pose ${idx + 1}`}
-                        className="w-full h-full object-cover"
+                        className="w-full h-full object-cover transition-all duration-300"
+                        style={{ filter: activeFilterStyle }}
                       />
                     </div>
                   ))}
@@ -417,6 +434,7 @@ export default function QRScreen({ navigate, session }: ScreenProps) {
                           src={sessionPhotos[slotIdx % sessionPhotos.length]}
                           alt={`Live Pose ${slotIdx + 1}`}
                           className="w-full h-full object-cover"
+                          style={{ filter: activeFilterStyle }}
                         />
 
                         {/* Layer 2: Video playback loop over the still photo */}
@@ -456,6 +474,7 @@ export default function QRScreen({ navigate, session }: ScreenProps) {
                       src={sessionPhotos[gifCurrentPose]}
                       alt="Looping Boomerang GIF"
                       className="w-full h-full object-cover transition-opacity duration-150"
+                      style={{ filter: activeFilterStyle }}
                     />
                     <div className="absolute top-1.5 right-1.5 px-2 py-0.5 rounded bg-rose-600/90 text-white text-[8px] font-black uppercase tracking-wider animate-pulse">
                       GIF LOOP
@@ -468,6 +487,7 @@ export default function QRScreen({ navigate, session }: ScreenProps) {
                       src={sessionPhotos[(gifCurrentPose + 1) % sessionPhotos.length]}
                       alt="Looping Preview 2"
                       className="w-full h-full object-cover opacity-85"
+                      style={{ filter: activeFilterStyle }}
                     />
                   </div>
 
@@ -477,6 +497,7 @@ export default function QRScreen({ navigate, session }: ScreenProps) {
                       src={sessionPhotos[(gifCurrentPose + 2) % sessionPhotos.length]}
                       alt="Looping Preview 3"
                       className="w-full h-full object-cover opacity-85"
+                      style={{ filter: activeFilterStyle }}
                     />
                   </div>
                 </>
@@ -502,7 +523,7 @@ export default function QRScreen({ navigate, session }: ScreenProps) {
 
           {/* Bottom Preview Helper Bar */}
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-medium">
-            <span>Tema Frame: <strong className="text-slate-800">{selectedDesign.name}</strong></span>
+            <span>Tema Frame: <strong className="text-slate-800">{selectedDesign.name}</strong> • Filter: <strong className="text-slate-800 uppercase">{session.filter || 'ORIGINAL'}</strong></span>
             <span className="flex items-center gap-1">
               <Sparkles className="w-3.5 h-3.5 text-amber-500" />
               <span>Semua format (Foto, Live Photo, & GIF) masuk dalam softfile</span>

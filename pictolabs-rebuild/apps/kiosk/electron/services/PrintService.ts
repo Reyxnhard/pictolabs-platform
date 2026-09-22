@@ -59,12 +59,12 @@ let defaultPrinterName: string | null = null;
 let isBypassMode = true; // Auto-bypass by default when no physical photo printer is connected
 let cachedHealth: PrinterHealth = {
   ready: true,
-  name: 'Detecting...',
+  name: 'DS-RX1',
   code: 'OK',
   message: 'Printer siap',
   checkedAt: 0,
 };
-let isCheckingHealth = false;
+let activeHealthPromise: Promise<PrinterHealth> | null = null;
 let backgroundHealthTimer: NodeJS.Timeout | null = null;
 
 export function getCachedPrinterHealth(): PrinterHealth {
@@ -119,166 +119,165 @@ function autoDetectPrinter(printers: string[]): string | null {
 async function queryPrinterHealth(printerName: string): Promise<PrinterHealth> {
   const now = Date.now();
   // Return cached status if checked within the last 3 seconds
-  if (now - cachedHealth.checkedAt < 3000 && cachedHealth.name === printerName) {
+  if (now - cachedHealth.checkedAt < 3000 && cachedHealth.name === printerName && cachedHealth.checkedAt > 0) {
     return cachedHealth;
   }
 
-  if (isCheckingHealth) return cachedHealth;
-  isCheckingHealth = true;
+  if (activeHealthPromise) {
+    return activeHealthPromise;
+  }
 
-  try {
-    const escaped = printerName.replace(/'/g, "''");
-    const psCmd = `
-      $p = Get-CimInstance Win32_Printer -Filter "Name = '${escaped}'" -ErrorAction SilentlyContinue
-      if (-not $p) {
-        Write-Output "NOT_FOUND"
-        exit
-      }
-      $jobs = Get-PrintJob -PrinterName '${escaped}' -ErrorAction SilentlyContinue
-      $hasJobError = ($jobs | Where-Object { $_.JobStatus -match 'Error|PaperOut|Blocked|UserIntervention' }).Count -gt 0
-      $jobStatuses = @($jobs | ForEach-Object { $_.JobStatus })
-      
-      [PSCustomObject]@{
-        Name = $p.Name
-        WorkOffline = [bool]$p.WorkOffline
-        PrinterStatus = [int]$p.PrinterStatus
-        PrinterState = [int]$p.PrinterState
-        DetectedErrorState = [int]$p.DetectedErrorState
-        ExtendedPrinterStatus = [int]$p.ExtendedPrinterStatus
-        HasJobError = [bool]$hasJobError
-        JobStatuses = $jobStatuses
-      } | ConvertTo-Json -Compress
-    `.replace(/\n/g, ' ');
+  activeHealthPromise = (async () => {
+    try {
+      const escaped = printerName.replace(/'/g, "''");
+      const psCmd = `
+        $ProgressPreference = 'SilentlyContinue'
+        $p = Get-CimInstance Win32_Printer -Filter "Name = '${escaped}'" -ErrorAction SilentlyContinue
+        if (-not $p) {
+          $p = Get-CimInstance Win32_Printer | Where-Object { $_.Name -eq '${escaped}' -or $_.DriverName -like '*DS-RX1*' -or $_.DriverName -like '*RX1*' } | Select-Object -First 1
+        }
+        if (-not $p) {
+          Write-Output "NOT_FOUND"
+          exit
+        }
+        
+        [PSCustomObject]@{
+          Name = $p.Name
+          WorkOffline = [bool]$p.WorkOffline
+          PrinterStatus = [int]$p.PrinterStatus
+          PrinterState = [int]$p.PrinterState
+          DetectedErrorState = [int]$p.DetectedErrorState
+          ExtendedPrinterStatus = [int]$p.ExtendedPrinterStatus
+        } | ConvertTo-Json -Compress
+      `;
 
-    const stdout = await new Promise<string>((resolve) => {
-      exec(`powershell -NoProfile -Command "${psCmd}"`, { timeout: 6000 }, (err, out) => {
-        if (err) resolve('');
-        else resolve((out || '').trim());
+      const b64 = Buffer.from(psCmd, 'utf16le').toString('base64');
+      const stdout = await new Promise<string>((resolve) => {
+        exec(`powershell -NoProfile -NonInteractive -EncodedCommand ${b64}`, { timeout: 8000 }, (err, out) => {
+          if (err) resolve('');
+          else resolve((out || '').trim());
+        });
       });
-    });
 
-    if (!stdout || stdout === 'NOT_FOUND') {
+      if (!stdout || stdout === 'NOT_FOUND') {
+        cachedHealth = {
+          ready: false,
+          name: printerName,
+          code: 'NO_PRINTER',
+          message: 'Printer tidak terhubung ke Windows',
+          checkedAt: now,
+        };
+        return cachedHealth;
+      }
+
+      const data = JSON.parse(stdout);
+      const resolvedName = data.Name || printerName;
+      if (resolvedName && resolvedName !== defaultPrinterName) {
+        defaultPrinterName = resolvedName;
+      }
+      const printerState = Number(data.PrinterState) || 0;
+      const detectedError = Number(data.DetectedErrorState) || 0;
+      const extendedStatus = Number(data.ExtendedPrinterStatus) || 0;
+      const jobStatuses: string[] = Array.isArray(data.JobStatuses) ? data.JobStatuses : [];
+      const jobStatusStr = jobStatuses.join(' ').toLowerCase();
+
+      let code: PrinterHealth['code'] = 'OK';
+      let message = 'Printer siap';
+      let ready = true;
+
+      // Priority 1: Hardware Disconnected / Offline
+      if (data.WorkOffline || (printerState & PRINTER_STATE_OFFLINE) !== 0 || extendedStatus === 7) {
+        code = 'OFFLINE';
+        message = 'Printer offline atau kabel USB terputus';
+        ready = false;
+      }
+      // Priority 2: Door Open
+      else if ((printerState & PRINTER_STATE_DOOR_OPEN) !== 0 || detectedError === 7) {
+        code = 'DOOR_OPEN';
+        message = 'Pintu penutup printer terbuka (Door Open)';
+        ready = false;
+      }
+      // Priority 3: Paper Out
+      else if (
+        (printerState & PRINTER_STATE_PAPER_OUT) !== 0 ||
+        (printerState & PRINTER_STATE_PAPER_PROBLEM) !== 0 ||
+        detectedError === 4 ||
+        jobStatusStr.includes('paperout')
+      ) {
+        code = 'PAPER_OUT';
+        message = 'Kertas foto habis di dalam tray (Paper Out)';
+        ready = false;
+      }
+      // Priority 4: Ribbon / Toner Out
+      else if (
+        (printerState & PRINTER_STATE_NO_TONER) !== 0 ||
+        detectedError === 6 ||
+        jobStatusStr.includes('toner') ||
+        jobStatusStr.includes('ribbon')
+      ) {
+        code = 'RIBBON_OUT';
+        message = 'Pita ribbon habis / perlu diganti (Ribbon Out)';
+        ready = false;
+      }
+      // Priority 5: Paper Jam
+      else if (
+        (printerState & PRINTER_STATE_PAPER_JAM) !== 0 ||
+        detectedError === 8 ||
+        jobStatusStr.includes('jam')
+      ) {
+        code = 'JAMMED';
+        message = 'Kertas macet di dalam printer (Paper Jam)';
+        ready = false;
+      }
+      // Priority 6: Spooler Error or User Intervention Required
+      else if (
+        (printerState & PRINTER_STATE_USER_INTERVENTION) !== 0 ||
+        (printerState & PRINTER_STATE_ERROR) !== 0 ||
+        extendedStatus === 9 ||
+        data.HasJobError
+      ) {
+        code = 'ERROR';
+        message = 'Printer membutuhkan intervensi operator (Error Spooler)';
+        ready = false;
+      }
+      // Priority 7: Low Paper Warning (Still Ready to Print)
+      else if (
+        (printerState & PRINTER_STATE_TONER_LOW) !== 0 ||
+        detectedError === 3
+      ) {
+        code = 'LOW_PAPER';
+        message = 'Kertas atau pita ribbon hampir habis (< 20 lembar)';
+        ready = true;
+      }
+      // Priority 8: Busy / Printing
+      else if (
+        (printerState & PRINTER_STATE_BUSY) !== 0 ||
+        (printerState & PRINTER_STATE_PRINTING) !== 0 ||
+        data.PrinterStatus === 4
+      ) {
+        code = 'BUSY';
+        message = 'Sedang memproses antrean cetak...';
+        ready = true;
+      }
+
+      cachedHealth = { ready, name: resolvedName, code, message, checkedAt: now };
+      return cachedHealth;
+    } catch {
+      // If query fails, fall back to basic readiness to not brick kiosk
       cachedHealth = {
-        ready: false,
+        ready: true,
         name: printerName,
-        code: 'NO_PRINTER',
-        message: 'Printer tidak terhubung ke Windows',
+        code: 'OK',
+        message: 'Status normal',
         checkedAt: now,
       };
       return cachedHealth;
+    } finally {
+      activeHealthPromise = null;
     }
+  })();
 
-    const data = JSON.parse(stdout);
-    const printerState = Number(data.PrinterState) || 0;
-    const detectedError = Number(data.DetectedErrorState) || 0;
-    const extendedStatus = Number(data.ExtendedPrinterStatus) || 0;
-    const jobStatuses: string[] = Array.isArray(data.JobStatuses) ? data.JobStatuses : [];
-    const jobStatusStr = jobStatuses.join(' ').toLowerCase();
-
-    let code: PrinterHealth['code'] = 'OK';
-    let message = 'Printer siap';
-    let ready = true;
-
-    // Priority 1: Offline / Disconnected
-    if (
-      data.WorkOffline === true ||
-      extendedStatus === 7 ||
-      (printerState & PRINTER_STATE_OFFLINE) !== 0 ||
-      (printerState & PRINTER_STATE_NOT_AVAILABLE) !== 0
-    ) {
-      code = 'OFFLINE';
-      message = 'Printer offline / kabel USB terputus';
-      ready = false;
-    }
-    // Priority 2: Cover / Door Open
-    else if (
-      (printerState & PRINTER_STATE_DOOR_OPEN) !== 0 ||
-      detectedError === 7 ||
-      jobStatusStr.includes('door')
-    ) {
-      code = 'DOOR_OPEN';
-      message = 'Penutup pintu printer terbuka (Door Open)';
-      ready = false;
-    }
-    // Priority 3: Paper Out / Problem
-    else if (
-      (printerState & PRINTER_STATE_PAPER_OUT) !== 0 ||
-      (printerState & PRINTER_STATE_PAPER_PROBLEM) !== 0 ||
-      detectedError === 4 ||
-      jobStatusStr.includes('paperout') ||
-      jobStatusStr.includes('paper out')
-    ) {
-      code = 'PAPER_OUT';
-      message = 'Kertas foto habis di dalam tray (Paper Out)';
-      ready = false;
-    }
-    // Priority 4: Ribbon / Toner Out
-    else if (
-      (printerState & PRINTER_STATE_NO_TONER) !== 0 ||
-      detectedError === 6 ||
-      jobStatusStr.includes('toner') ||
-      jobStatusStr.includes('ribbon')
-    ) {
-      code = 'RIBBON_OUT';
-      message = 'Pita ribbon habis / perlu diganti (Ribbon Out)';
-      ready = false;
-    }
-    // Priority 5: Paper Jam
-    else if (
-      (printerState & PRINTER_STATE_PAPER_JAM) !== 0 ||
-      detectedError === 8 ||
-      jobStatusStr.includes('jam')
-    ) {
-      code = 'JAMMED';
-      message = 'Kertas macet di dalam printer (Paper Jam)';
-      ready = false;
-    }
-    // Priority 6: Spooler Error or User Intervention Required
-    else if (
-      (printerState & PRINTER_STATE_USER_INTERVENTION) !== 0 ||
-      (printerState & PRINTER_STATE_ERROR) !== 0 ||
-      extendedStatus === 9 ||
-      data.HasJobError
-    ) {
-      code = 'ERROR';
-      message = 'Printer membutuhkan intervensi operator (Error Spooler)';
-      ready = false;
-    }
-    // Priority 7: Low Paper Warning (Still Ready to Print)
-    else if (
-      (printerState & PRINTER_STATE_TONER_LOW) !== 0 ||
-      detectedError === 3
-    ) {
-      code = 'LOW_PAPER';
-      message = 'Kertas atau pita ribbon hampir habis (< 20 lembar)';
-      ready = true;
-    }
-    // Priority 8: Busy / Printing
-    else if (
-      (printerState & PRINTER_STATE_BUSY) !== 0 ||
-      (printerState & PRINTER_STATE_PRINTING) !== 0 ||
-      data.PrinterStatus === 4
-    ) {
-      code = 'BUSY';
-      message = 'Sedang memproses antrean cetak...';
-      ready = true;
-    }
-
-    cachedHealth = { ready, name: printerName, code, message, checkedAt: now };
-  } catch {
-    // If query fails, fall back to basic readiness to not brick kiosk
-    cachedHealth = {
-      ready: true,
-      name: printerName,
-      code: 'OK',
-      message: 'Status normal',
-      checkedAt: now,
-    };
-  } finally {
-    isCheckingHealth = false;
-  }
-
-  return cachedHealth;
+  return activeHealthPromise;
 }
 
 /**

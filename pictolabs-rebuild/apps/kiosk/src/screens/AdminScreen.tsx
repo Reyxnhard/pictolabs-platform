@@ -471,6 +471,7 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
             {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
               <button
                 key={digit}
+                id={`btn-pin-${digit}`}
                 disabled={isLocked}
                 onClick={() => handleDigit(digit)}
                 className="h-16 rounded-2xl bg-slate-800/80 hover:bg-slate-700 active:scale-95 disabled:pointer-events-none text-2xl font-semibold transition-all border border-slate-700/60"
@@ -479,6 +480,7 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
               </button>
             ))}
             <button
+              id="btn-pin-clear"
               disabled={isLocked}
               onClick={() => setPin('')}
               className="h-16 rounded-2xl bg-slate-800/40 hover:bg-slate-800 text-xs font-bold uppercase tracking-wider text-slate-400 transition-colors"
@@ -486,6 +488,7 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
               CLEAR
             </button>
             <button
+              id="btn-pin-0"
               disabled={isLocked}
               onClick={() => handleDigit('0')}
               className="h-16 rounded-2xl bg-slate-800/80 hover:bg-slate-700 active:scale-95 text-2xl font-semibold transition-all border border-slate-700/60"
@@ -493,6 +496,7 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
               0
             </button>
             <button
+              id="btn-pin-backspace"
               disabled={isLocked}
               onClick={handleBackspace}
               className="h-16 rounded-2xl bg-slate-800/40 hover:bg-slate-800 text-xs font-bold uppercase tracking-wider text-slate-400 transition-colors"
