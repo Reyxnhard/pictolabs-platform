@@ -43,6 +43,10 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
     typeof window !== 'undefined' && localStorage.getItem('pictolabs-bypass-printer') !== 'false';
 
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const hasInitiatedRef = useRef<boolean>(false);
+  const isRequestingRef = useRef<boolean>(false);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
 
   // ─── 1. Check Hardware Printer Health on Mount ──────────────
   useEffect(() => {
@@ -61,6 +65,12 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
 
   // ─── 2. Request Dynamic QRIS ────────────────────────────────
   const requestQRIS = useCallback(async () => {
+    if (isRequestingRef.current) {
+      console.log('[PaymentScreen] QRIS request already in progress, skipping duplicate.');
+      return;
+    }
+    isRequestingRef.current = true;
+
     // Block if printer is not ready or paper roll is depleted (<= 2 prints remaining)
     try {
       setIsCheckingPrinter(true);
@@ -73,6 +83,7 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
             `Transaksi dicegah: Kertas foto sedang habis (Sisa: ${paper.remaining} lembar). Silakan hubungi staf/operator.`
           );
           setIsCheckingPrinter(false);
+          isRequestingRef.current = false;
           return;
         }
       }
@@ -85,6 +96,7 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
             `Transaksi dicegah: ${hw.message || 'Printer sedang bermasalah atau offline'}`
           );
           setIsCheckingPrinter(false);
+          isRequestingRef.current = false;
           return;
         }
       }
@@ -96,6 +108,7 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
           `Transaksi dicegah: ${health.message || 'Printer sedang offline atau kehabisan kertas/tinta'}`
         );
         setIsCheckingPrinter(false);
+        isRequestingRef.current = false;
         return;
       }
     } catch (e) {
@@ -110,7 +123,7 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
     try {
       const res = await kiosk.payment.createQRIS({
         amount: price,
-        productName: session.productName || session.frameName || 'Photostrip 2R',
+        productName: sessionRef.current.productName || sessionRef.current.frameName || 'Photostrip 2R',
       });
 
       if (!res.success || !res.qrisString) {
@@ -141,48 +154,80 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
       console.error('[PaymentScreen] Error creating QRIS:', err);
       setErrorMessage(err.message || 'Gagal menghubungi gerbang pembayaran');
       setPaymentState('ERROR');
+    } finally {
+      isRequestingRef.current = false;
     }
-  }, [price, session.productName, session.frameName, isBypass]);
+  }, [price, isBypass, updateSession]);
 
   // ─── 3. Crash Recovery & Auto-initiate on Mount ────────────
   useEffect(() => {
+    if (hasInitiatedRef.current) return;
+    hasInitiatedRef.current = true;
+
     const savedOrderId = localStorage.getItem('pictolabs-active-order-id');
     if (savedOrderId) {
       // Check status of previous order
       kiosk.payment
         .checkStatus(savedOrderId)
-        .then((res) => {
+        .then(async (res) => {
           if (res.paid) {
             console.log('[PaymentScreen] Found settled previous order:', savedOrderId);
             localStorage.removeItem('pictolabs-active-order-id');
-            const sid = res.sessionId || session.sessionId;
+            const sid = res.sessionId || sessionRef.current.sessionId;
             if (sid) {
               updateSession({ sessionId: sid });
               kiosk.recovery?.checkpoint?.(sid, 'PAYMENT_SETTLED', 0, {
                 orderId: savedOrderId,
                 price,
-                productId: session.productId,
-                productName: session.productName || session.frameName,
-                frameId: session.frameId,
-                frameName: session.frameName,
+                productId: sessionRef.current.productId,
+                productName: sessionRef.current.productName || sessionRef.current.frameName,
+                frameId: sessionRef.current.frameId,
+                frameName: sessionRef.current.frameName,
               }).catch(() => {});
             }
             setPaymentState('SETTLED');
             setTimeout(() => navigate('frame-design'), 1500);
+          } else if (res.status === 'PENDING' && res.expiresAt && new Date(res.expiresAt).getTime() > Date.now()) {
+            // An active pending order exists and has not expired! Resume awaiting payment with this order.
+            console.log('[PaymentScreen] Resuming active pending order:', savedOrderId);
+            setOrderId(savedOrderId);
+            const remainingSeconds = Math.max(10, Math.floor((new Date(res.expiresAt).getTime() - Date.now()) / 1000));
+            setTimeLeft(remainingSeconds);
+            if (res.qrisString) {
+              try {
+                const url = await QRCode.toDataURL(res.qrisString, {
+                  width: 380,
+                  margin: 1,
+                  color: { dark: '#0f172a', light: '#ffffff' },
+                  errorCorrectionLevel: 'M',
+                });
+                setQrDataUrl(url);
+                setPaymentState('AWAITING_PAYMENT');
+              } catch {
+                localStorage.removeItem('pictolabs-active-order-id');
+                requestQRIS();
+              }
+            } else {
+              localStorage.removeItem('pictolabs-active-order-id');
+              requestQRIS();
+            }
           } else {
-            // Expired or abandoned, clear and generate fresh
+            // Truly EXPIRED or abandoned, clear and generate fresh
+            console.log('[PaymentScreen] Previous order expired or invalid, generating fresh QRIS');
             localStorage.removeItem('pictolabs-active-order-id');
             requestQRIS();
           }
         })
-        .catch(() => {
+        .catch((err) => {
+          console.warn('[PaymentScreen] Error checking previous order status, generating fresh QRIS:', err);
           localStorage.removeItem('pictolabs-active-order-id');
           requestQRIS();
         });
     } else {
       requestQRIS();
     }
-  }, [requestQRIS, navigate, session.sessionId, session.productId, session.productName, session.frameId, session.frameName, price, updateSession]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ─── 4. Real-Time WebSocket Listener ────────────────────────
   useEffect(() => {
@@ -190,16 +235,16 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
       console.log('[PaymentScreen] WebSocket onPaymentSettled received:', data);
       if (!orderId || data.orderId === orderId) {
         localStorage.removeItem('pictolabs-active-order-id');
-        const sid = data.sessionId || session.sessionId;
+        const sid = data.sessionId || sessionRef.current.sessionId;
         if (sid) {
           updateSession({ sessionId: sid });
           kiosk.recovery?.checkpoint?.(sid, 'PAYMENT_SETTLED', 0, {
             orderId: data.orderId,
             price,
-            productId: session.productId,
-            productName: session.productName || session.frameName,
-            frameId: session.frameId,
-            frameName: session.frameName,
+            productId: sessionRef.current.productId,
+            productName: sessionRef.current.productName || sessionRef.current.frameName,
+            frameId: sessionRef.current.frameId,
+            frameName: sessionRef.current.frameName,
           }).catch(() => {});
         }
         setPaymentState('SETTLED');
@@ -219,7 +264,7 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
       unsubscribeSettled();
       unsubscribeExpired();
     };
-  }, [orderId, navigate, session.sessionId, session.productId, session.productName, session.frameId, session.frameName, price, updateSession]);
+  }, [orderId, navigate, price, updateSession]);
 
   // ─── 5. Fallback Polling (Every 3 seconds) ──────────────────
   useEffect(() => {
@@ -235,16 +280,16 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
           console.log('[PaymentScreen] Poller detected payment settled:', orderId);
           if (pollingRef.current) clearInterval(pollingRef.current);
           localStorage.removeItem('pictolabs-active-order-id');
-          const sid = res.sessionId || session.sessionId;
+          const sid = res.sessionId || sessionRef.current.sessionId;
           if (sid) {
             updateSession({ sessionId: sid });
             kiosk.recovery?.checkpoint?.(sid, 'PAYMENT_SETTLED', 0, {
               orderId,
               price,
-              productId: session.productId,
-              productName: session.productName || session.frameName,
-              frameId: session.frameId,
-              frameName: session.frameName,
+              productId: sessionRef.current.productId,
+              productName: sessionRef.current.productName || sessionRef.current.frameName,
+              frameId: sessionRef.current.frameId,
+              frameName: sessionRef.current.frameName,
             }).catch(() => {});
           }
           setPaymentState('SETTLED');
@@ -260,7 +305,7 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
-  }, [paymentState, orderId, navigate, session.sessionId, session.productId, session.productName, session.frameId, session.frameName, price, updateSession]);
+  }, [paymentState, orderId, navigate, price, updateSession]);
 
   // ─── 6. Countdown Timer (270s) ──────────────────────────────
   useEffect(() => {

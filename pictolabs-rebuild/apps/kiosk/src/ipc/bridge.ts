@@ -248,6 +248,8 @@ export interface PaymentStatusResult {
   paid: boolean;
   amount: number;
   sessionId?: string;
+  expiresAt?: string;
+  qrisString?: string;
 }
 
 export interface KioskPaymentAPI {

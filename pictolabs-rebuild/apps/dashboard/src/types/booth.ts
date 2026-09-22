@@ -48,12 +48,21 @@ export interface ActivationToken {
   createdAt: string;
 }
 
+export interface BoothConfig {
+  id?: string;
+  boothId?: string;
+  cameraSettings?: string;
+  printerSettings?: string;
+  generalSettings?: string;
+}
+
 export interface Booth {
   id: string;
   name: string;
   branchId: string;
   branch?: Branch | null;
   device?: Device | null;
+  config?: BoothConfig | null;
   activationTokens?: ActivationToken[];
   status: ComputedStatus;
   isMaintenance: boolean;

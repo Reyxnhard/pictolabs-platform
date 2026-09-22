@@ -26,4 +26,12 @@ export const boothsApi = {
     const res = await api.put<{ success: boolean; message: string; boothId: string }>(`/api/booths/${id}/pin`, { newPin });
     return res.data;
   },
+
+  async updateBoothPrice(boothId: string, price: number): Promise<{ success: boolean; message: string; config: any }> {
+    const res = await api.post<{ success: boolean; message: string; config: any }>('/api/booths/push-config', {
+      boothId,
+      config: { price },
+    });
+    return res.data;
+  },
 };
