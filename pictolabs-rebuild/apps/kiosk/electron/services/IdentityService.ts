@@ -312,10 +312,6 @@ export function loadIdentity(defaultApiUrl: string = 'http://localhost:4000', al
         mirrorToSQLite(parsed);
         console.log(`[IdentityService] ✓ Loaded identity from ${filePath}: ${parsed.boothName} (${parsed.boothId})`);
 
-        try {
-          updateSyncCredentials(parsed.apiBaseUrl, activeDeviceSecret, parsed.boothId);
-        } catch (_) {}
-
         return parsed;
       }
     } catch (err: any) {

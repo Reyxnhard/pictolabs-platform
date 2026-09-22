@@ -81,6 +81,53 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
     return () => clearInterval(interval);
   }, [lockoutSeconds]);
 
+  // Authoritative paired identity state (loaded via kiosk.identity.getStatus())
+  const [pairedIdentity, setPairedIdentity] = useState<{ boothId?: string | null; apiBaseUrl?: string | null } | null>(null);
+
+  useEffect(() => {
+    kiosk.identity?.getStatus?.().then((status) => {
+      if (status && status.isPaired) {
+        setPairedIdentity({
+          boothId: status.boothId,
+          apiBaseUrl: status.apiBaseUrl,
+        });
+      }
+    }).catch((err) => {
+      console.warn('[AdminScreen] Failed to read identity status:', err);
+    });
+  }, []);
+
+  const resolveTargetEndpoint = async () => {
+    let activeId = pairedIdentity;
+    if (!activeId?.boothId || !activeId?.apiBaseUrl) {
+      try {
+        const status = await kiosk.identity?.getStatus?.();
+        if (status && status.isPaired) {
+          activeId = {
+            boothId: status.boothId,
+            apiBaseUrl: status.apiBaseUrl,
+          };
+          setPairedIdentity(activeId);
+        }
+      } catch (_) {}
+    }
+
+    const isDev = Boolean((import.meta as any).env?.DEV);
+    const backendUrl =
+      activeId?.apiBaseUrl ||
+      (config as any)?.apiBaseUrl ||
+      ((import.meta as any).env?.VITE_BACKEND_URL as string) ||
+      (isDev ? 'http://localhost:4000' : 'https://api.pictolabs.id');
+
+    const boothIdentifier =
+      activeId?.boothId ||
+      (config as any)?.boothId ||
+      (config as any)?.deviceSecret ||
+      (isDev ? 'dev-secret-booth-01' : '');
+
+    return { backendUrl, boothIdentifier, isDev };
+  };
+
   // ─── PIN Pad Logic (6-Digit Hardened Security) ─────────────
   const handleDigit = (digit: string) => {
     if (lockoutSeconds > 0) return;
@@ -104,8 +151,21 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
     setIsVerifying(true);
 
     try {
-      const backendUrl = ((import.meta as any).env?.VITE_BACKEND_URL as string) || 'http://localhost:4000';
-      const boothIdentifier = (config as any)?.deviceSecret || 'dev-secret-booth-01';
+      const { backendUrl, boothIdentifier, isDev } = await resolveTargetEndpoint();
+
+      if (!backendUrl || !boothIdentifier) {
+        console.error('[AdminScreen] PIN verification halted: missing backendUrl or boothIdentifier in production runtime', {
+          backendUrl,
+          boothIdentifier,
+          isDev,
+        });
+        setPinError(true);
+        setTimeout(() => {
+          setPin('');
+          setPinError(false);
+        }, 800);
+        return;
+      }
 
       const res = await fetch(`${backendUrl}/api/booths/${boothIdentifier}/verify-pin`, {
         method: 'POST',
@@ -130,17 +190,19 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
 
           // Dispatch WhatsApp Alert to Admin
           try {
-            await fetch(`${backendUrl}/api/alerts/test`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                severity: 'CRITICAL',
-                type: 'ERR_KIOSK_PIN_BRUTE_FORCE',
-                title: 'Percobaan Akses Ilegal Panel Teknisi',
-                detail: '3 kali berturut-turut memasukkan PIN salah pada layar kios. Keypad dikunci selama 10 menit.',
-                action: 'Periksa kamera CCTV booth dan pastikan tidak ada pihak yang mencoba membobol sistem.',
-              }),
-            });
+            if (backendUrl) {
+              await fetch(`${backendUrl}/api/alerts/test`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  severity: 'CRITICAL',
+                  type: 'ERR_KIOSK_PIN_BRUTE_FORCE',
+                  title: 'Percobaan Akses Ilegal Panel Teknisi',
+                  detail: '3 kali berturut-turut memasukkan PIN salah pada layar kios. Keypad dikunci selama 10 menit.',
+                  action: 'Periksa kamera CCTV booth dan pastikan tidak ada pihak yang mencoba membobol sistem.',
+                }),
+              });
+            }
           } catch (e) {
             console.warn('[AdminScreen] Failed to dispatch brute force alert:', e);
           }
@@ -292,7 +354,11 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
 
     setIsBypassing(true);
     try {
-      const backendUrl = ((import.meta as any).env?.VITE_BACKEND_URL as string) || 'http://localhost:4000';
+      const { backendUrl } = await resolveTargetEndpoint();
+      if (!backendUrl) {
+        showToast('Gagal mem-bypass: backendUrl tidak ditemukan', 'error');
+        return;
+      }
       const res = await fetch(`${backendUrl}/api/payments/simulate/${targetId.trim()}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

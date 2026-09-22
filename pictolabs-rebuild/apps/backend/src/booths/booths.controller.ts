@@ -59,7 +59,7 @@ export class BoothsController {
     // Relay real-time status change to connected Admin Dashboards
     if (this.kioskGateway?.server) {
       this.kioskGateway.server.to('dashboards').emit('booth_status_changed', {
-        boothId: id,
+        boothId: result.boothId || id,
         status: result.status,
         isMaintenance: result.isMaintenance,
       });
@@ -94,7 +94,7 @@ export class BoothsController {
     // Relay real-time status and platform updates to connected Admin Dashboards
     if (this.kioskGateway?.server) {
       this.kioskGateway.server.to('dashboards').emit('booth_status_changed', {
-        boothId: id,
+        boothId: result.boothId,
         status: result.status,
         isMaintenance: result.isMaintenance,
         lastSeen: result.lastSeen,

@@ -924,6 +924,17 @@ async function syncSessionsToCloud(): Promise<void> {
 function setupSocketConnection(): void {
   if (!config.apiBaseUrl || !config.deviceSecret) return;
 
+  // Single-Socket Guard: Prevent duplicate initialization if socket is active
+  if (socket && (socket.connected || (socket as any).active)) {
+    console.log('[SyncEngine] ℹ️ WebSocket already active, skipping duplicate setup');
+    return;
+  }
+
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
+
   const targetUrl = config.apiBaseUrl;
   
   socket = io(targetUrl, {
@@ -1036,7 +1047,7 @@ async function sendHttpHeartbeat(): Promise<void> {
     }
   } catch {}
 
-  const payload = {
+  const payload: Record<string, any> = {
     appVersion: '1.2.5',
     gitCommit: process.env.GIT_COMMIT || '1457ae6',
     machineName: os.hostname(),
@@ -1044,7 +1055,6 @@ async function sendHttpHeartbeat(): Promise<void> {
     osVersion: `${os.type()} ${os.release()} (${os.arch()})`,
     electronVersion: process.versions.electron || '28.2.0',
     releaseChannel: 'stable',
-    paperRemaining,
   };
 
   try {
@@ -1062,7 +1072,8 @@ async function sendHttpHeartbeat(): Promise<void> {
       const data = (await res.json()) as any;
       console.log(`[SyncEngine] ✓ HTTP Heartbeat sent -> Effective Status: ${data.status} (Maintenance: ${data.isMaintenance})`);
     } else {
-      console.warn(`[SyncEngine] HTTP Heartbeat returned status ${res.status}`);
+      const errText = await res.text().catch(() => '');
+      console.warn(`[SyncEngine] HTTP Heartbeat returned status ${res.status}: ${errText.slice(0, 100)}`);
     }
   } catch (err) {
     console.warn(`[SyncEngine] HTTP Heartbeat network error: ${(err as Error).message}`);

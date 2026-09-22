@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, IsIn } from 'class-validator';
+import { IsString, IsOptional, IsIn, IsNumber } from 'class-validator';
 
 export class BoothHeartbeatDto {
   @ApiPropertyOptional({
@@ -59,4 +59,12 @@ export class BoothHeartbeatDto {
   @IsString()
   @IsIn(['stable', 'beta', 'nightly', 'canary'])
   releaseChannel?: string;
+
+  @ApiPropertyOptional({
+    example: 650,
+    description: 'Remaining physical dye-sub paper prints in printer roll',
+  })
+  @IsOptional()
+  @IsNumber()
+  paperRemaining?: number;
 }
