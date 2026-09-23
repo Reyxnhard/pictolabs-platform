@@ -48,6 +48,7 @@ export interface SessionData {
   liveVideoUrls?: string[];
   gifUrl?: string;
   gifPath?: string;
+  isRecovered?: boolean;
 }
 
 function KioskAppInner() {
@@ -61,7 +62,13 @@ function KioskAppInner() {
   }, []);
 
   const resetSession = useCallback(() => {
+    // 1. Wipe top-level session state completely
     setSession({ photos: [] });
+    // 2. Notify main process to clear camera liveview buffers and state
+    try {
+      kiosk.camera?.resetSession?.().catch(() => {});
+    } catch (_) {}
+    // 3. Reset screen to welcome
     setScreen('welcome');
   }, []);
 
@@ -112,6 +119,7 @@ function KioskAppInner() {
       await kiosk.recovery?.resume?.(rec.sessionId);
       const p = rec.payload;
       updateSession({
+        isRecovered: true,
         sessionId: rec.sessionId,
         productId: p.productId,
         productName: p.productName,

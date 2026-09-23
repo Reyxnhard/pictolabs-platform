@@ -223,16 +223,19 @@ export function updateRecoveryCheckpoint(
     // Refresh expires_at to extend 15 minutes from last active touchpoint
     const expiresAt = new Date(Date.now() + LEDGER_TTL_MS).toISOString();
 
+    const targetStatus = stage === 'COMPLETED' ? 'COMPLETED' : 'ACTIVE';
+
     db.prepare(`
       UPDATE session_recovery_ledger
       SET stage = ?,
+          status = ?,
           last_completed_step = ?,
           payload = ?,
           error_details = COALESCE(?, error_details),
           expires_at = ?,
           updated_at = ?
       WHERE session_id = ? AND status = 'ACTIVE'
-    `).run(stage, step, JSON.stringify(mergedPayload), errorDetails || null, expiresAt, nowIso, sessionId);
+    `).run(stage, targetStatus, step, JSON.stringify(mergedPayload), errorDetails || null, expiresAt, nowIso, sessionId);
 
     console.log(`[RecoveryLedgerService] ✓ Checkpoint saved: ${sessionId} -> Stage: ${stage} (Step: ${step})`);
     return true;

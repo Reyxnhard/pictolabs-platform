@@ -22,7 +22,7 @@ const FILTER_STYLES: Record<string, string> = {
   warm: 'sepia(30%) saturate(120%)',
 };
 
-export default function QRScreen({ navigate, session }: ScreenProps) {
+export default function QRScreen({ navigate, session, resetSession }: ScreenProps) {
   // Countdown 1 menit (60 detik) sesuai permintaan pengguna
   const [countdown, setCountdown] = useState(60);
   const [qrSrc, setQrSrc] = useState<string>('');
@@ -260,12 +260,12 @@ export default function QRScreen({ navigate, session }: ScreenProps) {
       if (session.sessionId) {
         kiosk.recovery?.checkpoint?.(session.sessionId, 'COMPLETED', 0, {}).catch(() => {});
       }
-      navigate('welcome');
+      resetSession();
       return;
     }
     const timer = setInterval(() => setCountdown((c) => c - 1), 1000);
     return () => clearInterval(timer);
-  }, [countdown, navigate, session.sessionId]);
+  }, [countdown, resetSession, session.sessionId]);
 
   const countdownMins = Math.floor(countdown / 60);
   const countdownSecs = (countdown % 60).toString().padStart(2, '0');
@@ -640,7 +640,7 @@ export default function QRScreen({ navigate, session }: ScreenProps) {
                 if (session.sessionId) {
                   kiosk.recovery?.checkpoint?.(session.sessionId, 'COMPLETED', 0, {}).catch(() => {});
                 }
-                navigate('welcome');
+                resetSession();
               }}
               style={{
                 backgroundColor: themeColor,

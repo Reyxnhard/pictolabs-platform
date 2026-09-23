@@ -17,6 +17,7 @@ export interface KioskCameraAPI {
   stopLiveView(): Promise<void>;
   capturePhoto(options?: { mirrorResult?: boolean }): Promise<string>;
   discardCapture(filePath: string): Promise<{ success: boolean }>;
+  resetSession(): Promise<{ success: boolean }>;
   getStatus(): Promise<CameraStatus>;
   onLiveViewFrame(cb: (frame: string) => void): () => void;
 }
@@ -412,6 +413,10 @@ const mockCamera: KioskCameraAPI = {
   },
   async discardCapture(filePath: string) {
     console.log('[MockKiosk] Camera: discardCapture (simulated)', filePath);
+    return { success: true };
+  },
+  async resetSession() {
+    console.log('[MockKiosk] Camera: resetSession (simulated)');
     return { success: true };
   },
   async getStatus() {

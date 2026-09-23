@@ -12,7 +12,7 @@ export interface ScreenProps {
   onOpenAdmin?: () => void;
 }
 
-export default function WelcomeScreen({ navigate, onOpenAdmin }: ScreenProps) {
+export default function WelcomeScreen({ navigate, resetSession, onOpenAdmin }: ScreenProps) {
   const { config } = useKioskConfig();
 
   // Printer Health & Paper Status Validation (Pre-Session Gate)
@@ -70,6 +70,8 @@ export default function WelcomeScreen({ navigate, onOpenAdmin }: ScreenProps) {
       console.warn('[WelcomeScreen] Start blocked: Printer is not ready or paper roll depleted');
       return;
     }
+    // Ensure complete session isolation when customer initiates a new photo session
+    resetSession();
     navigate('product-select');
   };
 

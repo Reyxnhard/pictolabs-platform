@@ -212,6 +212,7 @@ function onCameraDisconnected(): void {
   activeCamera = null;
   cameraStatus.isCanonConnected = false;
   cameraStatus.cameraModel = null;
+  lastLiveViewDataUrl = null; // Clear stale live view frame buffer immediately on disconnect
   if (liveViewInterval) {
     clearInterval(liveViewInterval);
     liveViewInterval = null;
@@ -223,6 +224,8 @@ export function cleanupCamera(): void {
   stopKeepAliveHeartbeat();
   isLiveViewActive = false;
   cameraStatus.isLiveView = false;
+  lastLiveViewDataUrl = null;
+  pendingCaptureResolver = null;
   if (liveViewInterval) {
     clearInterval(liveViewInterval);
     liveViewInterval = null;
@@ -470,8 +473,8 @@ function readKioskConfig(dataDir?: string): any {
           return `data:image/jpeg;base64,${base64Data}`;
         }
 
-        // Mode C fallback: If file download failed, use last LiveView sensor frame
-        if (lastLiveViewDataUrl) {
+        // Mode C fallback: If file download failed, use last LiveView sensor frame (only if camera is active)
+        if (lastLiveViewDataUrl && activeCamera) {
           console.log('[CameraService] Using last LiveView sensor frame as photo fallback');
           let finalData = lastLiveViewDataUrl;
           if (shouldMirror) {
@@ -487,6 +490,8 @@ function readKioskConfig(dataDir?: string): any {
             const base64 = lastLiveViewDataUrl.replace(/^data:image\/\w+;base64,/, '');
             fs.writeFileSync(outputPath, Buffer.from(base64, 'base64'));
           }
+          // Consume once to prevent repeating identical stale frame across subsequent poses
+          lastLiveViewDataUrl = null;
           return finalData;
         }
 
@@ -498,8 +503,10 @@ function readKioskConfig(dataDir?: string): any {
           startLiveViewInterval();
         }
 
-        if (lastLiveViewDataUrl) {
-          return lastLiveViewDataUrl;
+        if (lastLiveViewDataUrl && activeCamera) {
+          const fallback = lastLiveViewDataUrl;
+          lastLiveViewDataUrl = null;
+          return fallback;
         }
       }
     }
@@ -521,6 +528,14 @@ function readKioskConfig(dataDir?: string): any {
   // ─── Discard Capture (Retake cleanup) ──────────────────
   ipcMain.handle('camera:discard-capture', async (_event, filePath: string) => {
     return discardCaptureFile(filePath);
+  });
+
+  // ─── Reset Session Camera State ────────────────────────
+  ipcMain.handle('camera:reset-session', async () => {
+    lastLiveViewDataUrl = null;
+    pendingCaptureResolver = null;
+    console.log('[CameraService] ✓ Session capture state and live view buffer cleared');
+    return { success: true };
   });
 }
 

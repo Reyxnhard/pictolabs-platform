@@ -33,7 +33,10 @@
   "nsis": {
     "oneClick": true,
     "perMachine": true,
-    "createDesktopShortcut": true,
+    "allowElevation": true,
+    "createDesktopShortcut": "always",
+    "createStartMenuShortcut": true,
+    "shortcutName": "Pictolabs Kiosk",
     "runAfterFinish": true
   }
 }

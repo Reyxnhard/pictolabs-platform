@@ -14,7 +14,11 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
     return 3; // Default Photostrip 2R standard
   })();
 
-  const initialPhotos = Array.isArray(session?.photos) ? session.photos : [];
+  // CRITICAL SESSION ISOLATION GUARD:
+  // Only hydrate initial photos if this session is an explicit crash recovery resume!
+  // Normal customer sessions MUST ALWAYS start with empty photos and currentPose = 1.
+  const isRecoveredSession = Boolean(session?.isRecovered);
+  const initialPhotos = (isRecoveredSession && Array.isArray(session?.photos)) ? session.photos : [];
   const initialPose = initialPhotos.length > 0 ? Math.min(initialPhotos.length + 1, totalPoses) : 1;
 
   const [currentPose, setCurrentPose] = useState(initialPose);
@@ -147,6 +151,7 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
     return () => {
       if (unsubscribe) unsubscribe();
       if (fallbackTimer) clearTimeout(fallbackTimer);
+      liveViewSrcRef.current = null;
       kiosk.camera.stopLiveView();
       if (videoRef.current && videoRef.current.srcObject) {
         const stream = videoRef.current.srcObject as MediaStream;

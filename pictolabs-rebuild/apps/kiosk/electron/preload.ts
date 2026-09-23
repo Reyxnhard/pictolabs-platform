@@ -18,6 +18,8 @@ const kioskApi = {
       ipcRenderer.invoke('camera:capture', options),
     discardCapture: (filePath: string): Promise<{ success: boolean }> =>
       ipcRenderer.invoke('camera:discard-capture', filePath),
+    resetSession: (): Promise<{ success: boolean }> =>
+      ipcRenderer.invoke('camera:reset-session'),
 
     getStatus: (): Promise<{ isCanonConnected: boolean; cameraModel: string | null; isLiveView: boolean }> =>
       ipcRenderer.invoke('camera:status'),
