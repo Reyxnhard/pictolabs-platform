@@ -454,6 +454,9 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
     const next = !isAutoBypassPayment;
     setIsAutoBypassPayment(next);
     localStorage.setItem('pictolabs-auto-bypass-payment', String(next));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('pictolabs-auto-bypass-changed'));
+    }
     showToast(
       next
         ? '✓ Auto-Bypass Pembayaran DIAKTIFKAN (Otomatis sukses saat masuk layar QRIS)'

@@ -33,6 +33,8 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [timeLeft, setTimeLeft] = useState<number>(270);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isBypassing, setIsBypassing] = useState<boolean>(false);
+  const [isBypassSettled, setIsBypassSettled] = useState<boolean>(false);
 
   // Printer Health
   const [printerHealth, setPrinterHealth] = useState<PrinterHealth | null>(null);
@@ -47,6 +49,36 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
   const isRequestingRef = useRef<boolean>(false);
   const sessionRef = useRef(session);
   sessionRef.current = session;
+
+  // ─── 0. Offline Settlement Execution Path ───────────────────
+  const executeOfflineBypass = useCallback(() => {
+    console.log('[PaymentScreen] ⚡ Executing Offline Payment Bypass...');
+    setIsBypassing(true);
+    setIsBypassSettled(true);
+
+    const syntheticOrderId = `bypass_offline_${Date.now()}`;
+    const syntheticSessionId =
+      sessionRef.current.sessionId || `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    localStorage.removeItem('pictolabs-active-order-id');
+    setOrderId(syntheticOrderId);
+    updateSession({ sessionId: syntheticSessionId });
+
+    // Ledger checkpoint for crash recovery & offline tracking
+    kiosk.recovery?.checkpoint?.(syntheticSessionId, 'PAYMENT_SETTLED', 0, {
+      orderId: syntheticOrderId,
+      price,
+      productId: sessionRef.current.productId,
+      productName: sessionRef.current.productName || sessionRef.current.frameName || 'Photostrip 2R',
+      frameId: sessionRef.current.frameId,
+      frameName: sessionRef.current.frameName,
+    }).catch(() => {});
+
+    setPaymentState('SETTLED');
+    setTimeout(() => {
+      navigate('frame-design');
+    }, 600);
+  }, [price, updateSession, navigate]);
 
   // ─── 1. Check Hardware Printer Health on Mount ──────────────
   useEffect(() => {
@@ -121,6 +153,10 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
     setErrorMessage(null);
 
     try {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        throw new Error('Jaringan internet sedang offline. Tidak dapat menghubungi server pembayaran.');
+      }
+
       const res = await kiosk.payment.createQRIS({
         amount: price,
         productName: sessionRef.current.productName || sessionRef.current.frameName || 'Photostrip 2R',
@@ -163,6 +199,16 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
   useEffect(() => {
     if (hasInitiatedRef.current) return;
     hasInitiatedRef.current = true;
+
+    // 1. PRE-FLIGHT CHECK: Auto-Bypass enabled?
+    const isAutoBypass =
+      typeof window !== 'undefined' && localStorage.getItem('pictolabs-auto-bypass-payment') === 'true';
+
+    if (isAutoBypass) {
+      console.log('[PaymentScreen] ⚡ Pre-flight Auto-Bypass detected on mount! Skipping QRIS/payment creation entirely.');
+      executeOfflineBypass();
+      return;
+    }
 
     const savedOrderId = localStorage.getItem('pictolabs-active-order-id');
     if (savedOrderId) {
@@ -324,52 +370,41 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
     return () => clearInterval(timer);
   }, [timeLeft, paymentState, orderId]);
 
-  const [isBypassing, setIsBypassing] = useState(false);
-
-  // ─── 7. Bypass Payment (Dev / Testing / Operator) ───────────
+  // ─── 7. Bypass Payment (Dev / Testing / Operator / Manual Error Bypass) ────
   const handleBypassPayment = useCallback(async () => {
-    if (!orderId) return;
-    setIsBypassing(true);
-    try {
-      const backendUrl = ((import.meta as any).env?.VITE_BACKEND_URL as string) || 'http://localhost:4000';
-      const res = await fetch(`${backendUrl}/api/payments/simulate/${orderId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (res.ok) {
-        localStorage.removeItem('pictolabs-active-order-id');
-        setPaymentState('SETTLED');
-        setTimeout(() => navigate('frame-design'), 1500);
-      } else {
-        // Fallback simulation
-        localStorage.removeItem('pictolabs-active-order-id');
-        setPaymentState('SETTLED');
-        setTimeout(() => navigate('frame-design'), 1500);
-      }
-    } catch (e) {
-      console.warn('[PaymentScreen] Bypass simulation fallback:', e);
-      localStorage.removeItem('pictolabs-active-order-id');
-      setPaymentState('SETTLED');
-      setTimeout(() => navigate('frame-design'), 1500);
-    } finally {
-      setIsBypassing(false);
-    }
-  }, [orderId, navigate]);
+    executeOfflineBypass();
+  }, [executeOfflineBypass]);
 
-  // ─── 8. Auto-Bypass Listener (If enabled in Admin Panel) ────
+  // ─── 8. Auto-Bypass Listener (Live Toggling & Error State Recovery) ────
   useEffect(() => {
-    if (paymentState === 'AWAITING_PAYMENT' && orderId) {
+    if (paymentState === 'SETTLED') return;
+
+    const checkAutoBypass = () => {
       const isAutoBypass =
         typeof window !== 'undefined' && localStorage.getItem('pictolabs-auto-bypass-payment') === 'true';
       if (isAutoBypass) {
-        console.log('[PaymentScreen] Auto-Bypass active. Simulating payment settlement in 1.2s...');
-        const timer = setTimeout(() => {
-          handleBypassPayment();
-        }, 1200);
-        return () => clearTimeout(timer);
+        console.log('[PaymentScreen] ⚡ Live Auto-Bypass triggered in state:', paymentState);
+        executeOfflineBypass();
       }
-    }
-  }, [paymentState, orderId, handleBypassPayment]);
+    };
+
+    // Check immediately if state changed (e.g. entering ERROR or AWAITING_PAYMENT)
+    checkAutoBypass();
+
+    // Listen to custom event, storage event, or window refocus (e.g. closing Admin modal)
+    window.addEventListener('pictolabs-auto-bypass-changed', checkAutoBypass);
+    window.addEventListener('storage', checkAutoBypass);
+    window.addEventListener('focus', checkAutoBypass);
+
+    const interval = setInterval(checkAutoBypass, 1000);
+
+    return () => {
+      window.removeEventListener('pictolabs-auto-bypass-changed', checkAutoBypass);
+      window.removeEventListener('storage', checkAutoBypass);
+      window.removeEventListener('focus', checkAutoBypass);
+      clearInterval(interval);
+    };
+  }, [paymentState, executeOfflineBypass]);
 
   // ─── 9. Cancel Payment ──────────────────────────────────────
   const handleCancel = async () => {
@@ -442,12 +477,13 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
 
         <div className="flex items-center gap-3">
           {/* Admin Bypass Button */}
-          {paymentState === 'AWAITING_PAYMENT' && (
+          {(paymentState === 'AWAITING_PAYMENT' || paymentState === 'ERROR') && (
             <button
+              id="btn-header-bypass-payment"
               onClick={handleBypassPayment}
               disabled={isBypassing}
               className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs shadow-lg shadow-amber-500/25 backdrop-blur-md transition-all active:scale-95 cursor-pointer border border-amber-300/40"
-              title="Bypass pembayaran ini langsung (Simulasi Dev/Operator)"
+              title="Bypass pembayaran ini langsung (Simulasi Dev/Operator/Offline)"
             >
               <span>⚡</span>
               <span>{isBypassing ? 'Memproses...' : 'Bypass Bayar'}</span>
@@ -479,6 +515,16 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
 
       {/* Main Content Area */}
       <div className="w-full max-w-xl px-6 flex flex-col items-center">
+        {/* State: INITIAL */}
+        {paymentState === 'INITIAL' && (
+          <div className="bg-white/90 backdrop-blur-xl p-12 rounded-3xl shadow-2xl border border-slate-200 text-center flex flex-col items-center w-full animate-fade-in">
+            <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-4">
+              <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+            </div>
+            <p className="text-slate-500 font-bold text-sm">Menyiapkan pembayaran...</p>
+          </div>
+        )}
+
         {/* State: SETTLED */}
         {paymentState === 'SETTLED' && (
           <div className="bg-white/95 backdrop-blur-xl p-10 rounded-3xl shadow-2xl border-4 border-emerald-400 text-center flex flex-col items-center w-full animate-slide-up">
@@ -486,10 +532,12 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
               <CheckCircle2 className="w-14 h-14" />
             </div>
             <h2 className="font-display text-4xl font-black text-slate-800 mb-2">
-              PEMBAYARAN SUKSES!
+              {isBypassSettled ? 'PEMBAYARAN DI-BYPASS' : 'PEMBAYARAN SUKSES!'}
             </h2>
             <p className="text-slate-500 font-medium text-base mb-4">
-              Terima kasih, pembayaran telah terverifikasi otomatis.
+              {isBypassSettled
+                ? 'Mode Auto-Bypass aktif (Offline/Operator). Melanjutkan ke katalog frame...'
+                : 'Terima kasih, pembayaran telah terverifikasi otomatis.'}
             </p>
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-50 text-emerald-700 text-sm font-semibold">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
@@ -630,21 +678,32 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
             <p className="text-slate-600 text-sm mb-6 leading-relaxed">
               {errorMessage || 'Terjadi kesalahan komunikasi dengan server pembayaran.'}
             </p>
-            <div className="flex gap-4 w-full">
+            <div className="flex flex-col gap-3 w-full">
               <button
-                onClick={handleCancel}
-                className="flex-1 py-3.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm transition-colors"
+                id="btn-error-bypass-payment"
+                onClick={handleBypassPayment}
+                className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-sm flex items-center justify-center gap-2 transition-all shadow-lg shadow-amber-500/20 active:scale-95 cursor-pointer border border-amber-300/40"
               >
-                Kembali
+                <span>⚡</span>
+                <span>Bypass Pembayaran (Lanjut Offline)</span>
               </button>
-              <button
-                onClick={requestQRIS}
-                className="flex-1 py-3.5 px-4 rounded-xl text-white font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95"
-                style={{ backgroundColor: themeColor }}
-              >
-                <RefreshCw className="w-4 h-4" />
-                <span>Coba Lagi</span>
-              </button>
+
+              <div className="flex gap-4 w-full">
+                <button
+                  onClick={handleCancel}
+                  className="flex-1 py-3 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm transition-colors cursor-pointer"
+                >
+                  Kembali
+                </button>
+                <button
+                  onClick={requestQRIS}
+                  className="flex-1 py-3 px-4 rounded-xl text-white font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95 cursor-pointer"
+                  style={{ backgroundColor: themeColor }}
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  <span>Coba Lagi</span>
+                </button>
+              </div>
             </div>
           </div>
         )}

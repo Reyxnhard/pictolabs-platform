@@ -61,6 +61,10 @@ function KioskAppInner() {
     setScreen(next);
   }, []);
 
+  useEffect(() => {
+    (window as any).__kioskNavigate = navigate;
+  }, [navigate]);
+
   const resetSession = useCallback(() => {
     // 1. Wipe top-level session state completely
     setSession({ photos: [] });
