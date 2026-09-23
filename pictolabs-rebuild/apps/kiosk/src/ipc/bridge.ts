@@ -358,6 +358,8 @@ export interface KioskIdentityAPI {
   getStatus(): Promise<KioskIdentityDTO>;
   activate(apiBaseUrl: string, token: string): Promise<{ success: boolean; error?: string; identity?: KioskIdentityDTO }>;
   wipe(): Promise<{ success: boolean }>;
+  verifyAdminPin?(pin: string): Promise<{ verified: boolean; mode?: string }>;
+  saveAdminPin?(pin: string): Promise<{ success: boolean }>;
 }
 
 export interface KioskAPI {
@@ -856,6 +858,12 @@ const mockIdentity: KioskIdentityAPI = {
     return { success: true };
   },
   async wipe() {
+    return { success: true };
+  },
+  async verifyAdminPin(pin: string) {
+    return { verified: pin === '112233' || pin === '885926', mode: 'mock' };
+  },
+  async saveAdminPin() {
     return { success: true };
   },
 };

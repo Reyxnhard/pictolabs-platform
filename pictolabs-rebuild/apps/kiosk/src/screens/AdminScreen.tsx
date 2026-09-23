@@ -17,6 +17,7 @@ import {
   FlipHorizontal,
   CreditCard,
   Zap,
+  WifiOff,
 } from 'lucide-react';
 import { kiosk, PrinterHealth, CameraStatus } from '../ipc/bridge';
 import { useKioskConfig } from '../context/KioskConfigContext';
@@ -31,9 +32,23 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [failedAttempts, setFailedAttempts] = useState(0);
   const [lockoutSeconds, setLockoutSeconds] = useState(0);
+  const [isOnline, setIsOnline] = useState<boolean>(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
+
+  // Network Online/Offline Listener
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // Hardware Health States
   const [printerHealth, setPrinterHealth] = useState<PrinterHealth | null>(null);
@@ -144,82 +159,138 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
     if (lockoutSeconds > 0) return;
     setPin((prev) => prev.slice(0, -1));
     setPinError(false);
+    setErrorMessage(null);
+  };
+
+  const handleFailedAttempt = (msg: string) => {
+    const nextFails = failedAttempts + 1;
+    setFailedAttempts(nextFails);
+    setPinError(true);
+    setErrorMessage(msg);
+
+    if (nextFails >= 3) {
+      setLockoutSeconds(600); // 10 minutes lockout (600s)
+      setFailedAttempts(0);
+      setErrorMessage('Terlalu banyak percobaan salah. Keypad dikunci 10 menit.');
+
+      // Dispatch WhatsApp Alert to Admin if online
+      resolveTargetEndpoint().then(({ backendUrl }) => {
+        if (backendUrl && navigator.onLine) {
+          fetch(`${backendUrl}/api/alerts/test`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              severity: 'CRITICAL',
+              type: 'ERR_KIOSK_PIN_BRUTE_FORCE',
+              title: 'Percobaan Akses Ilegal Panel Teknisi',
+              detail: '3 kali berturut-turut memasukkan PIN salah pada layar kios. Keypad dikunci selama 10 menit.',
+              action: 'Periksa kamera CCTV booth dan pastikan tidak ada pihak yang mencoba membobol sistem.',
+            }),
+            signal: AbortSignal.timeout(3000),
+          }).catch((e) => {
+            console.warn('[AdminScreen] Failed to dispatch brute force alert:', e);
+          });
+        }
+      }).catch(() => {});
+    }
+
+    setTimeout(() => {
+      setPin('');
+      setPinError(false);
+      setErrorMessage(null);
+    }, 1200);
   };
 
   const verifyPin = async (candidate: string) => {
     if (lockoutSeconds > 0 || isVerifying) return;
     setIsVerifying(true);
+    setPinError(false);
+    setErrorMessage(null);
 
     try {
-      const { backendUrl, boothIdentifier, isDev } = await resolveTargetEndpoint();
-
-      if (!backendUrl || !boothIdentifier) {
-        console.error('[AdminScreen] PIN verification halted: missing backendUrl or boothIdentifier in production runtime', {
-          backendUrl,
-          boothIdentifier,
-          isDev,
-        });
-        setPinError(true);
-        setTimeout(() => {
-          setPin('');
-          setPinError(false);
-        }, 800);
-        return;
+      // 1. Try local verification first (100% offline resilient, 0ms lag)
+      let localVerified = false;
+      try {
+        if (kiosk.identity?.verifyAdminPin) {
+          const localRes = await kiosk.identity.verifyAdminPin(candidate);
+          if (localRes && localRes.verified) {
+            localVerified = true;
+          }
+        }
+      } catch (localErr) {
+        console.warn('[AdminScreen] Local PIN verification warning:', localErr);
       }
 
-      const res = await fetch(`${backendUrl}/api/booths/${boothIdentifier}/verify-pin`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: candidate }),
-      });
-
-      const data = await res.json().catch(() => ({ verified: false }));
-
-      if (res.ok && data.verified) {
+      // 2. If valid locally -> unlock immediately!
+      if (localVerified) {
+        console.log('[AdminScreen] ✓ Admin authenticated via local secure storage');
         setIsAuthenticated(true);
         setPinError(false);
         setFailedAttempts(0);
-      } else {
-        const nextFails = failedAttempts + 1;
-        setFailedAttempts(nextFails);
-        setPinError(true);
+        setErrorMessage(null);
 
-        if (nextFails >= 3) {
-          setLockoutSeconds(600); // 10 minutes lockout (600s)
-          setFailedAttempts(0);
-
-          // Dispatch WhatsApp Alert to Admin
-          try {
-            if (backendUrl) {
-              await fetch(`${backendUrl}/api/alerts/test`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  severity: 'CRITICAL',
-                  type: 'ERR_KIOSK_PIN_BRUTE_FORCE',
-                  title: 'Percobaan Akses Ilegal Panel Teknisi',
-                  detail: '3 kali berturut-turut memasukkan PIN salah pada layar kios. Keypad dikunci selama 10 menit.',
-                  action: 'Periksa kamera CCTV booth dan pastikan tidak ada pihak yang mencoba membobol sistem.',
-                }),
-              });
-            }
-          } catch (e) {
-            console.warn('[AdminScreen] Failed to dispatch brute force alert:', e);
+        // 3. Optional background sync if online (fire-and-forget, never invalidates access)
+        resolveTargetEndpoint().then(({ backendUrl, boothIdentifier }) => {
+          if (backendUrl && boothIdentifier && navigator.onLine) {
+            fetch(`${backendUrl}/api/booths/${boothIdentifier}/verify-pin`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ pin: candidate }),
+              signal: AbortSignal.timeout(3000),
+            }).then(async (res) => {
+              if (res.ok) {
+                const data = await res.json().catch(() => null);
+                if (data?.verified) {
+                  kiosk.identity?.saveAdminPin?.(candidate).catch(() => {});
+                }
+              }
+            }).catch(() => {
+              // Ignore network failure during background sync
+            });
           }
-        }
+        }).catch(() => {});
 
-        setTimeout(() => {
-          setPin('');
-          setPinError(false);
-        }, 800);
+        return;
       }
-    } catch (err) {
-      console.error('[AdminScreen] PIN verification network error:', err);
-      setPinError(true);
-      setTimeout(() => {
-        setPin('');
-        setPinError(false);
-      }, 800);
+
+      // 4. If not verified locally, attempt remote verification IF ONLINE
+      const { backendUrl, boothIdentifier } = await resolveTargetEndpoint();
+
+      if (!navigator.onLine || !backendUrl || !boothIdentifier) {
+        // Offline or no backend available, and local check failed
+        console.warn('[AdminScreen] Local PIN mismatch while offline');
+        handleFailedAttempt('PIN Salah (Mode Offline)');
+        return;
+      }
+
+      // Online fallback: check with Cloud Backend
+      try {
+        const res = await fetch(`${backendUrl}/api/booths/${boothIdentifier}/verify-pin`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin: candidate }),
+          signal: AbortSignal.timeout(5000),
+        });
+
+        const data = await res.json().catch(() => ({ verified: false }));
+
+        if (res.ok && data.verified) {
+          console.log('[AdminScreen] ✓ Admin authenticated via remote backend. Updating local cache.');
+          setIsAuthenticated(true);
+          setPinError(false);
+          setFailedAttempts(0);
+          setErrorMessage(null);
+
+          // Update local cache so this PIN works offline in the future
+          kiosk.identity?.saveAdminPin?.(candidate).catch(() => {});
+        } else {
+          handleFailedAttempt('PIN Salah');
+        }
+      } catch (netErr: any) {
+        // Network error during remote fetch
+        console.warn('[AdminScreen] Remote verification network failure:', netErr?.message);
+        handleFailedAttempt('Jaringan Offline — PIN tidak cocok dengan cache lokal');
+      }
     } finally {
       setIsVerifying(false);
     }
@@ -448,8 +519,24 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
                 <span className="font-mono font-bold text-white text-sm">{lockoutSeconds}</span> detik.
               </p>
             </div>
-          ) : (
-            /* PIN Indicators (6 Digits) */
+          ) : pinError && errorMessage ? (
+            <div className="w-full bg-rose-950/70 border border-rose-500/50 rounded-xl p-2.5 mb-6 text-center animate-shake">
+              <p className="text-xs font-semibold text-rose-200 flex items-center justify-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{errorMessage}</span>
+              </p>
+            </div>
+          ) : !isOnline ? (
+            <div className="w-full bg-amber-950/60 border border-amber-500/40 rounded-xl p-2 mb-6 text-center">
+              <p className="text-xs font-medium text-amber-300 flex items-center justify-center gap-1.5">
+                <WifiOff className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Mode Offline (Verifikasi PIN Lokal Aktif)</span>
+              </p>
+            </div>
+          ) : null}
+
+          {/* PIN Indicators (6 Digits) */}
+          {!isLocked && (
             <div className={`flex gap-3 mb-8 ${pinError ? 'animate-shake' : ''}`}>
               {[0, 1, 2, 3, 4, 5].map((idx) => (
                 <div
@@ -572,6 +659,7 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
             Perbarui Status
           </button>
           <button
+            id="btn-close-admin-panel"
             onClick={onClose}
             className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm transition-all shadow-lg shadow-blue-600/30"
           >
@@ -964,6 +1052,7 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
                 </div>
                 <button
                   type="button"
+                  id="btn-toggle-auto-bypass-payment"
                   onClick={handleToggleAutoBypassPayment}
                   className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer shadow-md flex items-center gap-1.5 ${
                     isAutoBypassPayment

@@ -33,6 +33,7 @@ export interface BoothIdentity {
   pairedAt: string;
   updatedAt: string;
   deviceSecretCiphertext: string;
+  adminPinCiphertext?: string;
 }
 
 export interface KioskIdentityDTO {
@@ -177,14 +178,19 @@ function mirrorToSQLite(identity: BoothIdentity): void {
         api_base_url TEXT NOT NULL,
         paired_at TEXT NOT NULL,
         provisioning_version INTEGER NOT NULL DEFAULT 1,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        admin_pin_ciphertext TEXT
       );
     `);
 
+    try {
+      db.exec('ALTER TABLE kiosk_identity ADD COLUMN admin_pin_ciphertext TEXT;');
+    } catch (_) {}
+
     db.prepare(`
       INSERT INTO kiosk_identity (
-        id, booth_id, booth_name, branch_id, branch_name, company_id, location, api_base_url, paired_at, provisioning_version, updated_at
-      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, booth_id, booth_name, branch_id, branch_name, company_id, location, api_base_url, paired_at, provisioning_version, updated_at, admin_pin_ciphertext
+      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         booth_id = excluded.booth_id,
         booth_name = excluded.booth_name,
@@ -195,7 +201,8 @@ function mirrorToSQLite(identity: BoothIdentity): void {
         api_base_url = excluded.api_base_url,
         paired_at = excluded.paired_at,
         provisioning_version = excluded.provisioning_version,
-        updated_at = excluded.updated_at;
+        updated_at = excluded.updated_at,
+        admin_pin_ciphertext = excluded.admin_pin_ciphertext;
     `).run(
       identity.boothId,
       identity.boothName,
@@ -206,7 +213,8 @@ function mirrorToSQLite(identity: BoothIdentity): void {
       identity.apiBaseUrl,
       identity.pairedAt,
       identity.provisioningVersion,
-      identity.updatedAt
+      identity.updatedAt,
+      identity.adminPinCiphertext || null
     );
   } catch (err: any) {
     console.warn('[IdentityService] Failed to mirror identity to SQLite:', err?.message);
@@ -307,6 +315,15 @@ export function loadIdentity(defaultApiUrl: string = 'http://localhost:4000', al
       const raw = fs.readFileSync(filePath, 'utf-8');
       const parsed = JSON.parse(raw) as BoothIdentity;
       if (parsed.boothId && parsed.deviceSecretCiphertext) {
+        // Seed adminPinCiphertext if missing (e.g. pilot booth or default)
+        if (!parsed.adminPinCiphertext) {
+          try {
+            const seedPin = parsed.boothId === '554147f9-c7f7-47fe-966d-fcbf3223fec4' ? '112233' : '885926';
+            parsed.adminPinCiphertext = encryptSecret(seedPin);
+            fs.writeFileSync(filePath, JSON.stringify(parsed, null, 2), 'utf-8');
+            console.log(`[IdentityService] 🛡 Initialized local admin PIN ciphertext for ${parsed.boothName}`);
+          } catch (_) {}
+        }
         activeIdentity = parsed;
         activeDeviceSecret = decryptSecret(parsed.deviceSecretCiphertext);
         mirrorToSQLite(parsed);
@@ -478,6 +495,77 @@ export async function activateKioskWithToken(
 }
 
 /**
+ * Persist encrypted admin PIN locally using Windows DPAPI / safeStorage.
+ */
+export function saveLocalAdminPin(plainPin: string): boolean {
+  if (!plainPin || typeof plainPin !== 'string' || !/^\d{6}$/.test(plainPin)) {
+    return false;
+  }
+
+  const ciphertext = encryptSecret(plainPin);
+
+  if (activeIdentity) {
+    activeIdentity.adminPinCiphertext = ciphertext;
+    activeIdentity.updatedAt = new Date().toISOString();
+
+    const filePath = getIdentityFilePath();
+    try {
+      const tempPath = `${filePath}.${Date.now()}.tmp`;
+      fs.writeFileSync(tempPath, JSON.stringify(activeIdentity, null, 2), 'utf-8');
+      fs.renameSync(tempPath, filePath);
+      mirrorToSQLite(activeIdentity);
+      console.log('[IdentityService] ✓ Admin PIN encrypted and saved locally in identity storage');
+      return true;
+    } catch (err: any) {
+      console.error('[IdentityService] Failed to persist admin PIN ciphertext:', err?.message);
+      return false;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Verify entered 6-digit PIN against local DPAPI-encrypted storage.
+ * Works 100% offline with zero network dependency.
+ */
+export function verifyLocalAdminPin(candidatePin: string): { verified: boolean; mode: string } {
+  if (!candidatePin || typeof candidatePin !== 'string') {
+    return { verified: false, mode: 'invalid-input' };
+  }
+
+  // 1. If active identity has encrypted PIN stored locally
+  if (activeIdentity?.adminPinCiphertext) {
+    try {
+      const storedPin = decryptSecret(activeIdentity.adminPinCiphertext);
+      if (storedPin) {
+        if (storedPin === candidatePin) {
+          return { verified: true, mode: 'local-cached' };
+        }
+        return { verified: false, mode: 'local-mismatch' };
+      }
+    } catch (err: any) {
+      console.warn('[IdentityService] Error decrypting local admin PIN:', err?.message);
+    }
+  }
+
+  // 2. Default & Seed Fallbacks
+  // Standard Pictolabs default PIN is '885926'
+  // Pilot booth customized PIN is '112233'
+  const isDefaultMatch = candidatePin === '885926' || candidatePin === '112233';
+
+  if (isDefaultMatch) {
+    // Opportunistically persist this valid PIN locally so future checks use cached ciphertext
+    try {
+      saveLocalAdminPin(candidatePin);
+    } catch (_) {}
+    return { verified: true, mode: 'local-fallback' };
+  }
+
+  return { verified: false, mode: 'local-mismatch' };
+}
+
+/**
  * Register IPC Handlers for Kiosk Renderer UI
  */
 export function registerIdentityHandlers(): void {
@@ -493,6 +581,14 @@ export function registerIdentityHandlers(): void {
     ipcMain.handle('identity:wipe', async () => {
       wipeIdentity();
       return { success: true };
+    });
+
+    ipcMain.handle('identity:verify-admin-pin', async (_event, candidatePin: string) => {
+      return verifyLocalAdminPin(candidatePin);
+    });
+
+    ipcMain.handle('identity:save-admin-pin', async (_event, pin: string) => {
+      return { success: saveLocalAdminPin(pin) };
     });
   }
 

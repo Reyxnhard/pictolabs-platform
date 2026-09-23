@@ -232,6 +232,10 @@ const kioskApi = {
       ipcRenderer.invoke('identity:activate', apiBaseUrl, token),
     wipe: (): Promise<{ success: boolean }> =>
       ipcRenderer.invoke('identity:wipe'),
+    verifyAdminPin: (pin: string): Promise<{ verified: boolean; mode?: string }> =>
+      ipcRenderer.invoke('identity:verify-admin-pin', pin),
+    saveAdminPin: (pin: string): Promise<{ success: boolean }> =>
+      ipcRenderer.invoke('identity:save-admin-pin', pin),
   },
 
   // ─── System ────────────────────────────────────────────
