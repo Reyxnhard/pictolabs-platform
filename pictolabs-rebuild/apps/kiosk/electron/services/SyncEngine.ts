@@ -485,6 +485,316 @@ export function listSessions(): Session[] {
   return rows.map(rowToSession);
 }
 
+// ─── Session History Center Query Models (Phase 1) ───────────
+export interface KioskSessionHistoryQuery {
+  limit?: number;
+  offset?: number;
+  statusFilter?: 'ALL' | 'PRINT_FAILED' | 'UPLOAD_PENDING' | 'COMPLETED';
+}
+
+export interface KioskSessionHistoryItem {
+  id: string;
+  createdAt: string;
+  frameId: string;
+  filter: string;
+  compositePath?: string;
+  compositeExists: boolean;
+  printStatus: 'pending' | 'printed' | 'failed' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'PENDING';
+  printAttempts: number;
+  lastPrintError?: string | null;
+  uploaded: boolean;
+  uploadStatus: 'PENDING' | 'UPLOADING' | 'COMPLETED' | 'FAILED';
+  uploadAttempts: number;
+  lastUploadError?: string | null;
+  remoteUrl?: string;
+  localStorageState: 'HOT' | 'PRUNED' | 'EVICTED';
+  photoCount: number;
+  hasVideo: boolean;
+}
+
+export function getSessionHistory(query?: KioskSessionHistoryQuery): KioskSessionHistoryItem[] {
+  if (!db) return [];
+  const limit = Math.min(Math.max(query?.limit || 50, 1), 100);
+  const offset = Math.max(query?.offset || 0, 0);
+
+  const rows = db.prepare(`
+    SELECT id, created_at, frame_id, filter, photos, composite_path, 
+           live_video_path, live_video_paths, live_video_url, print_status, 
+           synced, uploaded, remote_url, local_storage_state
+    FROM sessions
+    ORDER BY created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(limit, offset) as any[];
+
+  const stmtPrint = db.prepare(`
+    SELECT status, attempts, last_error 
+    FROM print_queue 
+    WHERE session_id = ? 
+    ORDER BY created_at DESC 
+    LIMIT 1
+  `);
+
+  const stmtUpload = db.prepare(`
+    SELECT 
+      COUNT(*) as total,
+      SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as completed,
+      SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) as failed,
+      SUM(CASE WHEN status = 'UPLOADING' THEN 1 ELSE 0 END) as uploading,
+      MAX(attempts) as max_attempts,
+      MAX(error_message) as last_error
+    FROM upload_queue 
+    WHERE session_id = ?
+  `);
+
+  const results: KioskSessionHistoryItem[] = [];
+
+  for (const row of rows) {
+    const cleanPath = (row.composite_path || '').replace(/^file:\/\/\/?/, '');
+    const compositeExists = Boolean(cleanPath && fs.existsSync(cleanPath));
+
+    let localStorageState: 'HOT' | 'PRUNED' | 'EVICTED' = 'HOT';
+    if (compositeExists) {
+      localStorageState = 'HOT';
+    } else if (row.remote_url && row.remote_url.startsWith('http')) {
+      localStorageState = 'PRUNED';
+    } else {
+      localStorageState = 'EVICTED';
+    }
+
+    // Print status resolution
+    const printRow = stmtPrint.get(row.id) as any;
+    let printStatus: any = row.print_status || 'pending';
+    let printAttempts = 0;
+    let lastPrintError: string | null = null;
+
+    if (printRow) {
+      printStatus = printRow.status;
+      printAttempts = printRow.attempts || 0;
+      lastPrintError = printRow.last_error || null;
+    } else if (row.print_status === 'printed') {
+      printStatus = 'COMPLETED';
+    } else if (row.print_status === 'failed') {
+      printStatus = 'FAILED';
+    }
+
+    // Upload status resolution
+    const uploadStats = stmtUpload.get(row.id) as any;
+    let uploadStatus: 'PENDING' | 'UPLOADING' | 'COMPLETED' | 'FAILED' = 'PENDING';
+    let uploadAttempts = 0;
+    let lastUploadError: string | null = null;
+
+    if (uploadStats && uploadStats.total > 0) {
+      uploadAttempts = uploadStats.max_attempts || 0;
+      lastUploadError = uploadStats.last_error || null;
+      if (uploadStats.failed > 0) {
+        uploadStatus = 'FAILED';
+      } else if (uploadStats.uploading > 0) {
+        uploadStatus = 'UPLOADING';
+      } else if (uploadStats.completed === uploadStats.total) {
+        uploadStatus = 'COMPLETED';
+      } else {
+        uploadStatus = 'PENDING';
+      }
+    } else if (row.uploaded === 1) {
+      uploadStatus = 'COMPLETED';
+    }
+
+    let photoCount = 0;
+    try {
+      const parsedPhotos = JSON.parse(row.photos || '[]');
+      photoCount = Array.isArray(parsedPhotos) ? parsedPhotos.length : 0;
+    } catch (_) {}
+
+    const hasVideo = Boolean(
+      row.live_video_path || 
+      (row.live_video_paths && row.live_video_paths !== '[]' && row.live_video_paths !== '')
+    );
+
+    const item: KioskSessionHistoryItem = {
+      id: row.id,
+      createdAt: row.created_at,
+      frameId: row.frame_id || '2R',
+      filter: row.filter || 'none',
+      compositePath: row.composite_path || undefined,
+      compositeExists,
+      printStatus,
+      printAttempts,
+      lastPrintError,
+      uploaded: Boolean(row.uploaded),
+      uploadStatus,
+      uploadAttempts,
+      lastUploadError,
+      remoteUrl: row.remote_url || undefined,
+      localStorageState,
+      photoCount,
+      hasVideo,
+    };
+
+    // Filter check
+    if (query?.statusFilter && query.statusFilter !== 'ALL') {
+      if (query.statusFilter === 'PRINT_FAILED' && printStatus !== 'FAILED' && printStatus !== 'DEAD_LETTER') {
+        continue;
+      }
+      if (query.statusFilter === 'UPLOAD_PENDING' && uploadStatus === 'COMPLETED') {
+        continue;
+      }
+      if (query.statusFilter === 'COMPLETED' && (printStatus !== 'COMPLETED' || uploadStatus !== 'COMPLETED')) {
+        continue;
+      }
+    }
+
+    results.push(item);
+  }
+
+  return results;
+}
+
+export async function reprintSessionWithDebounce(
+  sessionId: string,
+  copies: number = 1,
+  reason: string = 'OPERATOR_REPRINT'
+): Promise<{ success: boolean; printJobId?: string; error?: string }> {
+  if (!db) return { success: false, error: 'Database not initialized' };
+
+  try {
+    const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId) as any;
+    if (!session) {
+      return { success: false, error: `Sesi tidak ditemukan: ${sessionId}` };
+    }
+
+    // 1. Debounce check: Prevent rapid double-tap if a job for this session is already PENDING or PRINTING
+    const activeJob = db.prepare(`
+      SELECT id, status FROM print_queue 
+      WHERE session_id = ? AND status IN ('PENDING', 'PRINTING')
+      LIMIT 1
+    `).get(sessionId) as any;
+
+    if (activeJob) {
+      return {
+        success: false,
+        error: `Pencetakan untuk sesi ini sedang berlangsung (Status: ${activeJob.status}). Mohon tunggu hingga pekerjaan selesai.`,
+      };
+    }
+
+    // 2. Validate composite path and local asset existence
+    let compositePath = session.composite_path;
+    let cleanPath = (compositePath || '').replace(/^file:\/\/\/?/, '');
+    let fileExists = Boolean(cleanPath && fs.existsSync(cleanPath));
+
+    // 3. Pruned asset check and cloud rehydration
+    if (!fileExists) {
+      if (session.remote_url && session.remote_url.startsWith('http')) {
+        try {
+          const { ensureCompositeOnDisk } = require('./PrintQueueService');
+          const targetPath = cleanPath || path.join(config.dataDir, 'composites', `rehydrated_${sessionId}.jpg`);
+          const rehydrated = await ensureCompositeOnDisk(sessionId, targetPath);
+          if (rehydrated && fs.existsSync(rehydrated)) {
+            cleanPath = rehydrated;
+            fileExists = true;
+          }
+        } catch (rErr: any) {
+          console.warn(`[SyncEngine] Rehydration attempt failed: ${rErr.message}`);
+        }
+      }
+    }
+
+    if (!fileExists) {
+      return {
+        success: false,
+        error: 'File foto cetak (composite) tidak ditemukan di SSD lokal (telah dipruning oleh sistem retensi) dan kiosk tidak dapat mengunduh dari cloud (offline atau file belum terunggah).',
+      };
+    }
+
+    // 4. Delegate to reprintSession in PrintQueueService
+    const { reprintSession } = require('./PrintQueueService');
+    const result = await reprintSession(sessionId, copies);
+
+    if (result.success) {
+      recordSystemEvent(
+        'SESSION_REPRINT',
+        'INFO',
+        'AdminSessionHistory',
+        `Operator melakukan cetak ulang untuk sesi ${sessionId} (${copies} copy). Job ID: ${result.id}. Alasan: ${reason}`
+      );
+      return { success: true, printJobId: result.id };
+    } else {
+      return { success: false, error: result.error || 'Gagal menambahkan pekerjaan cetak ke antrean.' };
+    }
+  } catch (err: any) {
+    console.error('[SyncEngine] Error in reprintSessionWithDebounce:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+export async function forceUploadSession(sessionId: string): Promise<{ success: boolean; enqueuedCount: number; error?: string }> {
+  if (!db) return { success: false, enqueuedCount: 0, error: 'Database not initialized' };
+
+  try {
+    const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId) as any;
+    if (!session) {
+      return { success: false, enqueuedCount: 0, error: `Sesi tidak ditemukan: ${sessionId}` };
+    }
+
+    const now = new Date().toISOString();
+    // 1. Reset any failed, uploading, or pending upload_queue items for this session
+    const resetRes = db.prepare(`
+      UPDATE upload_queue 
+      SET status = 'PENDING', attempts = 0, error_message = NULL, updated_at = ?
+      WHERE session_id = ? AND status != 'COMPLETED'
+    `).run(now, sessionId);
+
+    let enqueuedCount = resetRes.changes;
+
+    // 2. If no non-completed items exist, check if items existed at all
+    const existingCount = db.prepare('SELECT COUNT(*) as c FROM upload_queue WHERE session_id = ?').get(sessionId) as any;
+    if (!existingCount || existingCount.c === 0) {
+      // Re-enqueue composite if exists
+      if (session.composite_path && fs.existsSync(session.composite_path)) {
+        enqueueUpload(sessionId, session.composite_path, 'composite');
+        enqueuedCount++;
+      }
+      // Re-enqueue raw photos
+      try {
+        const photos = JSON.parse(session.photos || '[]');
+        if (Array.isArray(photos)) {
+          for (const p of photos) {
+            const clean = (p || '').replace(/^file:\/\/\/?/, '');
+            if (clean && fs.existsSync(clean)) {
+              enqueueUpload(sessionId, clean, 'raw');
+              enqueuedCount++;
+            }
+          }
+        }
+      } catch (_) {}
+      // Re-enqueue video
+      if (session.live_video_path && fs.existsSync(session.live_video_path)) {
+        enqueueUpload(sessionId, session.live_video_path, 'video');
+        enqueuedCount++;
+      }
+    }
+
+    // 3. Mark session as not uploaded yet so it syncs
+    db.prepare('UPDATE sessions SET uploaded = 0 WHERE id = ?').run(sessionId);
+
+    // 4. Trigger queue worker
+    processUploadQueue().catch((err) =>
+      console.warn('[SyncEngine] Error triggering upload worker in forceUploadSession:', err.message)
+    );
+
+    recordSystemEvent(
+      'SESSION_FORCE_UPLOAD',
+      'INFO',
+      'AdminSessionHistory',
+      `Operator memicu pengunggahan ulang untuk sesi ${sessionId}. Item dimasukkan kembali: ${enqueuedCount}`
+    );
+
+    return { success: true, enqueuedCount };
+  } catch (err: any) {
+    console.error('[SyncEngine] Error in forceUploadSession:', err);
+    return { success: false, enqueuedCount: 0, error: err.message };
+  }
+}
+
 export function enqueueUpload(sessionId: string, filePath: string, fileType: 'composite' | 'raw' | 'video'): void {
   if (!db || !stmtEnqueueUpload) return;
   const filename = path.basename(filePath);
@@ -1155,8 +1465,9 @@ export function registerSyncHandlers(engineConfig: SyncEngineConfig): void {
     );
   }, 4000);
 
-  // ─── IPC: Config Get/Set ───────────────────────────────
-  ipcMain.handle('config:get', async () => {
+  // ─── IPC Handlers ────────────────────────────────────────
+  if (ipcMain && typeof ipcMain.handle === 'function') {
+    ipcMain.handle('config:get', async () => {
     const configPath = path.join(config.dataDir, 'kiosk-config.json');
     try {
       if (fs.existsSync(configPath)) {
@@ -1226,6 +1537,19 @@ export function registerSyncHandlers(engineConfig: SyncEngineConfig): void {
     return resolveLanDownloadUrl(`/d/${sessionId}`, config.apiBaseUrl || 'http://localhost:4000');
   });
 
+  // ─── IPC: Session History Center (Phase 1) ─────────────
+  ipcMain.handle('session:history:list', async (_event, query?: KioskSessionHistoryQuery) => {
+    return getSessionHistory(query);
+  });
+
+  ipcMain.handle('session:history:reprint', async (_event, params: { sessionId: string; copies?: number; reason?: string }) => {
+    return reprintSessionWithDebounce(params?.sessionId, params?.copies || 1, params?.reason || 'OPERATOR_REPRINT');
+  });
+
+  ipcMain.handle('session:history:force-upload', async (_event, params: { sessionId: string }) => {
+    return forceUploadSession(params?.sessionId);
+  });
+
   // ─── IPC: Payment Management ───────────────────────────
   ipcMain.handle(
     'payment:create-qris',
@@ -1286,6 +1610,7 @@ export function registerSyncHandlers(engineConfig: SyncEngineConfig): void {
       return { success: false, error: err.message };
     }
   });
+  }
 }
 
 export function stopSyncEngine(): void {

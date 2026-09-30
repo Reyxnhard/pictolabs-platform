@@ -362,6 +362,38 @@ export interface KioskIdentityAPI {
   saveAdminPin?(pin: string): Promise<{ success: boolean }>;
 }
 
+export interface KioskSessionHistoryQuery {
+  limit?: number;
+  offset?: number;
+  statusFilter?: 'ALL' | 'PRINT_FAILED' | 'UPLOAD_PENDING' | 'COMPLETED';
+}
+
+export interface KioskSessionHistoryItem {
+  id: string;
+  createdAt: string;
+  frameId: string;
+  filter: string;
+  compositePath?: string;
+  compositeExists: boolean;
+  printStatus: 'pending' | 'printed' | 'failed' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'PENDING';
+  printAttempts: number;
+  lastPrintError?: string | null;
+  uploaded: boolean;
+  uploadStatus: 'PENDING' | 'UPLOADING' | 'COMPLETED' | 'FAILED';
+  uploadAttempts: number;
+  lastUploadError?: string | null;
+  remoteUrl?: string;
+  localStorageState: 'HOT' | 'PRUNED' | 'EVICTED';
+  photoCount: number;
+  hasVideo: boolean;
+}
+
+export interface KioskSessionHistoryAPI {
+  list(query?: KioskSessionHistoryQuery): Promise<KioskSessionHistoryItem[]>;
+  reprint(params: { sessionId: string; copies?: number; reason?: string }): Promise<{ success: boolean; printJobId?: string; error?: string }>;
+  forceUpload(params: { sessionId: string }): Promise<{ success: boolean; enqueuedCount: number; error?: string }>;
+}
+
 export interface KioskAPI {
   camera: KioskCameraAPI;
   printer: KioskPrinterAPI;
@@ -374,6 +406,7 @@ export interface KioskAPI {
   identity?: KioskIdentityAPI;
   config: KioskConfigAPI;
   system: KioskSystemAPI;
+  sessionHistory?: KioskSessionHistoryAPI;
 }
 
 declare global {
@@ -868,6 +901,57 @@ const mockIdentity: KioskIdentityAPI = {
   },
 };
 
+const mockSessionHistory: KioskSessionHistoryAPI = {
+  async list(_query) {
+    return [
+      {
+        id: 'session_mock_001',
+        createdAt: new Date().toISOString(),
+        frameId: '2R',
+        filter: 'warm',
+        compositePath: 'mock/path/composite_001.jpg',
+        compositeExists: true,
+        printStatus: 'COMPLETED',
+        printAttempts: 1,
+        lastPrintError: null,
+        uploaded: true,
+        uploadStatus: 'COMPLETED',
+        uploadAttempts: 1,
+        lastUploadError: null,
+        remoteUrl: 'https://cdn.pictolabs.id/mock/001.jpg',
+        localStorageState: 'HOT',
+        photoCount: 3,
+        hasVideo: true,
+      },
+      {
+        id: 'session_mock_002',
+        createdAt: new Date(Date.now() - 3600000).toISOString(),
+        frameId: '4R',
+        filter: 'bw',
+        compositePath: 'mock/path/composite_002.jpg',
+        compositeExists: false,
+        printStatus: 'FAILED',
+        printAttempts: 5,
+        lastPrintError: 'Paper Jam Detected in Cassette 1',
+        uploaded: false,
+        uploadStatus: 'FAILED',
+        uploadAttempts: 3,
+        lastUploadError: 'Network Timeout (504)',
+        remoteUrl: undefined,
+        localStorageState: 'PRUNED',
+        photoCount: 4,
+        hasVideo: false,
+      },
+    ];
+  },
+  async reprint(_params) {
+    return { success: true, printJobId: `mock_reprint_${Date.now()}` };
+  },
+  async forceUpload(_params) {
+    return { success: true, enqueuedCount: 1 };
+  },
+};
+
 const mockKiosk: KioskAPI = {
   camera: mockCamera,
   printer: mockPrinter,
@@ -880,6 +964,7 @@ const mockKiosk: KioskAPI = {
   identity: mockIdentity,
   config: mockConfig,
   system: mockSystem,
+  sessionHistory: mockSessionHistory,
 };
 
 /**
@@ -904,4 +989,5 @@ export const kiosk: KioskAPI = {
   get identity() { return (isElectron() ? window.kiosk!.identity : mockKiosk.identity); },
   get config() { return (isElectron() ? window.kiosk! : mockKiosk).config; },
   get system() { return (isElectron() ? window.kiosk! : mockKiosk).system; },
+  get sessionHistory() { return (isElectron() ? window.kiosk!.sessionHistory : mockKiosk.sessionHistory); },
 };

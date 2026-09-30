@@ -629,14 +629,14 @@ export function retryPrintJob(jobId: string): { success: boolean; error?: string
 // TASK 3: Manual Reprint
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function reprintSession(sessionId: string): Promise<{ success: boolean; id?: string; error?: string }> {
+export async function reprintSession(sessionId: string, overrideCopies?: number): Promise<{ success: boolean; id?: string; error?: string }> {
   const db = getDatabase();
   if (!db) return { success: false, error: 'Database not initialized' };
 
   try {
     let filePath: string | null = null;
     let targetPrinter: string | null = null;
-    let copies: number = 1;
+    let copies: number = overrideCopies && overrideCopies > 0 ? overrideCopies : 1;
 
     // 1. Find composite photo from sessions table
     const sessionRow = db.prepare('SELECT composite_path FROM sessions WHERE id = ?').get(sessionId) as any;

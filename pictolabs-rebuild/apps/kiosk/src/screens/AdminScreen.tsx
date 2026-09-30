@@ -18,9 +18,11 @@ import {
   CreditCard,
   Zap,
   WifiOff,
+  Clock,
 } from 'lucide-react';
 import { kiosk, PrinterHealth, CameraStatus } from '../ipc/bridge';
 import { useKioskConfig } from '../context/KioskConfigContext';
+import SessionHistorySection from './SessionHistorySection';
 
 interface AdminScreenProps {
   onClose: () => void;
@@ -58,6 +60,7 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
   const [isBypassMode, setIsBypassMode] = useState(() => {
     return typeof window !== 'undefined' && localStorage.getItem('pictolabs-bypass-printer') !== 'false';
   });
+  const [adminTab, setAdminTab] = useState<'hardware' | 'history'>('hardware');
 
   // Payment Bypass States
   const [activeOrderId, setActiveOrderId] = useState<string | null>(() => {
@@ -692,8 +695,44 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
         </div>
       )}
 
-      {/* Main Grid Content */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-6xl w-full mx-auto flex-1">
+      {/* Navigation Tabs Bar */}
+      <div className="flex gap-2 max-w-6xl w-full mx-auto mb-6 bg-slate-900/80 p-1.5 rounded-2xl border border-slate-800">
+        <button
+          id="tab-admin-hardware"
+          type="button"
+          onClick={() => setAdminTab('hardware')}
+          className={`flex-1 flex items-center justify-center gap-2.5 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all cursor-pointer ${
+            adminTab === 'hardware'
+              ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <ShieldCheck className="w-4 h-4" />
+          Diagnostik Hardware & Kontrol
+        </button>
+        <button
+          id="tab-admin-history"
+          type="button"
+          onClick={() => setAdminTab('history')}
+          className={`flex-1 flex items-center justify-center gap-2.5 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all cursor-pointer ${
+            adminTab === 'history'
+              ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Clock className="w-4 h-4" />
+          Riwayat Sesi (Session History)
+        </button>
+      </div>
+
+      {adminTab === 'history' ? (
+        <SessionHistorySection
+          isOnline={isOnline}
+          onShowToast={(text, type) => setActionMessage({ text, type })}
+        />
+      ) : (
+        /* Main Grid Content */
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-6xl w-full mx-auto flex-1">
         {/* Hardware Status: Printer */}
         <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-xl flex flex-col justify-between">
           <div>
@@ -1111,6 +1150,7 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

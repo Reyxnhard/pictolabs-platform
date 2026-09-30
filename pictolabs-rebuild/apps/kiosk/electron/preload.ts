@@ -238,6 +238,16 @@ const kioskApi = {
       ipcRenderer.invoke('identity:save-admin-pin', pin),
   },
 
+  // ─── Session History Center (Phase 1) ─────────────────
+  sessionHistory: {
+    list: (query?: any): Promise<any[]> =>
+      ipcRenderer.invoke('session:history:list', query),
+    reprint: (params: { sessionId: string; copies?: number; reason?: string }): Promise<{ success: boolean; printJobId?: string; error?: string }> =>
+      ipcRenderer.invoke('session:history:reprint', params),
+    forceUpload: (params: { sessionId: string }): Promise<{ success: boolean; enqueuedCount: number; error?: string }> =>
+      ipcRenderer.invoke('session:history:force-upload', params),
+  },
+
   // ─── System ────────────────────────────────────────────
   system: {
     getAppPath: (): Promise<string> =>
