@@ -686,7 +686,12 @@ export default function SessionHistorySection({ isOnline, onShowToast }: Session
 
                     <div className="flex justify-between text-xs text-slate-400">
                       <span>Percobaan Spooler:</span>
-                      <span className="font-mono text-slate-200">{selectedSession.printAttempts} / 5</span>
+                      <span className="font-mono text-slate-200">
+                        {selectedSession.printAttempts} / 5
+                        {selectedSession.printAttempts > 5 && (
+                          <span className="text-rose-400 font-semibold ml-1.5">— melebihi batas retry</span>
+                        )}
+                      </span>
                     </div>
 
                     {selectedSession.lastPrintError && (
@@ -720,7 +725,12 @@ export default function SessionHistorySection({ isOnline, onShowToast }: Session
 
                     <div className="flex justify-between text-xs text-slate-400">
                       <span>Percobaan Unggah:</span>
-                      <span className="font-mono text-slate-200">{selectedSession.uploadAttempts} / 5</span>
+                      <span className="font-mono text-slate-200">
+                        {selectedSession.uploadAttempts} / 5
+                        {selectedSession.uploadAttempts > 5 && (
+                          <span className="text-rose-400 font-semibold ml-1.5">— melebihi batas retry</span>
+                        )}
+                      </span>
                     </div>
 
                     {selectedSession.lastUploadError && (

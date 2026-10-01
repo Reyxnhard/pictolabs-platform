@@ -322,12 +322,18 @@ function migrateLegacyJson(dataDir: string): void {
 }
 
 function rowToSession(row: any): Session {
+  const rawPhotos = JSON.parse(row.photos || '[]');
+  // Sanitize: never expose raw Base64 data URIs in session metadata
+  const photos = Array.isArray(rawPhotos)
+    ? rawPhotos.map((p: any) => (typeof p === 'string' && p.startsWith('data:') ? '' : String(p))).filter(Boolean)
+    : [];
+
   return {
     id: row.id,
     createdAt: row.created_at,
     frameId: row.frame_id,
     filter: row.filter,
-    photos: JSON.parse(row.photos || '[]'),
+    photos,
     compositePath: row.composite_path || undefined,
     liveVideoPath: row.live_video_path || undefined,
     liveVideoPaths: row.live_video_paths ? JSON.parse(row.live_video_paths) : row.live_video_path ? [row.live_video_path] : [],
@@ -347,13 +353,53 @@ export function createSession(data: Omit<Session, 'id' | 'createdAt' | 'synced'>
   const liveVideoPaths = data.liveVideoPaths || (data.liveVideoPath ? [data.liveVideoPath] : []);
   const primaryVideoPath = liveVideoPaths[0] || data.liveVideoPath || null;
 
+  // Persist raw photos to disk files immediately, avoiding Base64 storage in SQLite
+  const savedPhotoPaths: string[] = [];
+  if (Array.isArray(data.photos) && data.photos.length > 0) {
+    const outputDir = data.compositePath ? path.dirname(data.compositePath) : path.join(os.tmpdir(), 'pictolabs-captures');
+    if (!fs.existsSync(outputDir)) {
+      try { fs.mkdirSync(outputDir, { recursive: true }); } catch (_) {}
+    }
+    data.photos.forEach((photo, idx) => {
+      const poseNum = idx + 1;
+      let posePath: string | null = null;
+      if (typeof photo === 'string' && photo.startsWith('data:image')) {
+        const base64Data = photo.replace(/^data:image\/\w+;base64,/, '');
+        posePath = path.join(outputDir, `photo_${id}_pose_${poseNum}.jpg`);
+        try {
+          fs.writeFileSync(posePath, Buffer.from(base64Data, 'base64'));
+        } catch (_) {}
+      } else if (typeof photo === 'string') {
+        const clean = photo.replace(/^file:\/\/\/?/, '');
+        if (fs.existsSync(clean)) {
+          const ext = path.extname(clean) || '.jpg';
+          posePath = path.join(outputDir, `photo_${id}_pose_${poseNum}${ext}`);
+          try {
+            if (clean !== posePath) {
+              fs.copyFileSync(clean, posePath);
+            }
+          } catch (_) {
+            posePath = clean;
+          }
+        }
+      }
+      if (posePath && fs.existsSync(posePath)) {
+        savedPhotoPaths.push(posePath);
+      }
+    });
+  }
+
   if (db && stmtInsertSession) {
+    const dbPhotos = savedPhotoPaths.length > 0 
+      ? savedPhotoPaths 
+      : (data.photos || []).filter((p) => typeof p === 'string' && !p.startsWith('data:'));
+
     stmtInsertSession.run(
       id,
       createdAt,
       data.frameId,
       data.filter,
-      JSON.stringify(data.photos || []),
+      JSON.stringify(dbPhotos),
       data.compositePath || null,
       primaryVideoPath,
       data.printStatus || 'pending',
@@ -384,38 +430,12 @@ export function createSession(data: Omit<Session, 'id' | 'createdAt' | 'synced'>
     }
 
     // 2. Individual pose photos upload
-    if (Array.isArray(data.photos) && data.photos.length > 0) {
-      const outputDir = data.compositePath ? path.dirname(data.compositePath) : path.join(os.tmpdir(), 'pictolabs-captures');
-      if (!fs.existsSync(outputDir)) {
-        try { fs.mkdirSync(outputDir, { recursive: true }); } catch (_) {}
+    if (savedPhotoPaths.length > 0) {
+      for (const pPath of savedPhotoPaths) {
+        if (pPath && fs.existsSync(pPath)) {
+          enqueueUpload(id, pPath, 'raw');
+        }
       }
-      data.photos.forEach((photo, idx) => {
-        const poseNum = idx + 1;
-        let posePath: string | null = null;
-        if (typeof photo === 'string' && photo.startsWith('data:image')) {
-          const base64Data = photo.replace(/^data:image\/\w+;base64,/, '');
-          posePath = path.join(outputDir, `photo_${id}_pose_${poseNum}.jpg`);
-          try {
-            fs.writeFileSync(posePath, Buffer.from(base64Data, 'base64'));
-          } catch (_) {}
-        } else if (typeof photo === 'string') {
-          const clean = photo.replace(/^file:\/\/\/?/, '');
-          if (fs.existsSync(clean)) {
-            const ext = path.extname(clean) || '.jpg';
-            posePath = path.join(outputDir, `photo_${id}_pose_${poseNum}${ext}`);
-            try {
-              if (clean !== posePath) {
-                fs.copyFileSync(clean, posePath);
-              }
-            } catch (_) {
-              posePath = clean;
-            }
-          }
-        }
-        if (posePath && fs.existsSync(posePath)) {
-          enqueueUpload(id, posePath, 'raw');
-        }
-      });
     }
 
     // 3. Live Photo video file paths upload
@@ -826,18 +846,20 @@ function resolveLanDownloadUrl(url: string, baseUrl: string): string {
 }
 
 async function processUploadQueue(): Promise<void> {
-  if (isUploading || !config.apiBaseUrl || !db || !stmtGetPendingUploads || !stmtUpdateUploadStatus) {
+  if (isUploading || !config?.apiBaseUrl || !db || !stmtGetPendingUploads || !stmtUpdateUploadStatus) {
     return;
   }
-
-  const pending = stmtGetPendingUploads.all() as any[];
-  if (!pending || pending.length === 0) return;
 
   isUploading = true;
   lastUploadActivity = Date.now();
 
-  for (const item of pending) {
-    const now = new Date().toISOString();
+  try {
+    const pending = stmtGetPendingUploads.all() as any[];
+    if (!pending || pending.length === 0) return;
+
+    for (const item of pending) {
+      lastUploadActivity = Date.now();
+      const now = new Date().toISOString();
 
     // 1. Exponential Backoff Check:
     // If previous attempt failed, wait 2^attempts * 1000 ms (2s, 4s, 8s, 16s, 32s max)
@@ -1050,8 +1072,10 @@ async function processUploadQueue(): Promise<void> {
       stmtUpdateUploadStatus.run('FAILED', err.message, null, now, item.id);
     }
   }
-  isUploading = false;
-  lastUploadActivity = Date.now();
+  } finally {
+    isUploading = false;
+    lastUploadActivity = Date.now();
+  }
 }
 
 /**
@@ -1144,10 +1168,11 @@ export function resetStuckUploadWorker(stuckThresholdMs: number = 60_000, trigge
       rescuedCount++;
     }
 
-    // Mutex deadlock detection: if isUploading is true, but no UPLOADING items exist or inactive > 90s
+    // Mutex deadlock detection: only reset if worker has been genuinely inactive for > 90s
     if (isUploading) {
-      const activeUploading = db.prepare("SELECT count(*) as count FROM upload_queue WHERE status = 'UPLOADING'").get() as any;
-      if (!activeUploading || activeUploading.count === 0 || Date.now() - lastUploadActivity > 90_000) {
+      const isStuckInactive = Date.now() - lastUploadActivity > 90_000;
+      if (isStuckInactive) {
+        console.warn('[SyncEngine] Upload worker mutex stuck inactive for >90s. Breaking mutex.');
         isUploading = false;
         mutexReset = true;
         lastUploadActivity = Date.now();
@@ -1181,6 +1206,23 @@ export async function syncSingleSessionToCloud(sessionId: string): Promise<boole
   if (!row) return false;
 
   const session = rowToSession(row);
+
+  // Minimal Session Metadata Payload — exclude raw Base64 photo strings
+  // Backend SessionsController.syncSession() requires: id, createdAt, printStatus, frameId, filter, remoteUrl
+  // Media files (composite, raw photos, video) are handled strictly by upload_queue and Cloudflare R2
+  const metadataPayload = {
+    id: session.id,
+    createdAt: session.createdAt,
+    frameId: session.frameId,
+    filter: session.filter,
+    printStatus: session.printStatus,
+    status: session.printStatus === 'printed' ? 'COMPLETED' : 'CAPTURED',
+    remoteUrl: session.remoteUrl,
+    compositePath: session.compositePath,
+    liveVideoPath: session.liveVideoPath,
+    photos: (session.photos || []).filter((p: string) => typeof p === 'string' && !p.startsWith('data:')),
+  };
+
   try {
     const response = await fetch(`${config.apiBaseUrl}/api/sessions`, {
       method: 'POST',
@@ -1188,7 +1230,7 @@ export async function syncSingleSessionToCloud(sessionId: string): Promise<boole
         'Content-Type': 'application/json',
         'x-device-secret': config.deviceSecret || '',
       },
-      body: JSON.stringify(session),
+      body: JSON.stringify(metadataPayload),
       signal: AbortSignal.timeout(20000),
     });
 

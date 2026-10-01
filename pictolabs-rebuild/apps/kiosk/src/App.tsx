@@ -192,9 +192,12 @@ function KioskAppInner() {
   // ─── Phase 3.2E Autonomous Watchdog Integration ──────────
   const [isDiskLockedOut, setIsDiskLockedOut] = useState(false);
 
+  // FIX 3: Admin Modal must inform watchdog so operator state is not treated as idle 'welcome'
+  const effectiveScreen = isAdminOpen ? 'admin' : screen;
+
   useEffect(() => {
     // Notify watchdog of screen transitions
-    kiosk.watchdog?.setScreen?.(screen, session.sessionId || null);
+    kiosk.watchdog?.setScreen?.(effectiveScreen, session.sessionId || null);
 
     // Activity pulse on user touch/clicks/keys
     let lastPulse = 0;
@@ -202,7 +205,7 @@ function KioskAppInner() {
       const now = Date.now();
       if (now - lastPulse > 5000) {
         lastPulse = now;
-        kiosk.watchdog?.pulseActivity?.(screen, session.sessionId || undefined);
+        kiosk.watchdog?.pulseActivity?.(effectiveScreen, session.sessionId || undefined);
       }
     };
 
@@ -227,7 +230,7 @@ function KioskAppInner() {
       if (unsubWelcome) unsubWelcome();
       if (unsubLockout) unsubLockout();
     };
-  }, [screen, session.sessionId, navigate, resetSession]);
+  }, [effectiveScreen, session.sessionId, navigate, resetSession]);
 
   const screenProps = {
     session,
