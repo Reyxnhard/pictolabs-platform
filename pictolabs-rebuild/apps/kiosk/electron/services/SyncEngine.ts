@@ -588,7 +588,7 @@ export function getSessionHistory(query?: KioskSessionHistoryQuery): KioskSessio
     let lastPrintError: string | null = null;
 
     if (printRow) {
-      printStatus = printRow.status;
+      printStatus = printRow.status === 'DEAD_LETTER' ? 'FAILED' : printRow.status;
       printAttempts = printRow.attempts || 0;
       lastPrintError = printRow.last_error || null;
     } else if (row.print_status === 'printed') {

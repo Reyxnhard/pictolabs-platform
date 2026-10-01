@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 import { exec } from 'child_process';
-import { getDefaultPrinterName, getIsBypassMode } from './PrintService';
+import { getDefaultPrinterName, getIsBypassMode, resolvePrinterProfile } from './PrintService';
 
 export type PrinterHardwareStatusCode =
   | 'READY'
@@ -36,10 +36,11 @@ let consecutiveErrorCount = 0;
 const DEBOUNCE_THRESHOLD = 2; // Require 2 consecutive failed queries to escalate to OFFLINE (hysteresis)
 
 /**
- * Query native Win32 printer hardware state using PowerShell CIM.
+ * Query native Win32 printer hardware state and physical USB presence using PowerShell CIM and PnP.
  */
 function queryWin32PrinterState(printerName: string): Promise<{
   connected: boolean;
+  physicalPresent: boolean;
   detectedErrorState: number;
   extendedPrinterStatus: number;
   workOffline: boolean;
@@ -47,19 +48,34 @@ function queryWin32PrinterState(printerName: string): Promise<{
   rawJson?: any;
 }> {
   return new Promise((resolve) => {
+    const profile = resolvePrinterProfile(printerName);
     const escapedName = printerName.replace(/'/g, "''");
+    const hwPattern = profile.hardwareIdPattern;
+
     const script = `
       $ProgressPreference = 'SilentlyContinue'
-      $p = Get-CimInstance -ClassName Win32_Printer -Filter "Name = '${escapedName}'" -ErrorAction SilentlyContinue
+      $escaped = '${escapedName}'
+      $hwPattern = '${hwPattern}'
+
+      # 1. Query Physical USB PnP Device
+      $pnp = $null
+      if ($hwPattern) {
+        $pnp = Get-PnpDevice -InstanceId $hwPattern -ErrorAction SilentlyContinue | Where-Object { $_.Present -eq $true } | Select-Object -First 1
+      }
+
+      # 2. Query Software Print Queue
+      $p = Get-CimInstance -ClassName Win32_Printer -Filter "Name = '$escaped'" -ErrorAction SilentlyContinue
       if (-not $p) {
-        $p = Get-CimInstance -ClassName Win32_Printer | Where-Object { $_.Name -eq '${escapedName}' -or $_.DriverName -like '*DS-RX1*' -or $_.DriverName -like '*RX1*' } | Select-Object -First 1
+        $p = Get-CimInstance -ClassName Win32_Printer | Where-Object { $_.Name -eq $escaped -or $_.DriverName -like '${profile.driverPattern}' } | Select-Object -First 1
       }
       if (-not $p) {
         $p = Get-CimInstance -ClassName Win32_Printer | Where-Object { $_.Default -eq $true } | Select-Object -First 1
       }
+
       if ($p) {
         [PSCustomObject]@{
           Found = $true
+          FoundPhysical = if ($hwPattern) { [bool]$pnp } else { $true }
           Name = $p.Name
           WorkOffline = [bool]$p.WorkOffline
           DetectedErrorState = [int]$p.DetectedErrorState
@@ -68,7 +84,7 @@ function queryWin32PrinterState(printerName: string): Promise<{
           PrinterState = [int]$p.PrinterState
         } | ConvertTo-Json -Compress
       } else {
-        [PSCustomObject]@{ Found = $false } | ConvertTo-Json -Compress
+        [PSCustomObject]@{ Found = $false; FoundPhysical = $false } | ConvertTo-Json -Compress
       }
     `;
 
@@ -78,27 +94,32 @@ function queryWin32PrinterState(printerName: string): Promise<{
       { timeout: 8000 },
       (err, stdout) => {
         if (err || !stdout.trim()) {
-          resolve({ connected: false, detectedErrorState: 0, extendedPrinterStatus: 0, workOffline: true });
+          resolve({ connected: false, physicalPresent: false, detectedErrorState: 0, extendedPrinterStatus: 0, workOffline: true });
           return;
         }
 
         try {
           const parsed = JSON.parse(stdout.trim());
           if (!parsed.Found) {
-            resolve({ connected: false, detectedErrorState: 0, extendedPrinterStatus: 0, workOffline: true });
+            resolve({ connected: false, physicalPresent: false, detectedErrorState: 0, extendedPrinterStatus: 0, workOffline: true });
             return;
           }
 
+          const physicalPresent = Boolean(parsed.FoundPhysical);
+          const workOffline = Boolean(parsed.WorkOffline);
+          const connected = physicalPresent && !workOffline;
+
           resolve({
-            connected: !parsed.WorkOffline,
+            connected,
+            physicalPresent,
             detectedErrorState: Number(parsed.DetectedErrorState || 0),
             extendedPrinterStatus: Number(parsed.ExtendedPrinterStatus || 0),
-            workOffline: Boolean(parsed.WorkOffline),
+            workOffline,
             name: parsed.Name,
             rawJson: parsed,
           });
         } catch (_) {
-          resolve({ connected: false, detectedErrorState: 0, extendedPrinterStatus: 0, workOffline: true });
+          resolve({ connected: false, physicalPresent: false, detectedErrorState: 0, extendedPrinterStatus: 0, workOffline: true });
         }
       }
     );
@@ -135,19 +156,17 @@ export async function checkPrinterHardware(): Promise<PrinterHardwareStatus> {
       const targetPrinter = getDefaultPrinterName() || 'DS-RX1';
       const query = await queryWin32PrinterState(targetPrinter);
 
-      if (!query.connected) {
+      if (!query.connected || !query.physicalPresent) {
         consecutiveErrorCount++;
-        if (consecutiveErrorCount >= DEBOUNCE_THRESHOLD) {
-          cachedHardwareStatus = {
-            connected: false,
-            ready: false,
-            status: 'OFFLINE',
-            name: query.name || targetPrinter,
-            message: 'Printer tidak terhubung atau kabel USB terputus',
-            errorCode: 'PRINTER_OFFLINE',
-            lastCheckedAt: now,
-          };
-        }
+        cachedHardwareStatus = {
+          connected: false,
+          ready: false,
+          status: 'OFFLINE',
+          name: query.name || targetPrinter,
+          message: 'Printer tidak terhubung atau kabel USB terputus',
+          errorCode: 'PRINTER_OFFLINE',
+          lastCheckedAt: now,
+        };
         return cachedHardwareStatus;
       }
 

@@ -4,7 +4,7 @@ import { useKioskConfig } from '../context/KioskConfigContext';
 import { kiosk, isElectron } from '../ipc/bridge';
 import QRCode from 'qrcode';
 import confetti from 'canvas-confetti';
-import { Sparkles, Camera, Video, Film, CheckCircle2, Printer, Check } from 'lucide-react';
+import { Sparkles, Camera, Video, Film, CheckCircle2, Printer, Check, AlertCircle } from 'lucide-react';
 import { FRAME_DESIGNS } from './FrameDesignScreen';
 
 type PreviewMode = 'photo' | 'live-photo' | 'gif';
@@ -73,63 +73,112 @@ export default function QRScreen({ navigate, session, resetSession }: ScreenProp
     ? [session.liveVideoPath]
     : [];
 
-  // Execute printing in background with visual progress bar in QR Screen
+  // Execute printing in background with real queue status monitoring
   useEffect(() => {
     if (hasTriggeredPrint.current) return;
     hasTriggeredPrint.current = true;
 
     let isMounted = true;
+    let pollInterval: NodeJS.Timeout | null = null;
     const cleanPath = (session.compositePath || session.compositeUrl || '').replace(/^file:\/\/\/?/, '');
 
-    // Gradual progress simulation (spooling to DNP printer)
+    // Gradual progress simulation up to 85% while in-flight
     const progressInterval = setInterval(() => {
       setPrintProgress((prev) => {
-        if (prev >= 90) return prev;
-        return prev + 12;
+        if (prev >= 85) return prev;
+        return prev + 6;
       });
-    }, 450);
+    }, 600);
 
     const executePrintTask = async () => {
       try {
-        if (cleanPath) {
-          const sId = session.sessionId || `session_${Date.now()}`;
-          const enqueueRes = await kiosk.printer.enqueue(cleanPath, 1, sId);
-          console.log('[QRScreen] ✓ Print job enqueued in SQLite:', enqueueRes);
-
+        if (!cleanPath) {
+          // Simulation / demo mode
           if (!isMounted) return;
           clearInterval(progressInterval);
           setPrintProgress(100);
           setPrintStatus('success');
-
-          // Trigger celebratory confetti burst!
-          try {
-            confetti({
-              particleCount: 65,
-              spread: 70,
-              origin: { y: 0.8 },
-            });
-          } catch {}
-        } else {
-          // Simulation mode
-          clearInterval(progressInterval);
-          setPrintProgress(100);
-          setPrintStatus('success');
+          return;
         }
+
+        const sId = session.sessionId || `session_${Date.now()}`;
+        const enqueueRes = await kiosk.printer.enqueue(cleanPath, 1, sId);
+        console.log('[QRScreen] ✓ Print job enqueued in SQLite:', enqueueRes);
+
+        if (!enqueueRes || !enqueueRes.success) {
+          if (!isMounted) return;
+          clearInterval(progressInterval);
+          setPrintStatus('failed');
+          return;
+        }
+
+        // Poll queue status to track actual transmission/completion
+        const pollStartTime = Date.now();
+        pollInterval = setInterval(async () => {
+          if (!isMounted) {
+            if (pollInterval) clearInterval(pollInterval);
+            return;
+          }
+
+          try {
+            const queueJob = await kiosk.printer.getQueueStatus(sId);
+            if (!queueJob) return;
+
+            if (queueJob.status === 'COMPLETED') {
+              if (pollInterval) clearInterval(pollInterval);
+              clearInterval(progressInterval);
+              setPrintProgress(100);
+              setPrintStatus('success');
+
+              // Trigger celebratory confetti burst ONLY on verified completion!
+              try {
+                confetti({
+                  particleCount: 65,
+                  spread: 70,
+                  origin: { y: 0.8 },
+                });
+              } catch {}
+            } else if (queueJob.status === 'DEAD_LETTER') {
+              if (pollInterval) clearInterval(pollInterval);
+              clearInterval(progressInterval);
+              setPrintStatus('failed');
+            } else if (queueJob.status === 'FAILED') {
+              if (queueJob.attempts >= 5) {
+                if (pollInterval) clearInterval(pollInterval);
+                clearInterval(progressInterval);
+                setPrintStatus('failed');
+              }
+            } else if (queueJob.status === 'PRINTING') {
+              setPrintProgress((prev) => Math.max(prev, 65));
+            }
+
+            // Bounded poll timeout (40 seconds)
+            if (Date.now() - pollStartTime > 40000) {
+              if (pollInterval) clearInterval(pollInterval);
+              clearInterval(progressInterval);
+              if (queueJob.status !== 'COMPLETED') {
+                setPrintStatus('failed');
+              }
+            }
+          } catch (pollErr) {
+            console.warn('[QRScreen] Queue status poll warning:', pollErr);
+          }
+        }, 1200);
       } catch (err) {
-        console.warn('[QRScreen] Print spooler warning:', err);
+        console.warn('[QRScreen] Print enqueue error:', err);
         if (isMounted) {
           clearInterval(progressInterval);
-          setPrintProgress(100);
-          setPrintStatus('success');
+          setPrintStatus('failed');
         }
       }
     };
 
-    const timer = setTimeout(executePrintTask, 400);
+    const timer = setTimeout(executePrintTask, 300);
 
     return () => {
       isMounted = false;
       clearInterval(progressInterval);
+      if (pollInterval) clearInterval(pollInterval);
       clearTimeout(timer);
     };
   }, [session.compositePath, session.compositeUrl, session.sessionId]);
@@ -552,46 +601,62 @@ export default function QRScreen({ navigate, session, resetSession }: ScreenProp
             className={`w-full p-3.5 rounded-2xl transition-all duration-500 text-left border flex items-center gap-3.5 shadow-sm ${
               printStatus === 'printing'
                 ? 'bg-blue-50/90 border-blue-200 text-blue-900'
-                : 'bg-emerald-50/90 border-emerald-200 text-emerald-900'
+                : printStatus === 'success'
+                ? 'bg-emerald-50/90 border-emerald-200 text-emerald-900'
+                : 'bg-rose-50/90 border-rose-200 text-rose-900'
             }`}
           >
             <div
               className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm ${
                 printStatus === 'printing'
                   ? 'bg-blue-600 text-white animate-pulse'
-                  : 'bg-emerald-600 text-white'
+                  : printStatus === 'success'
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-rose-600 text-white'
               }`}
             >
               {printStatus === 'printing' ? (
                 <Printer className="w-5 h-5 animate-bounce" />
-              ) : (
+              ) : printStatus === 'success' ? (
                 <Check className="w-6 h-6 stroke-[3]" />
+              ) : (
+                <AlertCircle className="w-6 h-6 stroke-[3]" />
               )}
             </div>
 
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between mb-0.5">
                 <span className="font-black text-xs uppercase tracking-wide">
-                  {printStatus === 'printing' ? 'Mencetak Foto Fisik...' : 'Foto Fisik Selesai Dicetak!'}
+                  {printStatus === 'printing'
+                    ? 'Mencetak Foto Fisik...'
+                    : printStatus === 'success'
+                    ? 'Foto Fisik Selesai Dicetak!'
+                    : 'Kendala Cetak Foto Fisik'}
                 </span>
                 <span className="font-mono text-[10px] font-bold opacity-75">
-                  {printProgress}%
+                  {printStatus === 'failed' ? 'PERHATIAN' : `${printProgress}%`}
                 </span>
               </div>
 
               <p className="text-[10px] leading-tight opacity-80 mb-1.5 truncate">
                 {printStatus === 'printing'
-                  ? 'Mesin sedang mencetak & memotong 2 strip foto...'
-                  : 'Silakan ambil 2 lembar Photostrip 2R di baki bawah printer.'}
+                  ? 'Mesin sedang memproses & mencetak strip foto...'
+                  : printStatus === 'success'
+                  ? 'Silakan ambil 2 lembar Photostrip 2R di baki bawah printer.'
+                  : 'Terjadi kendala pada printer. Silakan hubungi staff booth untuk bantuan cetak.'}
               </p>
 
               {/* Progress bar */}
               <div className="w-full h-1.5 bg-black/10 rounded-full overflow-hidden">
                 <div
                   className={`h-full transition-all duration-300 rounded-full ${
-                    printStatus === 'printing' ? 'bg-blue-600' : 'bg-emerald-600'
+                    printStatus === 'printing'
+                      ? 'bg-blue-600'
+                      : printStatus === 'success'
+                      ? 'bg-emerald-600'
+                      : 'bg-rose-500'
                   }`}
-                  style={{ width: `${printProgress}%` }}
+                  style={{ width: `${printStatus === 'failed' ? 100 : printProgress}%` }}
                 />
               </div>
             </div>

@@ -2,7 +2,7 @@ import { ipcMain } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getDatabase, recordSystemEvent } from './SyncEngine';
-import { getDefaultPrinterName, getIsBypassMode, printImage } from './PrintService';
+import { getDefaultPrinterName, getIsBypassMode, printImage, queryPrinterHealth } from './PrintService';
 import { recordPrintConsumption } from './PaperTrackerService';
 import { getCachedPrinterHardwareStatus } from './PrinterMonitorService';
 
@@ -468,7 +468,9 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
   // 2. Call to printImage() / driver with hardware pre-flight check
   let printResult: { success: boolean; error?: string };
 
-  const hwStatus = getCachedPrinterHardwareStatus();
+  const targetPrinter = item.printer_name || getDefaultPrinterName() || 'DS-RX1';
+  const hwStatus = await queryPrinterHealth(targetPrinter, true);
+
   if (!hwStatus.ready && !getIsBypassMode()) {
     console.warn(`[PrintQueueService] ⚠️ Pre-print hardware block: ${hwStatus.message}`);
     printResult = { success: false, error: hwStatus.message || 'Printer hardware error' };
@@ -476,12 +478,7 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
     console.log(`[PrintQueueService] [BYPASS] Simulated print job: ${cleanPath} (x${item.copies})`);
     printResult = { success: true };
   } else {
-    const targetPrinter = item.printer_name || getDefaultPrinterName();
-    if (!targetPrinter) {
-      printResult = { success: false, error: 'No printer configured or detected' };
-    } else {
-      printResult = await printImage(cleanPath, targetPrinter, item.copies);
-    }
+    printResult = await printImage(cleanPath, targetPrinter, item.copies);
   }
 
   const completeTime = new Date().toISOString();
