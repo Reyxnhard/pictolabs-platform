@@ -1,9 +1,10 @@
 import { ipcMain } from 'electron';
-import { exec, execSync } from 'child_process';
+import { exec, execFile, execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { getLastSession } from './SyncEngine';
+import { findPrintExePath, getHardwareStatus, PrinterHardwareStatus } from './PrinterHardwareAdapter';
 
 /**
  * PrintService — Enterprise Windows Spooler Integration for DNP & Photo Printers.
@@ -26,6 +27,7 @@ export interface PrinterHealth {
   code: 'OK' | 'PAPER_OUT' | 'LOW_PAPER' | 'RIBBON_OUT' | 'DOOR_OPEN' | 'JAMMED' | 'OFFLINE' | 'BUSY' | 'ERROR' | 'NO_PRINTER';
   message: string;
   checkedAt: number;
+  mediaRemaining?: number;
 }
 
 // ─── Win32 Spooler / WMI Status Bitmask Constants ───────────
@@ -75,8 +77,16 @@ export function getDefaultPrinterName(): string | null {
   return defaultPrinterName;
 }
 
+export function setDefaultPrinterName(val: string): void {
+  defaultPrinterName = val;
+}
+
 export function getIsBypassMode(): boolean {
   return isBypassMode;
+}
+
+export function setIsBypassMode(val: boolean): void {
+  isBypassMode = val;
 }
 
 /**
@@ -85,7 +95,7 @@ export function getIsBypassMode(): boolean {
 function listPrintersSync(): string[] {
   try {
     const output = execSync(
-      'powershell -NoProfile -Command "Get-Printer | Select-Object -ExpandProperty Name"',
+      'powershell -NoProfile -Command "Get-CimInstance Win32_Printer | Sort-Object WorkOffline | Select-Object -ExpandProperty Name"',
       { encoding: 'utf-8', timeout: 8000 }
     );
     return output
@@ -206,7 +216,20 @@ async function querySpoolerSnapshot(printerName: string, profile: PrinterHardwar
     if ($hwPattern) {
       $pnp = Get-PnpDevice -InstanceId $hwPattern -ErrorAction SilentlyContinue | Where-Object { $_.Present -eq $true } | Select-Object -First 1
     }
-    $p = Get-CimInstance Win32_Printer | Where-Object { $_.Name -eq $escaped -or $_.DriverName -like '${profile.driverPattern}' } | Select-Object -First 1
+    $p = Get-CimInstance Win32_Printer -Filter "Name = '$escaped'" -ErrorAction SilentlyContinue
+    if (-not $p -or $p.WorkOffline -or (($p.PrinterState -band 4) -ne 0)) {
+      $activeSibling = Get-CimInstance Win32_Printer | Where-Object {
+        ($_.DriverName -like '${profile.driverPattern}' -or $_.Name -like '*${profile.name}*') -and
+        -not $_.WorkOffline -and
+        (($_.PrinterState -band 4) -eq 0)
+      } | Select-Object -First 1
+      if ($activeSibling) {
+        $p = $activeSibling
+      }
+    }
+    if (-not $p) {
+      $p = Get-CimInstance Win32_Printer | Where-Object { $_.Name -eq $escaped -or $_.DriverName -like '${profile.driverPattern}' } | Select-Object -First 1
+    }
     $jobs = @()
     if ($p) {
       $jobs = @(Get-PrintJob -PrinterName $p.Name -ErrorAction SilentlyContinue)
@@ -290,6 +313,75 @@ export async function queryPrinterHealth(printerName?: string, bypassCache = fal
 
   activeHealthPromise = (async () => {
     try {
+      // 0. Primary Physical Telemetry Gate: Query internal DNP engine telemetry
+      const hw = await getHardwareStatus(target, bypassCache);
+      if (hw.state === 'COVER_OPEN') {
+        cachedHealth = {
+          ready: false,
+          name: target,
+          code: 'DOOR_OPEN',
+          message: hw.message,
+          checkedAt: now,
+          mediaRemaining: hw.mediaRemaining,
+        };
+        return cachedHealth;
+      }
+      if (hw.state === 'PAPER_OUT') {
+        cachedHealth = {
+          ready: false,
+          name: target,
+          code: 'PAPER_OUT',
+          message: hw.message,
+          checkedAt: now,
+          mediaRemaining: hw.mediaRemaining,
+        };
+        return cachedHealth;
+      }
+      if (hw.state === 'RIBBON_OUT') {
+        cachedHealth = {
+          ready: false,
+          name: target,
+          code: 'RIBBON_OUT',
+          message: hw.message,
+          checkedAt: now,
+          mediaRemaining: hw.mediaRemaining,
+        };
+        return cachedHealth;
+      }
+      if (hw.state === 'JAMMED') {
+        cachedHealth = {
+          ready: false,
+          name: target,
+          code: 'JAMMED',
+          message: hw.message,
+          checkedAt: now,
+          mediaRemaining: hw.mediaRemaining,
+        };
+        return cachedHealth;
+      }
+      if (hw.state === 'OFFLINE') {
+        cachedHealth = {
+          ready: false,
+          name: target,
+          code: 'OFFLINE',
+          message: hw.message,
+          checkedAt: now,
+          mediaRemaining: hw.mediaRemaining,
+        };
+        return cachedHealth;
+      }
+      if (hw.state === 'ERROR') {
+        cachedHealth = {
+          ready: false,
+          name: target,
+          code: 'ERROR',
+          message: hw.message,
+          checkedAt: now,
+          mediaRemaining: hw.mediaRemaining,
+        };
+        return cachedHealth;
+      }
+
       const profile = resolvePrinterProfile(target);
       const escaped = target.replace(/'/g, "''");
       const hwPattern = profile.hardwareIdPattern;
@@ -301,6 +393,16 @@ export async function queryPrinterHealth(printerName?: string, bypassCache = fal
 
         # 1. Query Software Print Queue
         $p = Get-CimInstance Win32_Printer -Filter "Name = '$escaped'" -ErrorAction SilentlyContinue
+        if (-not $p -or $p.WorkOffline -or (($p.PrinterState -band 4) -ne 0)) {
+          $activeSibling = Get-CimInstance Win32_Printer | Where-Object {
+            ($_.DriverName -like '${profile.driverPattern}' -or $_.Name -like '*${profile.name}*') -and
+            -not $_.WorkOffline -and
+            (($_.PrinterState -band 4) -eq 0)
+          } | Select-Object -First 1
+          if ($activeSibling) {
+            $p = $activeSibling
+          }
+        }
         if (-not $p) {
           $p = Get-CimInstance Win32_Printer | Where-Object { $_.Name -eq '$escaped' -or $_.DriverName -like '${profile.driverPattern}' } | Select-Object -First 1
         }
@@ -369,6 +471,7 @@ export async function queryPrinterHealth(printerName?: string, bypassCache = fal
 
       const resolvedName = data.Name || target;
       if (resolvedName && resolvedName !== defaultPrinterName) {
+        console.log(`[PrintService] 🔄 Dynamic printer migration: '${defaultPrinterName}' -> '${resolvedName}'`);
         defaultPrinterName = resolvedName;
       }
       const printerState = Number(data.PrinterState) || 0;
@@ -457,7 +560,7 @@ export async function queryPrinterHealth(printerName?: string, bypassCache = fal
         ready = true;
       }
 
-      cachedHealth = { ready, name: resolvedName, code, message, checkedAt: now };
+      cachedHealth = { ready, name: resolvedName, code, message, checkedAt: now, mediaRemaining: hw.mediaRemaining };
       return cachedHealth;
     } catch {
       cachedHealth = {
@@ -479,10 +582,34 @@ export async function queryPrinterHealth(printerName?: string, bypassCache = fal
 /**
  * Print an image file using Windows ImageView_PrintTo with post-submission spooler job monitoring.
  */
+/**
+ * Strict validator for pre-flight health handoff.
+ * Requires:
+ * 1. preValidatedHealth exists, is ready, and code is OK.
+ * 2. Probe was completed within the last 5000ms.
+ * 3. Printer name matches the EXACT resolved target printer identity (no broad/substring matching).
+ *    e.g. 'DS-RX1 (Copy 1)' !== 'DS-RX1 (Copy 2)' and 'DS-RX1' !== 'DS-RX1 (Copy 1)'.
+ */
+export function isPrinterHandoffValid(
+  preValidatedHealth: PrinterHealth | undefined,
+  targetPrinterName: string
+): boolean {
+  if (!preValidatedHealth) return false;
+  if (!preValidatedHealth.ready || preValidatedHealth.code !== 'OK') return false;
+  if (Date.now() - preValidatedHealth.checkedAt >= 5000) return false;
+  if (!preValidatedHealth.name) return false;
+
+  // Strict identity matching: EXACT equality required.
+  // Broad substring matching (e.g. name.includes('DS-RX1')) is strictly forbidden
+  // to avoid cross-queue pollution in multi-printer booths (DS-RX1 vs Copy 1 vs Copy 2).
+  return preValidatedHealth.name === targetPrinterName;
+}
+
 export async function printImage(
   imagePath: string,
   printerName: string,
-  copies: number
+  copies: number,
+  preValidatedHealth?: PrinterHealth
 ): Promise<{ success: boolean; error?: string }> {
   // 1. Bypass Mode check
   if (isBypassMode) {
@@ -511,48 +638,85 @@ export async function printImage(
 
   const profile = resolvePrinterProfile(printerName);
 
-  // 2. Pre-flight Hardware Verification
-  const preCheck = await queryPrinterHealth(printerName, true);
+  // 2. Authoritative Pre-flight Hardware Verification (with Direct Handoff Reuse)
+  let preCheck: PrinterHealth;
+  const isHandoffValid = isPrinterHandoffValid(preValidatedHealth, printerName);
+
+  if (isHandoffValid) {
+    preCheck = preValidatedHealth!;
+    console.log(`[PrintService] ⚡ Reusing authoritative pre-flight health for '${preCheck.name}' (media: ${preCheck.mediaRemaining ?? 'unknown'})`);
+  } else {
+    if (preValidatedHealth && preValidatedHealth.name !== printerName) {
+      console.warn(`[PrintService] ⚠️ Pre-flight handoff identity mismatch: '${preValidatedHealth.name}' !== '${printerName}'. Re-running fresh authoritative validation for '${printerName}'`);
+    }
+    preCheck = await queryPrinterHealth(printerName, true);
+  }
+
   if (!preCheck.ready) {
     console.warn(`[PrintService] Pre-flight failed: ${preCheck.code} - ${preCheck.message}`);
     return { success: false, error: preCheck.message };
   }
 
-  // 3. Baseline: capture any existing job IDs currently in queue
-  const preSnapshot = await querySpoolerSnapshot(printerName, profile);
+  const activePrinter = preCheck.name || defaultPrinterName || printerName;
+  if (activePrinter !== printerName) {
+    console.log(`[PrintService] 🖨️ Dispatching print to dynamic active queue: '${activePrinter}' (requested: '${printerName}')`);
+  }
+
+  // 3. Baseline: capture baseline media count and existing spooler jobs
+  let baselineMedia = preCheck.mediaRemaining;
+  if (baselineMedia === undefined) {
+    const preHw = await getHardwareStatus(activePrinter, true);
+    baselineMedia = preHw.mediaRemaining;
+  }
+  console.log(`[PrintService] Baseline media count before print: ${baselineMedia ?? 'unknown'}`);
+  const preSnapshot = await querySpoolerSnapshot(activePrinter, profile);
   const baselineJobIds = new Set(preSnapshot.jobs.map((j) => j.id));
 
-  // 4. Dispatch print command via rundll32
-  const escapedPath = targetPath.replace(/'/g, "''");
-  const escapedPrinter = printerName.replace(/'/g, "''");
-
-  const printCommands: string[] = [];
-  for (let i = 0; i < copies; i++) {
-    printCommands.push(
-      `rundll32 shimgvw.dll,ImageView_PrintTo /pt "${escapedPath}" "${escapedPrinter}"`
-    );
+  // 4. Dispatch print command via native print.exe CLI
+  const printExe = findPrintExePath();
+  if (!printExe) {
+    console.error('[PrintService] print.exe utility not found on disk');
+    return { success: false, error: 'Utilitas cetak (print.exe) tidak ditemukan' };
   }
-  const psScript = printCommands.join(' ; ');
+
+  // Native CLI argument vector:
+  // print.exe <imagePath> [copies] [scale%] [offsetX] [offsetY] [printerName]
+  const printArgs = [
+    targetPath,
+    String(copies),
+    '99',
+    '0',
+    '3',
+    activePrinter,
+  ];
+
+  console.log(`[PrintService] Dispatching print via print.exe to '${activePrinter}' (x${copies})`);
 
   const dispatchResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
-    exec(`powershell -NoProfile -Command "${psScript}"`, { timeout: 30000 }, (error, _stdout, stderr) => {
-      if (error) {
-        console.error('[PrintService] Spooler dispatch failed:', error.message);
-        resolve({ ok: false, error: error.message });
-      } else {
-        if (stderr && stderr.trim()) {
-          console.warn('[PrintService] Spooler dispatch warning:', stderr);
+    execFile(
+      printExe,
+      printArgs,
+      { timeout: 30000, cwd: path.dirname(printExe) },
+      (error, stdout, stderr) => {
+        if (error) {
+          console.error('[PrintService] print.exe dispatch failed:', error.message, stderr);
+          resolve({ ok: false, error: stderr || error.message });
+        } else {
+          if (stderr && stderr.trim()) {
+            console.warn('[PrintService] print.exe warning:', stderr);
+          }
+          console.log('[PrintService] print.exe completed successfully:', stdout.trim());
+          resolve({ ok: true });
         }
-        resolve({ ok: true });
       }
-    });
+    );
   });
 
   if (!dispatchResult.ok) {
     return { success: false, error: dispatchResult.error || 'Gagal mengirim berkas ke spooler Windows' };
   }
 
-  console.log(`[PrintService] Print job dispatched to Windows spooler: ${path.basename(imagePath)} (x${copies}). Monitoring spooler transmission...`);
+  console.log(`[PrintService] Print job dispatched to Windows spooler via print.exe: ${path.basename(imagePath)} (x${copies}). Monitoring spooler transmission...`);
 
   // 5. Post-Submission Spooler Job Lifecycle Monitoring (Timeout: 25 seconds)
   const startTime = Date.now();
@@ -565,31 +729,46 @@ export async function printImage(
   while (Date.now() - startTime < TIMEOUT_MS) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
 
-    const snap = await querySpoolerSnapshot(printerName, profile);
+    const snap = await querySpoolerSnapshot(activePrinter, profile);
 
     // A. Physical Presence Loss Check
     if (!snap.physicalPresent) {
       console.error('[PrintService] ✗ Physical printer disconnected mid-transmission!');
-      await cancelSpoolerJobs(printerName, Array.from(trackedJobIds));
+      await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
       return { success: false, error: 'Printer terputus atau mati saat proses transmisi cetak' };
     }
 
-    // B. Printer Hardware Error State Check
+    // B. Printer Hardware Error State Check (WMI + Real Hardware Telemetry)
     if (snap.detectedError === 4) {
-      await cancelSpoolerJobs(printerName, Array.from(trackedJobIds));
+      await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
       return { success: false, error: 'Kertas foto habis di dalam tray (Paper Out)' };
     }
     if (snap.detectedError === 6) {
-      await cancelSpoolerJobs(printerName, Array.from(trackedJobIds));
+      await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
       return { success: false, error: 'Pita ribbon habis / perlu diganti (Ribbon Out)' };
     }
     if (snap.detectedError === 7) {
-      await cancelSpoolerJobs(printerName, Array.from(trackedJobIds));
+      await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
       return { success: false, error: 'Pintu penutup printer terbuka (Door Open)' };
     }
     if (snap.detectedError === 8) {
-      await cancelSpoolerJobs(printerName, Array.from(trackedJobIds));
+      await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
       return { success: false, error: 'Kertas macet di dalam printer (Paper Jam)' };
+    }
+
+    // Direct DNP hardware telemetry probe during spooler transmission
+    const midHw = await getHardwareStatus(activePrinter);
+    if (
+      midHw.state === 'PAPER_OUT' ||
+      midHw.state === 'COVER_OPEN' ||
+      midHw.state === 'RIBBON_OUT' ||
+      midHw.state === 'JAMMED' ||
+      midHw.state === 'ERROR' ||
+      midHw.state === 'OFFLINE'
+    ) {
+      console.error(`[PrintService] ✗ Mid-flight hardware failure: ${midHw.state} - ${midHw.message}`);
+      await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
+      return { success: false, error: midHw.message };
     }
 
     // Identify jobs belonging to this submission (not in baseline)
@@ -605,53 +784,113 @@ export async function printImage(
       for (const j of newJobs) {
         const s = j.status.toLowerCase();
         if (s.includes('paperout') || s.includes('paper out')) {
-          await cancelSpoolerJobs(printerName, Array.from(trackedJobIds));
+          await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
           return { success: false, error: 'Kertas foto habis di dalam tray (Paper Out)' };
         }
         if (s.includes('door') || s.includes('cover')) {
-          await cancelSpoolerJobs(printerName, Array.from(trackedJobIds));
+          await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
           return { success: false, error: 'Pintu penutup printer terbuka (Door Open)' };
         }
         if (s.includes('jam')) {
-          await cancelSpoolerJobs(printerName, Array.from(trackedJobIds));
+          await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
           return { success: false, error: 'Kertas macet di dalam printer (Paper Jam)' };
         }
         if (s.includes('toner') || s.includes('ribbon')) {
-          await cancelSpoolerJobs(printerName, Array.from(trackedJobIds));
+          await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
           return { success: false, error: 'Pita ribbon habis (Ribbon Out)' };
         }
         if (s.includes('offline')) {
-          await cancelSpoolerJobs(printerName, Array.from(trackedJobIds));
+          await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
           return { success: false, error: 'Printer offline atau kabel USB terputus' };
         }
         if (s.includes('userintervention')) {
-          await cancelSpoolerJobs(printerName, Array.from(trackedJobIds));
+          await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
           return { success: false, error: 'Printer membutuhkan intervensi teknisi' };
         }
         if (s.includes('error') || s.includes('blocked')) {
-          await cancelSpoolerJobs(printerName, Array.from(trackedJobIds));
+          await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
           return { success: false, error: `Error transmisi spooler: ${j.status}` };
         }
       }
     } else {
       // If we observed the job in spooler, and now it has cleared:
       if (observedJobInSpooler) {
-        const postHealth = await queryPrinterHealth(printerName, true);
-        if (!postHealth.ready) {
-          console.warn(`[PrintService] Post-flight warning: ${postHealth.message}`);
-          return { success: false, error: postHealth.message };
+        console.log(`[PrintService] Spooler transmission completed for ${path.basename(imagePath)}. Verifying physical hardware state...`);
+
+        // Post-submission physical verification
+        // DNP DS-RX1 mechanical printing takes ~12-15 seconds per photo.
+        const postStartTime = Date.now();
+        const POST_TIMEOUT_MS = 25000;
+        let verifiedPhysical = false;
+
+        while (Date.now() - postStartTime < POST_TIMEOUT_MS) {
+          await new Promise((r) => setTimeout(r, 1200));
+          const postHw = await getHardwareStatus(activePrinter, true);
+
+          // 1. Mechanical failure states: fail immediately
+          if (
+            postHw.state === 'PAPER_OUT' ||
+            postHw.state === 'COVER_OPEN' ||
+            postHw.state === 'RIBBON_OUT' ||
+            postHw.state === 'JAMMED' ||
+            postHw.state === 'ERROR' ||
+            postHw.state === 'OFFLINE'
+          ) {
+            console.error(`[PrintService] ✗ Post-submission hardware failure: ${postHw.state} - ${postHw.message}`);
+            return { success: false, error: postHw.message };
+          }
+
+          // 2. Media counter confirmation (strong physical evidence)
+          if (baselineMedia !== undefined && postHw.mediaRemaining !== undefined) {
+            if (postHw.mediaRemaining <= baselineMedia - copies) {
+              console.log(`[PrintService] ✓ Physical media counter verified: ${baselineMedia} -> ${postHw.mediaRemaining} (-${copies} prints)`);
+              verifiedPhysical = true;
+              break;
+            }
+          }
+
+          // 3. Printer returned to READY after minimum physical print duration
+          if (postHw.state === 'READY') {
+            if (Date.now() - postStartTime >= 3000) {
+              console.log(`[PrintService] ✓ Physical printer confirmed READY after print cycle: ${path.basename(imagePath)}`);
+              verifiedPhysical = true;
+              break;
+            }
+          }
         }
-        console.log(`[PrintService] ✓ Print job successfully transmitted to ${printerName}: ${path.basename(imagePath)}`);
-        return { success: true };
+
+        if (verifiedPhysical) {
+          console.log(`[PrintService] ✓ Print job successfully printed on ${activePrinter}: ${path.basename(imagePath)}`);
+          return { success: true };
+        } else {
+          const postHealth = await queryPrinterHealth(activePrinter, true);
+          if (!postHealth.ready) {
+            return { success: false, error: postHealth.message };
+          }
+          console.log(`[PrintService] ✓ Print job completed (health OK): ${path.basename(imagePath)}`);
+          return { success: true };
+        }
       }
 
       // If we haven't observed it in spooler, but at least 2.5s elapsed without error:
       if (Date.now() - startTime > 2500) {
-        const postHealth = await queryPrinterHealth(printerName, true);
+        const postHw = await getHardwareStatus(activePrinter, true);
+        if (
+          postHw.state === 'PAPER_OUT' ||
+          postHw.state === 'COVER_OPEN' ||
+          postHw.state === 'RIBBON_OUT' ||
+          postHw.state === 'JAMMED' ||
+          postHw.state === 'ERROR' ||
+          postHw.state === 'OFFLINE'
+        ) {
+          console.error(`[PrintService] ✗ Fast-transmit hardware failure: ${postHw.state} - ${postHw.message}`);
+          return { success: false, error: postHw.message };
+        }
+        const postHealth = await queryPrinterHealth(activePrinter, true);
         if (!postHealth.ready) {
           return { success: false, error: postHealth.message };
         }
-        console.log(`[PrintService] ✓ Print job fast-transmitted to ${printerName}: ${path.basename(imagePath)}`);
+        console.log(`[PrintService] ✓ Print job fast-transmitted to ${activePrinter}: ${path.basename(imagePath)}`);
         return { success: true };
       }
     }
@@ -659,7 +898,7 @@ export async function printImage(
 
   // 6. Timeout exceeded
   console.warn(`[PrintService] ⚠️ Spooler transmission timeout after ${TIMEOUT_MS / 1000}s`);
-  await cancelSpoolerJobs(printerName, Array.from(trackedJobIds));
+  await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
   return { success: false, error: 'Batas waktu transmisi spooler printer terlampaui (Timeout 25s)' };
 }
 
@@ -824,13 +1063,8 @@ export function registerPrintHandlers(config: PrintServiceConfig): void {
     return { success: true, bypass: isBypassMode };
   });
 
-  // Start background health polling every 3.5s
-  if (backgroundHealthTimer) clearInterval(backgroundHealthTimer);
-  backgroundHealthTimer = setInterval(() => {
-    if (!isBypassMode && defaultPrinterName) {
-      queryPrinterHealth(defaultPrinterName).catch(() => {});
-    }
-  }, 3500);
+  // Background health monitoring is centrally managed by PrinterMonitorService
+  // to prevent duplicate PowerShell process spawning and CPU contention.
 }
 
 export function stopPrintService(): void {

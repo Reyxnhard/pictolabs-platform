@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { exec } from 'child_process';
-import { getDefaultPrinterName, getIsBypassMode, resolvePrinterProfile } from './PrintService';
+import { getDefaultPrinterName, getIsBypassMode, resolvePrinterProfile, setDefaultPrinterName } from './PrintService';
+import { getHardwareStatus } from './PrinterHardwareAdapter';
 
 export type PrinterHardwareStatusCode =
   | 'READY'
@@ -33,6 +34,7 @@ let cachedHardwareStatus: PrinterHardwareStatus = {
 };
 
 let consecutiveErrorCount = 0;
+let lastWin32CheckTime = 0;
 const DEBOUNCE_THRESHOLD = 2; // Require 2 consecutive failed queries to escalate to OFFLINE (hysteresis)
 
 /**
@@ -65,6 +67,16 @@ function queryWin32PrinterState(printerName: string): Promise<{
 
       # 2. Query Software Print Queue
       $p = Get-CimInstance -ClassName Win32_Printer -Filter "Name = '$escaped'" -ErrorAction SilentlyContinue
+      if (-not $p -or $p.WorkOffline -or (($p.PrinterState -band 4) -ne 0)) {
+        $activeSibling = Get-CimInstance -ClassName Win32_Printer | Where-Object {
+          ($_.DriverName -like '${profile.driverPattern}' -or $_.Name -like '*${profile.name}*') -and
+          -not $_.WorkOffline -and
+          (($_.PrinterState -band 4) -eq 0)
+        } | Select-Object -First 1
+        if ($activeSibling) {
+          $p = $activeSibling
+        }
+      }
       if (-not $p) {
         $p = Get-CimInstance -ClassName Win32_Printer | Where-Object { $_.Name -eq $escaped -or $_.DriverName -like '${profile.driverPattern}' } | Select-Object -First 1
       }
@@ -131,7 +143,7 @@ let activeHardwarePromise: Promise<PrinterHardwareStatus> | null = null;
 /**
  * Perform a hardware health check cycle.
  */
-export async function checkPrinterHardware(): Promise<PrinterHardwareStatus> {
+export async function checkPrinterHardware(forceFresh = false): Promise<PrinterHardwareStatus> {
   if (activeHardwarePromise) {
     return activeHardwarePromise;
   }
@@ -154,7 +166,101 @@ export async function checkPrinterHardware(): Promise<PrinterHardwareStatus> {
       }
 
       const targetPrinter = getDefaultPrinterName() || 'DS-RX1';
+
+      // 1. Direct DNP mechanical telemetry probe
+      const hw = await getHardwareStatus(targetPrinter, forceFresh);
+      if (hw.state === 'COVER_OPEN') {
+        cachedHardwareStatus = {
+          connected: true,
+          ready: false,
+          status: 'DOOR_OPEN',
+          name: targetPrinter,
+          message: hw.message,
+          errorCode: 'DOOR_OPEN',
+          lastCheckedAt: now,
+        };
+        return cachedHardwareStatus;
+      }
+      if (hw.state === 'PAPER_OUT') {
+        cachedHardwareStatus = {
+          connected: true,
+          ready: false,
+          status: 'PAPER_OUT',
+          name: targetPrinter,
+          message: hw.message,
+          errorCode: 'PAPER_OUT',
+          lastCheckedAt: now,
+        };
+        return cachedHardwareStatus;
+      }
+      if (hw.state === 'RIBBON_OUT') {
+        cachedHardwareStatus = {
+          connected: true,
+          ready: false,
+          status: 'PAPER_OUT',
+          name: targetPrinter,
+          message: hw.message,
+          errorCode: 'RIBBON_OUT',
+          lastCheckedAt: now,
+        };
+        return cachedHardwareStatus;
+      }
+      if (hw.state === 'JAMMED') {
+        cachedHardwareStatus = {
+          connected: true,
+          ready: false,
+          status: 'PAPER_JAM',
+          name: targetPrinter,
+          message: hw.message,
+          errorCode: 'PAPER_JAM',
+          lastCheckedAt: now,
+        };
+        return cachedHardwareStatus;
+      }
+      if (hw.state === 'OFFLINE') {
+        cachedHardwareStatus = {
+          connected: false,
+          ready: false,
+          status: 'OFFLINE',
+          name: targetPrinter,
+          message: hw.message,
+          errorCode: 'PRINTER_OFFLINE',
+          lastCheckedAt: now,
+        };
+        return cachedHardwareStatus;
+      }
+      if (hw.state === 'ERROR') {
+        cachedHardwareStatus = {
+          connected: true,
+          ready: false,
+          status: 'DRIVER_ERROR',
+          name: targetPrinter,
+          message: hw.message,
+          errorCode: 'HARDWARE_ERROR',
+          lastCheckedAt: now,
+        };
+        return cachedHardwareStatus;
+      }
+
+      // Fast-path: If DNP hardware is confirmed READY and queue was verified within 25s,
+      // avoid spawning heavy powershell.exe on every polling tick.
+      if (
+        !forceFresh &&
+        cachedHardwareStatus.status === 'READY' &&
+        cachedHardwareStatus.name &&
+        Date.now() - lastWin32CheckTime < 25000
+      ) {
+        cachedHardwareStatus.lastCheckedAt = now;
+        return cachedHardwareStatus;
+      }
+
       const query = await queryWin32PrinterState(targetPrinter);
+      lastWin32CheckTime = Date.now();
+
+      if (query.name && query.name !== targetPrinter) {
+        console.log(`[PrinterMonitorService] 🔄 Dynamic printer migration: '${targetPrinter}' -> '${query.name}'`);
+        setDefaultPrinterName(query.name);
+      }
 
       if (!query.connected || !query.physicalPresent) {
         consecutiveErrorCount++;
@@ -266,6 +372,6 @@ export function stopPrinterMonitor(): void {
  */
 export function registerPrinterMonitorHandlers(): void {
   ipcMain.handle('printer:get-hardware-status', async () => {
-    return checkPrinterHardware();
+    return checkPrinterHardware(true);
   });
 }

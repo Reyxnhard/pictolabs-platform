@@ -375,7 +375,7 @@ export interface KioskSessionHistoryItem {
   filter: string;
   compositePath?: string;
   compositeExists: boolean;
-  printStatus: 'pending' | 'printed' | 'failed' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'PENDING';
+  printStatus: 'pending' | 'printed' | 'failed' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'PENDING' | 'NOT_QUEUED';
   printAttempts: number;
   lastPrintError?: string | null;
   uploaded: boolean;

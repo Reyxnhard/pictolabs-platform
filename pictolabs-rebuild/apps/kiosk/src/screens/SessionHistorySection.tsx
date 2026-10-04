@@ -468,6 +468,8 @@ export default function SessionHistorySection({ isOnline, onShowToast }: Session
                             ? 'bg-blue-500/10 text-blue-400 border-blue-500/30 animate-pulse'
                             : session.printStatus === 'FAILED' || session.printStatus === 'failed'
                             ? 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                            : session.printStatus === 'NOT_QUEUED'
+                            ? 'bg-slate-500/10 text-slate-400 border-slate-500/30'
                             : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
                         }`}
                       >
@@ -478,6 +480,8 @@ export default function SessionHistorySection({ isOnline, onShowToast }: Session
                           ? 'SEDANG CETAK'
                           : session.printStatus === 'FAILED' || session.printStatus === 'failed'
                           ? 'GAGAL CETAK'
+                          : session.printStatus === 'NOT_QUEUED'
+                          ? 'BELUM DIANTREKAN'
                           : 'MENUNGGU CETAK'}
                       </span>
 
@@ -677,10 +681,12 @@ export default function SessionHistorySection({ isOnline, onShowToast }: Session
                             ? 'bg-blue-500/10 text-blue-400 border-blue-500/30 animate-pulse'
                             : selectedSession.printStatus === 'FAILED' || selectedSession.printStatus === 'failed'
                             ? 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                            : selectedSession.printStatus === 'NOT_QUEUED'
+                            ? 'bg-slate-500/10 text-slate-400 border-slate-500/30'
                             : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
                         }`}
                       >
-                        {selectedSession.printStatus}
+                        {selectedSession.printStatus === 'NOT_QUEUED' ? 'NOT_QUEUED (Belum Diantrekan)' : selectedSession.printStatus}
                       </span>
                     </div>
 

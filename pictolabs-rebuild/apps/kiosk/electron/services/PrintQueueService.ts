@@ -455,30 +455,41 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
     }
   }
 
-  // 1. Transition: PENDING -> PRINTING
-  const printingTime = new Date().toISOString();
-  db.prepare(`
-    UPDATE print_queue 
-    SET status = 'PRINTING', updated_at = ? 
-    WHERE id = ?
-  `).run(printingTime, item.id);
-
-  console.log(`[PrintQueueService] Printing job ${item.id} (Session: ${item.session_id}, Attempt: ${item.attempts + 1})...`);
-
-  // 2. Call to printImage() / driver with hardware pre-flight check
+  // 1. Authoritative Pre-flight Hardware Verification (while job is in PENDING)
   let printResult: { success: boolean; error?: string };
-
   const targetPrinter = item.printer_name || getDefaultPrinterName() || 'DS-RX1';
-  const hwStatus = await queryPrinterHealth(targetPrinter, true);
 
-  if (!hwStatus.ready && !getIsBypassMode()) {
-    console.warn(`[PrintQueueService] ⚠️ Pre-print hardware block: ${hwStatus.message}`);
-    printResult = { success: false, error: hwStatus.message || 'Printer hardware error' };
-  } else if (getIsBypassMode()) {
+  if (getIsBypassMode()) {
     console.log(`[PrintQueueService] [BYPASS] Simulated print job: ${cleanPath} (x${item.copies})`);
+    const printingTime = new Date().toISOString();
+    db.prepare(`
+      UPDATE print_queue 
+      SET status = 'PRINTING', updated_at = ? 
+      WHERE id = ?
+    `).run(printingTime, item.id);
     printResult = { success: true };
   } else {
-    printResult = await printImage(cleanPath, targetPrinter, item.copies);
+    console.log(`[PrintQueueService] Performing authoritative hardware pre-flight for job ${item.id} on '${targetPrinter}'...`);
+    const hwStatus = await queryPrinterHealth(targetPrinter, true);
+
+    if (!hwStatus.ready) {
+      console.warn(`[PrintQueueService] ⚠️ Pre-print hardware block: ${hwStatus.code} - ${hwStatus.message}`);
+      printResult = { success: false, error: hwStatus.message || 'Printer hardware error' };
+    } else {
+      // 2. Transition: PENDING -> PRINTING
+      const printingTime = new Date().toISOString();
+      db.prepare(`
+        UPDATE print_queue 
+        SET status = 'PRINTING', updated_at = ? 
+        WHERE id = ?
+      `).run(printingTime, item.id);
+
+      console.log(`[PrintQueueService] Printing job ${item.id} (Session: ${item.session_id}, Attempt: ${item.attempts + 1})...`);
+
+      // 3. Dispatch to PrintService, handing off the validated hwStatus directly to prevent redundant probes
+      const resolvedActivePrinter = hwStatus.name || targetPrinter;
+      printResult = await printImage(cleanPath, resolvedActivePrinter, item.copies, hwStatus);
+    }
   }
 
   const completeTime = new Date().toISOString();
@@ -602,8 +613,8 @@ export function retryPrintJob(jobId: string): { success: boolean; error?: string
     const row = db.prepare('SELECT * FROM print_queue WHERE id = ?').get(jobId) as any;
     if (!row) return { success: false, error: 'Job not found' };
 
-    if (row.status !== 'FAILED' && row.status !== 'DEAD_LETTER') {
-      return { success: false, error: `Only FAILED or DEAD_LETTER jobs can be retried (current status: ${row.status})` };
+    if (row.status !== 'FAILED' && row.status !== 'DEAD_LETTER' && !(row.status === 'PENDING' && row.attempts > 0)) {
+      return { success: false, error: `Only FAILED, DEAD_LETTER, or retrying PENDING jobs can be retried (current status: ${row.status})` };
     }
 
     const now = new Date().toISOString();

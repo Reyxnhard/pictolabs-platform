@@ -102,29 +102,37 @@ export default function QRScreen({ navigate, session, resetSession }: ScreenProp
         }
 
         const sId = session.sessionId || `session_${Date.now()}`;
-        const enqueueRes = await kiosk.printer.enqueue(cleanPath, 1, sId);
-        console.log('[QRScreen] ✓ Print job enqueued in SQLite:', enqueueRes);
+        console.log('[QRScreen] Enqueueing and monitoring print job for session:', sId);
 
-        if (!enqueueRes || !enqueueRes.success) {
-          if (!isMounted) return;
-          clearInterval(progressInterval);
-          setPrintStatus('failed');
-          return;
+        // 1. Enqueue exactly once for this customer session (Sole Enqueue Owner)
+        const enqueueRes = await kiosk.printer.enqueue(cleanPath, 1, sId);
+        if (!enqueueRes.success) {
+          console.warn('[QRScreen] Print enqueue warning/error:', enqueueRes.error);
         }
 
-        // Poll queue status to track actual transmission/completion
+        // 2. Poll queue status to track actual transmission/completion
         const pollStartTime = Date.now();
+        let lastSuccessfulPollTime = Date.now();
+        let consecutivePollErrors = 0;
+
         pollInterval = setInterval(async () => {
           if (!isMounted) {
             if (pollInterval) clearInterval(pollInterval);
             return;
           }
 
+          const elapsed = Date.now() - pollStartTime;
+
           try {
             const queueJob = await kiosk.printer.getQueueStatus(sId);
-            if (!queueJob) return;
 
-            if (queueJob.status === 'COMPLETED') {
+            if (queueJob) {
+              lastSuccessfulPollTime = Date.now();
+              consecutivePollErrors = 0;
+            }
+
+            // 1. Success Condition: Queue status reaches COMPLETED
+            if (queueJob && queueJob.status === 'COMPLETED') {
               if (pollInterval) clearInterval(pollInterval);
               clearInterval(progressInterval);
               setPrintProgress(100);
@@ -138,30 +146,83 @@ export default function QRScreen({ navigate, session, resetSession }: ScreenProp
                   origin: { y: 0.8 },
                 });
               } catch {}
-            } else if (queueJob.status === 'DEAD_LETTER') {
+              return;
+            }
+
+            // 2. Immediate Failure Condition: DEAD_LETTER
+            if (queueJob && queueJob.status === 'DEAD_LETTER') {
+              console.warn('[QRScreen] Print job entered DEAD_LETTER state:', queueJob);
               if (pollInterval) clearInterval(pollInterval);
               clearInterval(progressInterval);
               setPrintStatus('failed');
-            } else if (queueJob.status === 'FAILED') {
-              if (queueJob.attempts >= 5) {
-                if (pollInterval) clearInterval(pollInterval);
-                clearInterval(progressInterval);
-                setPrintStatus('failed');
-              }
-            } else if (queueJob.status === 'PRINTING') {
+              return;
+            }
+
+            // 3. Immediate Failure Condition: FAILED and attempts >= maxAttempts
+            const attempts = queueJob ? Number((queueJob as any).attempts || 0) : 0;
+            const maxAttempts = queueJob ? Number((queueJob as any).maxAttempts || (queueJob as any).max_attempts || 5) : 5;
+            if (queueJob && queueJob.status === 'FAILED' && attempts >= maxAttempts) {
+              console.warn(`[QRScreen] Print job reached max retry attempts (${attempts}/${maxAttempts}):`, queueJob);
+              if (pollInterval) clearInterval(pollInterval);
+              clearInterval(progressInterval);
+              setPrintStatus('failed');
+              return;
+            }
+
+            // 4. Immediate Real Hardware Fault Check from backend semantics
+            const lastError = queueJob ? String((queueJob as any).lastError || (queueJob as any).last_error || '') : '';
+            const isFatalHardwareError =
+              lastError.includes('PAPER_OUT') ||
+              lastError.includes('Kertas foto habis') ||
+              lastError.includes('DOOR_OPEN') ||
+              lastError.includes('COVER_OPEN') ||
+              lastError.includes('Pintu penutup') ||
+              lastError.includes('RIBBON_OUT') ||
+              lastError.includes('Pita ribbon') ||
+              lastError.includes('JAMMED') ||
+              lastError.includes('Kertas macet');
+
+            if (queueJob && isFatalHardwareError && attempts >= 1) {
+              console.error('[QRScreen] Definitive hardware failure detected:', lastError);
+              if (pollInterval) clearInterval(pollInterval);
+              clearInterval(progressInterval);
+              setPrintStatus('failed');
+              return;
+            }
+
+            // 5. Active In-Flight Tracking: PENDING or PRINTING
+            // DO NOT display FAILED merely because elapsed time exceeded normal print duration
+            if (queueJob && queueJob.status === 'PRINTING') {
               setPrintProgress((prev) => Math.max(prev, 65));
             }
 
-            // Bounded poll timeout (40 seconds)
-            if (Date.now() - pollStartTime > 40000) {
-              if (pollInterval) clearInterval(pollInterval);
-              clearInterval(progressInterval);
-              if (queueJob.status !== 'COMPLETED') {
+            // 6. LAST-RESORT Safety Timeout (75 seconds)
+            // The 75-second timeout is NOT the normal success/failure mechanism.
+            // It exists only to prevent an infinitely stuck UI if the backend becomes permanently unresponsive or the job is missing.
+            if (elapsed > 75000) {
+              const isJobActive = queueJob && (queueJob.status === 'PRINTING' || queueJob.status === 'PENDING');
+              const isBackendResponsive = Date.now() - lastSuccessfulPollTime < 5000;
+
+              // If still genuinely active and backend is responsive, allow continued monitoring up to 120s guard
+              if (isJobActive && isBackendResponsive && elapsed < 120000) {
+                console.log(`[QRScreen] Print job ${sId} still active in ${queueJob.status} at ${Math.round(elapsed / 1000)}s; continuing monitoring...`);
+              } else {
+                console.warn(`[QRScreen] Last-resort safety timeout triggered at ${Math.round(elapsed / 1000)}s. Active: ${Boolean(isJobActive)}, Responsive: ${isBackendResponsive}`);
+                if (pollInterval) clearInterval(pollInterval);
+                clearInterval(progressInterval);
                 setPrintStatus('failed');
+                return;
               }
             }
           } catch (pollErr) {
+            consecutivePollErrors++;
             console.warn('[QRScreen] Queue status poll warning:', pollErr);
+            if (elapsed > 75000 && consecutivePollErrors >= 3) {
+              if (pollInterval) clearInterval(pollInterval);
+              clearInterval(progressInterval);
+              setPrintStatus('failed');
+              return;
+            }
           }
         }, 1200);
       } catch (err) {

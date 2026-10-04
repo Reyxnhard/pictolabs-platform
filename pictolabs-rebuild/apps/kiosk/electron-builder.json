@@ -23,6 +23,10 @@
       "to": "ffmpeg.exe"
     },
     {
+      "from": "resources/bin/dnp",
+      "to": "bin/dnp"
+    },
+    {
       "from": "resources/frames",
       "to": "frames"
     }

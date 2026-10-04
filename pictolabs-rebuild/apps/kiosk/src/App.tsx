@@ -6,7 +6,6 @@ import PaymentScreen from './screens/PaymentScreen';
 import CaptureScreen from './screens/CaptureScreen';
 import FilterScreen from './screens/FilterScreen';
 import RenderScreen from './screens/RenderScreen';
-import PrintScreen from './screens/PrintScreen';
 import QRScreen from './screens/QRScreen';
 import AdminScreen from './screens/AdminScreen';
 import ActivationScreen from './screens/ActivationScreen';
@@ -24,7 +23,6 @@ export type KioskScreen =
   | 'capture'
   | 'filter'
   | 'render'
-  | 'print'
   | 'qr'
   | 'activation';
 
@@ -373,7 +371,7 @@ function KioskAppInner() {
       {screen === 'capture' && <CaptureScreen {...screenProps} />}
       {screen === 'filter' && <FilterScreen {...screenProps} />}
       {screen === 'render' && <RenderScreen {...screenProps} />}
-      {(screen === 'print' || screen === 'qr') && <QRScreen {...screenProps} />}
+      {screen === 'qr' && <QRScreen {...screenProps} />}
       {screen === 'activation' && (
         <ActivationScreen
           onActivated={(_identity) => {

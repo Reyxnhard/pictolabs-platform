@@ -519,7 +519,7 @@ export interface KioskSessionHistoryItem {
   filter: string;
   compositePath?: string;
   compositeExists: boolean;
-  printStatus: 'pending' | 'printed' | 'failed' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'PENDING';
+  printStatus: 'pending' | 'printed' | 'failed' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'PENDING' | 'NOT_QUEUED';
   printAttempts: number;
   lastPrintError?: string | null;
   uploaded: boolean;
@@ -595,6 +595,8 @@ export function getSessionHistory(query?: KioskSessionHistoryQuery): KioskSessio
       printStatus = 'COMPLETED';
     } else if (row.print_status === 'failed') {
       printStatus = 'FAILED';
+    } else {
+      printStatus = 'NOT_QUEUED';
     }
 
     // Upload status resolution
@@ -682,18 +684,41 @@ export async function reprintSessionWithDebounce(
       return { success: false, error: `Sesi tidak ditemukan: ${sessionId}` };
     }
 
-    // 1. Debounce check: Prevent rapid double-tap if a job for this session is already PENDING or PRINTING
+    // 1. Debounce check: Prevent rapid double-tap while actively printing, but permit operator override on stalled or retrying jobs
     const activeJob = db.prepare(`
-      SELECT id, status FROM print_queue 
+      SELECT id, status, attempts, next_retry_at, updated_at FROM print_queue 
       WHERE session_id = ? AND status IN ('PENDING', 'PRINTING')
-      LIMIT 1
+      ORDER BY created_at DESC LIMIT 1
     `).get(sessionId) as any;
 
     if (activeJob) {
-      return {
-        success: false,
-        error: `Pencetakan untuk sesi ini sedang berlangsung (Status: ${activeJob.status}). Mohon tunggu hingga pekerjaan selesai.`,
-      };
+      const now = Date.now();
+      const updatedTime = new Date(activeJob.updated_at || 0).getTime();
+      const isStuckPrinting = activeJob.status === 'PRINTING' && (now - updatedTime > 20_000);
+      const isRetryingPending = activeJob.status === 'PENDING' && (activeJob.attempts > 0 || Boolean(activeJob.next_retry_at));
+
+      if (isStuckPrinting || isRetryingPending) {
+        // Cancel the stalled/retrying job so the operator's manual reprint proceeds immediately without waiting
+        console.log(`[SyncEngine] 🖨️ Overriding stalled/retrying job ${activeJob.id} (status: ${activeJob.status}, attempts: ${activeJob.attempts}) for manual reprint.`);
+        db.prepare(`UPDATE print_queue SET status = 'CANCELLED', updated_at = ? WHERE id = ?`)
+          .run(new Date().toISOString(), activeJob.id);
+      } else if (activeJob.status === 'PRINTING') {
+        return {
+          success: false,
+          error: `Pencetakan untuk sesi ini sedang aktif berlangsung di printer. Mohon tunggu beberapa detik.`,
+        };
+      } else if (now - updatedTime < 4000) {
+        // Debounce: only block if the PENDING job was created/updated within the last 4 seconds
+        return {
+          success: false,
+          error: `Pencetakan untuk sesi ini baru saja dikirim ke antrean. Mohon tunggu sebentar.`,
+        };
+      } else {
+        // If pending for more than 4s without printing, override it
+        console.log(`[SyncEngine] Overriding idle PENDING job ${activeJob.id} for manual reprint.`);
+        db.prepare(`UPDATE print_queue SET status = 'CANCELLED', updated_at = ? WHERE id = ?`)
+          .run(new Date().toISOString(), activeJob.id);
+      }
     }
 
     // 2. Validate composite path and local asset existence

@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "dgSpecHash": "i1FB4TofZcoLqIavslTI3mBV/i9hfweKj1gIARqbE8Phq8Wz1cIv9x8iK/8URqlfG6IDHOl9fZYUYf6ZdMfzyg==",
+  "success": true,
+  "projectFilePath": "C:\\Users\\ezarh\\.gemini\\antigravity-ide\\scratch\\Pictolabs\\pictolabs-rebuild\\scratch\\net_decompile\\net_decompile.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\ezarh\\.nuget\\packages\\icsharpcode.decompiler\\11.1.0.9782\\icsharpcode.decompiler.11.1.0.9782.nupkg.sha512",
+    "C:\\Users\\ezarh\\.nuget\\packages\\system.collections.immutable\\9.0.0\\system.collections.immutable.9.0.0.nupkg.sha512",
+    "C:\\Users\\ezarh\\.nuget\\packages\\system.memory\\4.5.5\\system.memory.4.5.5.nupkg.sha512",
+    "C:\\Users\\ezarh\\.nuget\\packages\\system.reflection.metadata\\9.0.0\\system.reflection.metadata.9.0.0.nupkg.sha512",
+    "C:\\Users\\ezarh\\.nuget\\packages\\system.runtime.compilerservices.unsafe\\6.0.0\\system.runtime.compilerservices.unsafe.6.0.0.nupkg.sha512"
+  ],
+  "logs": []
+}
