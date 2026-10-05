@@ -157,7 +157,8 @@ Restructured the pipeline between `PrintQueueService.ts` and `PrintService.ts` t
 
 1. **`PrintService.ts` Interface & Exact Identity Handoff:**
    - Extended `PrinterHealth` interface with `mediaRemaining?: number`.
-   - `queryPrinterHealth` records `mediaRemaining` directly from the initial `PhotolabDNP.exe` p   - Updated `printImage(imagePath, printerName, copies, preValidatedHealth?: PrinterHealth)` and exported `isPrinterHandoffValid` to enforce **EXACT printer identity matching**:
+   - `queryPrinterHealth` records `mediaRemaining` directly from the initial `PhotolabDNP.exe` probe.
+   - Updated `printImage(imagePath, printerName, copies, preValidatedHealth?: PrinterHealth)` and exported `isPrinterHandoffValid` to enforce **EXACT printer identity matching**:
    ```typescript
    // apps/kiosk/electron/services/PrintService.ts lines 585-645
    export function isPrinterHandoffValid(

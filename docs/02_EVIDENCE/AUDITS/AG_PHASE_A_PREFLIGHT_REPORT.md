@@ -245,7 +245,7 @@ The following critical governance, workstream, evidence, and runbook documents w
 
 1. **Tier 1 Governance Documents (Protected):**
    - [`docs/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/00_CONTEXT/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md) — Baseline Master Timeline (Untouched)
-   - [`CURRENT_PROJECT_STATUS.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/CURRENT_PROJECT_STATUS.md) / [`docs/CURRENT_PROJECT_STATE.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/00_CONTEXT/CURRENT_PROJECT_STATE.md) — Active Project State (Untouched)
+   - [`CURRENT_PROJECT_STATUS.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/99_ARCHIVE/SUPERSEDED/CURRENT_PROJECT_STATUS.md) / [`docs/CURRENT_PROJECT_STATE.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/00_CONTEXT/CURRENT_PROJECT_STATE.md) — Active Project State (Untouched)
    - [`docs/PICTOLABS_MASTER_BLUEPRINT.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/00_CONTEXT/PICTOLABS_MASTER_BLUEPRINT.md) — Master Blueprint (Untouched)
 
 2. **Tier 2 Canonical Workstream Layer (Protected in `docs/01_WORKSTREAMS/`):**

@@ -280,7 +280,7 @@ Where are the 40.2 seconds spent?
    - **Subtotal: 16.0 seconds.**
 8. **Post-Submission Media Verification Polling (`PrintService.ts:780-814`):**
    - Polls `getHardwareStatus(activePrinter, true)` every 1.2s.
-   - Firmare only decrements `mediaRemaining` AFTER cutter cycle finishes and strips eject.
+   - Firmware only decrements `mediaRemaining` AFTER cutter cycle finishes and strips eject.
    - Sampling jitter / probe duration: ~2.1s.
    - **Grand Total: ~40.2 seconds.**
 
