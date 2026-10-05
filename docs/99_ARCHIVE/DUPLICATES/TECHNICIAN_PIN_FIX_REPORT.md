@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary
 
-The Root Cause identified in [`TECHNICIAN_PIN_SYNC_RCA.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/TECHNICIAN_PIN_SYNC_RCA.md) has been resolved. The Kiosk Operator Access keypad now dynamically discovers the paired booth credentials, completely eliminates `localhost:4000` fallback in production runtime, and directs verification calls to the production Cloud API.
+The Root Cause identified in [`TECHNICIAN_PIN_SYNC_RCA.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/RCA/TECHNICIAN_PIN_SYNC_RCA.md) has been resolved. The Kiosk Operator Access keypad now dynamically discovers the paired booth credentials, completely eliminates `localhost:4000` fallback in production runtime, and directs verification calls to the production Cloud API.
 
 ### Test Results Summary
 

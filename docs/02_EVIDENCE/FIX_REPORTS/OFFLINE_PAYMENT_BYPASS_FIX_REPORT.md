@@ -4,7 +4,7 @@
 **Severity**: P0 Blocker Resolved  
 **Status**: Implemented & 100% Empirically Validated (Scenarios A, B, C, D, E: ALL PASS)  
 **Date**: September 24, 2026  
-**Reference RCA**: [OFFLINE_PAYMENT_BYPASS_RCA.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/OFFLINE_PAYMENT_BYPASS_RCA.md)  
+**Reference RCA**: [OFFLINE_PAYMENT_BYPASS_RCA.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/RCA/OFFLINE_PAYMENT_BYPASS_RCA.md)  
 
 ---
 

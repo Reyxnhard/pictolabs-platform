@@ -7,7 +7,7 @@
 > **Target OS**: Ubuntu 24.04 LTS (x86_64)  
 > **Capacity**: 1–5 Commercial Photobooth Kiosks  
 > **Stack**: Docker Compose + NestJS (Node 20 Alpine) + PostgreSQL 16 + Redis 7 + Nginx SSL + Cloudflare R2  
-> **Audit References**: [DEPLOYMENT_PLAN.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/DEPLOYMENT_PLAN.md) & [LOCAL_DEPLOYMENT_VALIDATION.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/LOCAL_DEPLOYMENT_VALIDATION.md)
+> **Audit References**: [DEPLOYMENT_PLAN.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/99_ARCHIVE/SUPERSEDED/DEPLOYMENT_PLAN.md) & [LOCAL_DEPLOYMENT_VALIDATION.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/UAT/LOCAL_DEPLOYMENT_VALIDATION.md)
 
 ---
 
@@ -110,7 +110,7 @@ Lakukan konfigurasi berikut pada panel kontrol Cloudflare (Domain: `pictolabs.id
 
 # 3. Exact VPS Specifications Required
 
-Berdasarkan audit kapasitas pada [INFRASTRUCTURE_REQUIREMENTS_AUDIT.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/INFRASTRUCTURE_REQUIREMENTS_AUDIT.md) untuk skala operasional **1–5 Unit Booth**:
+Berdasarkan audit kapasitas pada [INFRASTRUCTURE_REQUIREMENTS_AUDIT.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/AUDITS/INFRASTRUCTURE_REQUIREMENTS_AUDIT.md) untuk skala operasional **1–5 Unit Booth**:
 
 | Komponen Hardware | Spesifikasi Minimum Mutlak | Spesifikasi Rekomendasi (*Recommended*) | Rationale Teknis |
 | :--- | :--- | :--- | :--- |

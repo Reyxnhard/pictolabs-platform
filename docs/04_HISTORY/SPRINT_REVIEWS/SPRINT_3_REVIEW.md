@@ -3,7 +3,7 @@
 > **Platform**: Pictolabs v1.0 Enterprise Edition  
 > **Date**: September 8, 2026  
 > **Audit Focus**: Actual Repository Implementation (Not Planning Documents)  
-> **Source of Truth**: [docs/SPRINT_3_PLAN.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/SPRINT_3_PLAN.md)  
+> **Source of Truth**: [docs/SPRINT_3_PLAN.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/99_ARCHIVE/SUPERSEDED/SPRINT_3_PLAN.md)  
 > **Target Scope**: Cloudflare R2 Object Storage, Presigned Direct Upload, Resilient Offline-First Upload Queue, Public CDN Landing Page, Dual-Tier Media Retention Policy (7-Day Local & 30-Day Cloud Expiration), and Graceful Expiration Page.  
 > **Delivery Path**: `docs/SPRINT_3_REVIEW.md`
 

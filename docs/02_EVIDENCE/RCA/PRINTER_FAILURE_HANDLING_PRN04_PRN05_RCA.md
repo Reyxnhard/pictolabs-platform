@@ -329,7 +329,7 @@ if (observedJobInSpooler) {
 
 ## 14. Why Current Fix Did Not Detect It
 
-The current fix design ([`PRINTER_FAILURE_HANDLING_RCA.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/PRINTER_FAILURE_HANDLING_RCA.md)) was based on the premise that:
+The current fix design ([`PRINTER_FAILURE_HANDLING_RCA.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/99_ARCHIVE/SUPERSEDED/PRINTER_FAILURE_HANDLING_RCA.md)) was based on the premise that:
 > *"The monitor must detect at minimum: Error, Offline, PaperOut, UserIntervention, Blocked, PaperJam, Door/Cover errors where Windows exposes them."*
 
 However, empirical testing on the physical DNP DS-RX1 proves:

@@ -142,11 +142,11 @@ Berdasarkan berkas output nyata sesi foto di kiosk:
 
 ### 4.1 Local Storage Usage (Kiosk PC di Mall)
 * Mengikuti aturan **Local Storage Retention: 7 Hari**.
-* Media hanya dihapus jika `upload_status == COMPLETED` ([AC-2.1](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/SPRINT_3_PLAN.md)).
+* Media hanya dihapus jika `upload_status == COMPLETED` ([AC-2.1](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/99_ARCHIVE/SUPERSEDED/SPRINT_3_PLAN.md)).
 * **Kebutuhan Disk Kiosk**: **20 GB – 35 GB** ruang bebas untuk direktori `captures/`, `composites/`, dan `videos/`.
 
 ### 4.2 Cloudflare R2 Usage (Cloud Storage)
-* Mengikuti aturan **Cloudflare R2 Lifecycle: 30 Hari Automatic Purge** ([AC-2.2](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/SPRINT_3_PLAN.md)).
+* Mengikuti aturan **Cloudflare R2 Lifecycle: 30 Hari Automatic Purge** ([AC-2.2](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/99_ARCHIVE/SUPERSEDED/SPRINT_3_PLAN.md)).
 * Berkas terkompresi yang diunggah per sesi:
   * 1x Komposit Web-optimized JPEG: ~2.5 MB
   * 1x Live Photo MP4 (h264 optimized): ~3.5 MB

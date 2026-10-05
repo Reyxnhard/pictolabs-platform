@@ -100,8 +100,8 @@ In response to the VPS Deployment Readiness assessment, an engineering freeze on
 ### BLK-06: Final Production Deployment Guide
 * **Status:** **RESOLVED**
 * Delivered comprehensive, copy-pasteable operator handbook:
-  - [FINAL_PRODUCTION_DEPLOYMENT_GUIDE.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/FINAL_PRODUCTION_DEPLOYMENT_GUIDE.md)
-  - [docs/FINAL_PRODUCTION_DEPLOYMENT_GUIDE.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/FINAL_PRODUCTION_DEPLOYMENT_GUIDE.md)
+  - [FINAL_PRODUCTION_DEPLOYMENT_GUIDE.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/03_RUNBOOKS/DEPLOYMENT/FINAL_PRODUCTION_DEPLOYMENT_GUIDE.md)
+  - [docs/FINAL_PRODUCTION_DEPLOYMENT_GUIDE.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/03_RUNBOOKS/DEPLOYMENT/FINAL_PRODUCTION_DEPLOYMENT_GUIDE.md)
 
 ---
 

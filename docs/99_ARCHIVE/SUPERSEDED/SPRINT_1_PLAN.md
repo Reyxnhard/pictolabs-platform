@@ -1,6 +1,6 @@
 # SPRINT 1 IMPLEMENTATION PLAN: HARDWARE RESILIENCE & CLOUD SYNC
 
-> **Source of Truth**: [MASTER_PROJECT_STATUS.md](file:///C:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/MASTER_PROJECT_STATUS.md)  
+> **Source of Truth**: [MASTER_PROJECT_STATUS.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/SPECS_REPORTS/MASTER_PROJECT_STATUS.md)  
 > **Target Version**: Pictolabs v1.0 Enterprise  
 > **Sprint Scope**: Focus ONLY on the 4 foundational resilience items:  
 > 1. Replace `sessions.json` with SQLite (`better-sqlite3`)  

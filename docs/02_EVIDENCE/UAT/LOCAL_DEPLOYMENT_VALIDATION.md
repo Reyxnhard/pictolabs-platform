@@ -8,7 +8,7 @@
 > * [apps/backend/Dockerfile](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/backend/Dockerfile)
 > * [docker-compose.prod.yml](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/docker-compose.prod.yml)
 > * [nginx/nginx.conf](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/nginx/nginx.conf)
-> * [DEPLOYMENT_PLAN.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/DEPLOYMENT_PLAN.md)
+> * [DEPLOYMENT_PLAN.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/99_ARCHIVE/SUPERSEDED/DEPLOYMENT_PLAN.md)
 
 ---
 
@@ -85,7 +85,7 @@ Berkas [docker-compose.prod.yml](file:///c:/Users/ezarh/.gemini/antigravity-ide/
   nginx: [emerg] cannot load certificate ".../fullchain.pem": BIO_new_file() failed (No such file or directory)
   ```
 * **Solusi**:
-  Alur eksekusi pada [DEPLOYMENT_PLAN.md Tahap 5](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/DEPLOYMENT_PLAN.md#L441-L456) telah dirancang secara presisi untuk menjalankan Certbot standalone **sebelum** container Docker dinyalakan.
+  Alur eksekusi pada [DEPLOYMENT_PLAN.md Tahap 5](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/99_ARCHIVE/SUPERSEDED/DEPLOYMENT_PLAN.md#L441-L456) telah dirancang secara presisi untuk menjalankan Certbot standalone **sebelum** container Docker dinyalakan.
 
 ---
 

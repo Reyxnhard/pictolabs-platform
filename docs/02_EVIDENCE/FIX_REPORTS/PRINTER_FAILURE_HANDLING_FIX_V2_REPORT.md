@@ -13,7 +13,7 @@ Physical UAT on previous Printer Failure Handling (V1) revealed:
 - **PRN-05 (Cover Open):** Front door/cover opened $\rightarrow$ Kiosk UI reported success ("Selesai"), Session History marked as `TERCETAK`, paper was decremented. **FALSE SUCCESS.**
 
 ### Confirmed Mechanical & Driver Behavior:
-As proven in [PRINTER_FAILURE_HANDLING_PRN04_PRN05_RCA.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/PRINTER_FAILURE_HANDLING_PRN04_PRN05_RCA.md), the DNP DS-RX1 uses a standard Windows GPD driver architecture (`DSRX1.GPD` / `usbprint.sys`). The printer controller contains an onboard 64 MB SDRAM frame buffer.
+As proven in [PRINTER_FAILURE_HANDLING_PRN04_PRN05_RCA.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/RCA/PRINTER_FAILURE_HANDLING_PRN04_PRN05_RCA.md), the DNP DS-RX1 uses a standard Windows GPD driver architecture (`DSRX1.GPD` / `usbprint.sys`). The printer controller contains an onboard 64 MB SDRAM frame buffer.
 1. When a print job is submitted via `rundll32 shimgvw.dll,ImageView_PrintTo`, Windows Spooler rasterizes the bitmap and streams it over USB into the printer's SDRAM buffer within 1–2 seconds.
 2. Because the USB controller successfully receives all bytes into SDRAM, Windows Spooler considers its transmission complete and immediately purges/deletes the print job from the spooler queue.
 3. Windows WMI (`Win32_Printer`) and CIM providers report `DetectedErrorState = 0`, `PrinterState = 0`, and `WorkOffline = False`. The standard Windows GPD driver does not implement a bidirectional Language Monitor to reflect internal mechanical engine state back to the Windows Spooler subsystem.

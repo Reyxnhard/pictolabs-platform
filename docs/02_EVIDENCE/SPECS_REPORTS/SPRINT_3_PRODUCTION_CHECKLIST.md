@@ -3,7 +3,7 @@
 > **Platform**: Pictolabs v1.0 Enterprise Edition  
 > **Date**: September 8, 2026  
 > **Audit Type**: Real-World Environment Audit & Production Readiness Assessment  
-> **Source of Truth**: [docs/SPRINT_3_REVIEW.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/SPRINT_3_REVIEW.md)  
+> **Source of Truth**: [docs/SPRINT_3_REVIEW.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/04_HISTORY/SPRINT_REVIEWS/SPRINT_3_REVIEW.md)  
 > **Delivery Path**: `docs/SPRINT_3_PRODUCTION_CHECKLIST.md`
 
 ---

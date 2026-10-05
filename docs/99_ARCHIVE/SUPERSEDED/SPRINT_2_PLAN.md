@@ -3,7 +3,7 @@
 > **Platform**: Pictolabs v1.0 Enterprise Edition  
 > **Status**: Ready for Implementation  
 > **Sprint Focus**: Automated Dynamic QRIS, State Machine, Gateway Integration, Webhook Verification, and Crash Recovery  
-> **Source of Truth**: [docs/MASTER_PROJECT_STATUS.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/MASTER_PROJECT_STATUS.md) & [docs/SPRINT_1_REVIEW.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/SPRINT_1_REVIEW.md)  
+> **Source of Truth**: [docs/MASTER_PROJECT_STATUS.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/SPECS_REPORTS/MASTER_PROJECT_STATUS.md) & [docs/SPRINT_1_REVIEW.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/04_HISTORY/SPRINT_REVIEWS/SPRINT_1_REVIEW.md)  
 > **Target Platform**: Windows 10/11 Kiosk (Client) & NestJS Cloud Backend (Transactions & Webhooks)
 
 ---

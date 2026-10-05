@@ -3,7 +3,7 @@
 **Date:** October 1, 2026  
 **Status:** PRODUCTION-READY (PHASE 1 + PHASE 2 COMPLETE)  
 **System:** Pictolabs Photobooth Kiosk Edge Engine & Admin Panel  
-**Source of Truth:** [`SESSION_HISTORY_CENTER_PRD.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/SESSION_HISTORY_CENTER_PRD.md)
+**Source of Truth:** [`SESSION_HISTORY_CENTER_PRD.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/SPECS_REPORTS/SESSION_HISTORY_CENTER_PRD.md)
 
 ---
 

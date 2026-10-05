@@ -4,7 +4,7 @@
 > **Date**: September 8, 2026  
 > **Status**: Sprint 2 Completed, Fully Validated & Tested  
 > **Target Scope**: Midtrans Dynamic QRIS Core API, Payment Session Model, Database Persistence, Webhook Verification & Cryptographic Security, WebSocket Real-Time Auto-Advance, Payment State Machine, Timeout/Cancellation Handling, and Crash Recovery.  
-> **Source of Truth**: [docs/SPRINT_2_PLAN.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/SPRINT_2_PLAN.md)  
+> **Source of Truth**: [docs/SPRINT_2_PLAN.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/99_ARCHIVE/SUPERSEDED/SPRINT_2_PLAN.md)  
 > **Git Commit Reference**: `d5a2c32`
 
 ---
@@ -83,7 +83,7 @@
 *Tidak ada.* Seluruh fitur dalam cakupan Sprint 2 telah selesai dikerjakan 100%.
 
 ### Deferred Features (Out of Scope)
-Sesuai kesepakatan dalam [docs/SPRINT_2_PLAN.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/SPRINT_2_PLAN.md), fitur-fitur berikut ditunda ke Sprint 3 dan sprint mendatang:
+Sesuai kesepakatan dalam [docs/SPRINT_2_PLAN.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/99_ARCHIVE/SUPERSEDED/SPRINT_2_PLAN.md), fitur-fitur berikut ditunda ke Sprint 3 dan sprint mendatang:
 1. **Cloudflare R2 / AWS S3 Upload Pipeline**: Pengunggahan foto & video langsung ke Cloud Object Storage (*Dijadwalkan untuk Sprint 3*).
 2. **Digital Download Landing Page via QR Code**: Akselerasi unduh foto melalui CDN kustom (*Dijadwalkan untuk Sprint 3*).
 3. **Automated Media Cleanup**: Rutinitas penghapusan file foto lokal usang di hard disk Kiosk (*Sprint pemeliharaan*).

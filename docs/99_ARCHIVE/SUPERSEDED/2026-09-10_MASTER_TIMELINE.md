@@ -76,7 +76,7 @@
 ---
 
 ## 3. Phase 3.2E — Watchdog Supervision & Burn-In Testing
-- **Status**: **CLOSED** (Ref: [`docs/2026-09-13_PHASE_3_2E_COMPLETION.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/2026-09-13_PHASE_3_2E_COMPLETION.md))
+- **Status**: **CLOSED** (Ref: [`docs/2026-09-13_PHASE_3_2E_COMPLETION.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/04_HISTORY/PHASE_COMPLETIONS/2026-09-13_PHASE_3_2E_COMPLETION.md))
 - **Achievements**:
   1. **Upload Watchdog**: Injected 30s/60s `AbortSignal.timeout()` into all fetch routines, automated stuck upload rescue (>60s) with Dead Letter queueing after 5 attempts, and auto-clearing upload mutex deadlocks.
   2. **Print Watchdog**: Terminating hung Windows spooler child processes (`rundll32.exe`), rescuing jobs stuck in `PRINTING` (>120s), and preventing duplicate physical print jobs on reboot.
@@ -88,7 +88,7 @@
 ---
 
 ## 4. Phase 3.3 — Deployment Readiness & Fleet Provisioning
-- **Status**: **CLOSED** (Ref: [`docs/2026-09-13_PHASE_3_3_COMPLETION.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/2026-09-13_PHASE_3_3_COMPLETION.md))
+- **Status**: **CLOSED** (Ref: [`docs/2026-09-13_PHASE_3_3_COMPLETION.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/04_HISTORY/PHASE_COMPLETIONS/2026-09-13_PHASE_3_3_COMPLETION.md))
 - **Achievements**:
   1. **Decoupled Identity Model**: Introduced `Device` and `ActivationToken` Prisma models, separating physical hardware machines from logical retail locations (`Booth`).
   2. **DPAPI Encrypted Local Storage**: System-wide `%ProgramData%\Pictolabs\identity.json` with Windows DPAPI encryption via Electron `safeStorage` and synchronous SQLite mirror table `kiosk_identity`.

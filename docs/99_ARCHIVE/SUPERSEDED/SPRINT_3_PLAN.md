@@ -3,7 +3,7 @@
 > **Platform**: Pictolabs v1.0 Enterprise Edition  
 > **Status**: Ready for Implementation (Revised with Cloud Asset Retention Policy)  
 > **Sprint Focus**: Cloudflare R2 Object Storage, Presigned Direct Upload, Resilient Offline-First Upload Queue, Public CDN Landing Page, and Dual-Tier Media Retention Policy (7-Day Local & 30-Day Cloud Expiration)  
-> **Source of Truth**: [docs/MASTER_PROJECT_STATUS.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/MASTER_PROJECT_STATUS.md), [docs/SPRINT_1_REVIEW.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/SPRINT_1_REVIEW.md) & [docs/SPRINT_2_REVIEW.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/SPRINT_2_REVIEW.md)  
+> **Source of Truth**: [docs/MASTER_PROJECT_STATUS.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/SPECS_REPORTS/MASTER_PROJECT_STATUS.md), [docs/SPRINT_1_REVIEW.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/04_HISTORY/SPRINT_REVIEWS/SPRINT_1_REVIEW.md) & [docs/SPRINT_2_REVIEW.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/04_HISTORY/SPRINT_REVIEWS/SPRINT_2_REVIEW.md)  
 > **Target Platform**: Windows 10/11 Kiosk (Client Media Worker) & NestJS Cloud Backend (Storage Orchestrator & Public CDN Gallery)
 
 ---

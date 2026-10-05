@@ -5,7 +5,7 @@
 > **Date**: September 8, 2026  
 > **Target Environment**: Ubuntu 24.04 LTS VPS + Docker Compose + PostgreSQL 16 + Redis 7 + Nginx SSL  
 > **Delivery Path**: `DEPLOYMENT_PLAN.md` & `docs/DEPLOYMENT_PLAN.md`  
-> **Prerequisites**: Codebase audited in [DEPLOYMENT_AUDIT.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/DEPLOYMENT_AUDIT.md) and [INFRASTRUCTURE_REQUIREMENTS_AUDIT.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/INFRASTRUCTURE_REQUIREMENTS_AUDIT.md)
+> **Prerequisites**: Codebase audited in [DEPLOYMENT_AUDIT.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/AUDITS/DEPLOYMENT_AUDIT.md) and [INFRASTRUCTURE_REQUIREMENTS_AUDIT.md](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/AUDITS/INFRASTRUCTURE_REQUIREMENTS_AUDIT.md)
 
 ---
 
