@@ -4,9 +4,28 @@ import * as path from 'path';
 import { getDatabase, recordSystemEvent } from './SyncEngine';
 import { getDefaultPrinterName, getIsBypassMode, printImage, queryPrinterHealth } from './PrintService';
 import { recordPrintConsumption } from './PaperTrackerService';
-import { getCachedPrinterHardwareStatus } from './PrinterMonitorService';
+import { getCachedPrinterHardwareStatus, setPrintDispatchActive } from './PrinterMonitorService';
 
 export type PrintQueueStatus = 'PENDING' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'DEAD_LETTER' | 'CANCELLED';
+
+export type PrintWorkerPhase =
+  | 'IDLE'
+  | 'CLAIMING'
+  | 'PRE_FLIGHT'
+  | 'PRINTING'
+  | 'VERIFYING'
+  | 'COMPLETED'
+  | 'FAILED';
+
+export interface PrintWorkerState {
+  isProcessing: boolean;
+  workerExecutionId: string | null;
+  activeJobId: string | null;
+  phase: PrintWorkerPhase;
+  phaseStartTime: number | null;
+  workerStartTime: number | null;
+  lastHeartbeatTime: number;
+}
 
 export interface PrintQueueItem {
   id: string;
@@ -62,6 +81,53 @@ let printWorkerInterval: NodeJS.Timeout | null = null;
 let isProcessing = false;
 let hasPendingWork = false;
 
+// Active Worker State Tracking (RCA-6)
+let activeWorkerExecutionId: string | null = null;
+let activeJobId: string | null = null;
+let currentWorkerPhase: PrintWorkerPhase = 'IDLE';
+let phaseStartTime: number | null = null;
+let workerStartTime: number | null = null;
+let lastWorkerHeartbeat: number = Date.now();
+
+export function getActiveWorkerState(): PrintWorkerState {
+  return {
+    isProcessing,
+    workerExecutionId: activeWorkerExecutionId,
+    activeJobId,
+    phase: currentWorkerPhase,
+    phaseStartTime,
+    workerStartTime,
+    lastHeartbeatTime: lastWorkerHeartbeat,
+  };
+}
+
+export function updateWorkerPhase(phase: PrintWorkerPhase, jobId?: string | null): void {
+  currentWorkerPhase = phase;
+  phaseStartTime = Date.now();
+  lastWorkerHeartbeat = Date.now();
+  if (jobId !== undefined) {
+    activeJobId = jobId;
+  }
+  console.log(`[PrintQueueService] 🔄 Worker Phase -> ${phase} (Job: ${activeJobId || 'NONE'}, Exec: ${activeWorkerExecutionId || 'NONE'})`);
+}
+
+export function pulseWorkerHeartbeat(): void {
+  lastWorkerHeartbeat = Date.now();
+}
+
+/**
+ * Testing / Internal Diagnostic Hook: Allows tests to simulate worker state
+ */
+export function _setWorkerStateForTesting(state: Partial<PrintWorkerState>): void {
+  if (state.isProcessing !== undefined) isProcessing = state.isProcessing;
+  if (state.workerExecutionId !== undefined) activeWorkerExecutionId = state.workerExecutionId;
+  if (state.activeJobId !== undefined) activeJobId = state.activeJobId;
+  if (state.phase !== undefined) currentWorkerPhase = state.phase;
+  if (state.phaseStartTime !== undefined) phaseStartTime = state.phaseStartTime;
+  if (state.workerStartTime !== undefined) workerStartTime = state.workerStartTime;
+  if (state.lastHeartbeatTime !== undefined) lastWorkerHeartbeat = state.lastHeartbeatTime;
+}
+
 function mapRowToDTO(row: any): PrintJobDTO {
   return {
     id: row.id,
@@ -106,12 +172,13 @@ export function reconcileStartupPrintJobs(): void {
 }
 
 /**
- * Kill any orphaned or hung print subprocesses (rundll32.exe on Windows).
+ * Kill any orphaned or hung print subprocesses (print.exe, rundll32.exe on Windows).
  */
 export function killHungPrintProcesses(): void {
   if (process.platform === 'win32') {
     try {
       const { exec } = require('child_process');
+      exec('taskkill /F /FI "IMAGENAME eq print.exe" /T', () => {});
       exec('taskkill /F /FI "IMAGENAME eq rundll32.exe" /T', () => {});
     } catch (_) {}
   }
@@ -119,10 +186,18 @@ export function killHungPrintProcesses(): void {
 
 /**
  * Priority 2: Print Watchdog Self-Healing Routine
- * Resets jobs stuck in 'PRINTING' longer than stuckThresholdMs (default 120s)
+ * Resets jobs stuck in 'PRINTING' longer than stuckThresholdMs (default 45s)
  * and safely clears mutex deadlocks.
+ *
+ * RCA-7 PRINCIPLE:
+ * The watchdog recovers SOFTWARE state. It must NEVER assume physical print failure
+ * or trigger a second physical print after print.exe has been invoked.
+ * A hung print process is marked terminal DEAD_LETTER.
  */
-export function resetStuckPrintJobs(stuckThresholdMs: number = 120_000): { rescuedCount: number; mutexReset: boolean } {
+export function resetStuckPrintJobs(
+  stuckThresholdMs: number = 45_000,
+  preFlightTimeoutMs: number = 20_000
+): { rescuedCount: number; mutexReset: boolean } {
   const db = getDatabase();
   if (!db) return { rescuedCount: 0, mutexReset: false };
 
@@ -140,36 +215,81 @@ export function resetStuckPrintJobs(stuckThresholdMs: number = 120_000): { rescu
       killHungPrintProcesses();
 
       const newAttempts = (job.attempts || 0) + 1;
-      const maxAttempts = job.max_attempts || 5;
       const now = new Date().toISOString();
 
-      if (newAttempts >= maxAttempts) {
-        db.prepare(`
-          UPDATE print_queue 
-          SET status = 'DEAD_LETTER', attempts = ?, last_error = 'Print watchdog: job exceeded timeout threshold (max retries reached)', updated_at = ?
-          WHERE id = ?
-        `).run(newAttempts, now, job.id);
-      } else {
-        const backoffMs = BACKOFF_DELAYS[Math.min(job.attempts, BACKOFF_DELAYS.length - 1)];
-        const nextRetry = new Date(Date.now() + backoffMs).toISOString();
-        db.prepare(`
-          UPDATE print_queue 
-          SET status = 'PENDING', attempts = ?, last_error = 'Print watchdog: rescued stuck in-flight print job', next_retry_at = ?, updated_at = ?
-          WHERE id = ?
-        `).run(newAttempts, nextRetry, now, job.id);
-      }
+      // RCA-7 Watchdog Safety Rule:
+      // The watchdog recovers SOFTWARE state. It must NEVER assume physical print failure
+      // or trigger a second physical print after print.exe has been invoked.
+      // A hung print process is marked terminal DEAD_LETTER.
+      db.prepare(`
+        UPDATE print_queue 
+        SET status = 'DEAD_LETTER', attempts = ?, last_error = 'Print watchdog: print.exe execution timed out (terminal failure)', next_retry_at = NULL, updated_at = ?
+        WHERE id = ?
+      `).run(newAttempts, now, job.id);
+
+      try {
+        db.prepare('UPDATE sessions SET print_status = ? WHERE id = ?').run('failed', job.session_id);
+      } catch (_) {}
+
       rescuedCount++;
     }
 
-    if (isProcessing && stuckJobs.length === 0) {
-      const activePrinting = db.prepare("SELECT count(*) as count FROM print_queue WHERE status = 'PRINTING'").get() as any;
-      if (!activePrinting || activePrinting.count === 0) {
+    // RCA-6 Architectural Correction: Mutex & Worker Health Evaluation
+    if (isProcessing) {
+      const now = Date.now();
+      const phaseElapsed = phaseStartTime ? now - phaseStartTime : 0;
+      const heartbeatElapsed = now - lastWorkerHeartbeat;
+
+      let shouldResetMutex = false;
+      let resetReason = '';
+
+      // Scenario 1: A job was rescued in DB and it matches activeJobId
+      if (rescuedCount > 0 && (!activeJobId || stuckJobs.some((j) => j.id === activeJobId))) {
+        shouldResetMutex = true;
+        resetReason = `Active job ${activeJobId || 'unknown'} was rescued from stuck state in DB`;
+      }
+      // Scenario 2: Worker heartbeat is completely silent for longer than stuckThresholdMs
+      else if (heartbeatElapsed > stuckThresholdMs) {
+        shouldResetMutex = true;
+        resetReason = `Worker heartbeat silent for ${heartbeatElapsed}ms > threshold ${stuckThresholdMs}ms`;
+      }
+      // Scenario 3: Pre-flight phase genuinely hung exceeding preFlightTimeoutMs
+      else if (currentWorkerPhase === 'PRE_FLIGHT' && phaseElapsed > preFlightTimeoutMs) {
+        shouldResetMutex = true;
+        resetReason = `Pre-flight phase hung for ${phaseElapsed}ms > timeout ${preFlightTimeoutMs}ms`;
+      }
+      // Scenario 4: Claiming phase stuck > 30s
+      else if (currentWorkerPhase === 'CLAIMING' && phaseElapsed > 30_000) {
+        shouldResetMutex = true;
+        resetReason = `Claiming phase hung for ${phaseElapsed}ms > timeout 30000ms`;
+      }
+      // Scenario 5: Orphaned mutex flag (isProcessing is true, but no execution ID or phase is IDLE for > 15s)
+      else if ((!activeWorkerExecutionId || currentWorkerPhase === 'IDLE') && heartbeatElapsed > 15_000) {
+        shouldResetMutex = true;
+        resetReason = `Orphaned worker lock detected without active execution ID (heartbeat: ${heartbeatElapsed}ms)`;
+      }
+      // Scenario 6: Active worker in valid lifecycle within normal operational timeouts
+      else {
+        console.log(
+          `[PrintQueueService] 🛡 Print Watchdog: Active worker healthy (Exec: ${activeWorkerExecutionId || 'NONE'}, ` +
+          `Job: ${activeJobId || 'NONE'}, Phase: ${currentWorkerPhase}, PhaseElapsed: ${phaseElapsed}ms, ` +
+          `Heartbeat: ${heartbeatElapsed}ms ago). Mutex reset SKIPPED.`
+        );
+      }
+
+      if (shouldResetMutex) {
+        console.warn(
+          `[PrintQueueService] ⚠️ Print Watchdog: Mutex reset EXECUTED. Reason: ${resetReason} ` +
+          `(Exec: ${activeWorkerExecutionId || 'NONE'}, Job: ${activeJobId || 'NONE'}, Phase: ${currentWorkerPhase})`
+        );
         isProcessing = false;
+        activeWorkerExecutionId = null;
+        activeJobId = null;
+        currentWorkerPhase = 'IDLE';
+        phaseStartTime = null;
+        workerStartTime = null;
         mutexReset = true;
       }
-    } else if (rescuedCount > 0) {
-      isProcessing = false;
-      mutexReset = true;
     }
 
     if (rescuedCount > 0 || mutexReset) {
@@ -194,6 +314,9 @@ export function resetStuckPrintJobs(stuckThresholdMs: number = 120_000): { rescu
  */
 export function getPrintQueueHealth(): {
   isProcessing: boolean;
+  activeJobId: string | null;
+  workerPhase: PrintWorkerPhase;
+  workerExecutionId: string | null;
   pendingCount: number;
   printingCount: number;
   failedCount: number;
@@ -202,7 +325,17 @@ export function getPrintQueueHealth(): {
 } {
   const db = getDatabase();
   if (!db) {
-    return { isProcessing: false, pendingCount: 0, printingCount: 0, failedCount: 0, deadLetterCount: 0, stuckCount: 0 };
+    return {
+      isProcessing: false,
+      activeJobId: null,
+      workerPhase: 'IDLE',
+      workerExecutionId: null,
+      pendingCount: 0,
+      printingCount: 0,
+      failedCount: 0,
+      deadLetterCount: 0,
+      stuckCount: 0,
+    };
   }
 
   try {
@@ -222,6 +355,9 @@ export function getPrintQueueHealth(): {
 
     return {
       isProcessing,
+      activeJobId,
+      workerPhase: currentWorkerPhase,
+      workerExecutionId: activeWorkerExecutionId,
       pendingCount: counts?.pendingCount || 0,
       printingCount: counts?.printingCount || 0,
       failedCount: counts?.failedCount || 0,
@@ -229,7 +365,17 @@ export function getPrintQueueHealth(): {
       stuckCount: stuck?.count || 0,
     };
   } catch (_) {
-    return { isProcessing, pendingCount: 0, printingCount: 0, failedCount: 0, deadLetterCount: 0, stuckCount: 0 };
+    return {
+      isProcessing,
+      activeJobId: null,
+      workerPhase: 'IDLE',
+      workerExecutionId: null,
+      pendingCount: 0,
+      printingCount: 0,
+      failedCount: 0,
+      deadLetterCount: 0,
+      stuckCount: 0,
+    };
   }
 }
 
@@ -327,10 +473,18 @@ export async function processPrintQueue(): Promise<void> {
   if (!db || isProcessing) return;
 
   isProcessing = true;
+  activeWorkerExecutionId = `worker_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  workerStartTime = Date.now();
+  lastWorkerHeartbeat = Date.now();
+  updateWorkerPhase('CLAIMING', null);
+
+  console.log(`[PrintQueueService] 🚀 Print queue worker started (Exec ID: ${activeWorkerExecutionId})`);
 
   try {
     while (true) {
       hasPendingWork = false;
+      pulseWorkerHeartbeat();
+      updateWorkerPhase('CLAIMING', null);
       const now = new Date().toISOString();
 
       // Query oldest ready job
@@ -349,9 +503,15 @@ export async function processPrintQueue(): Promise<void> {
       await executePrintJob(row);
     }
   } catch (err: any) {
-    console.error('[PrintQueueService] Unexpected error processing print queue:', err);
+    console.error(`[PrintQueueService] Unexpected error processing print queue (Exec: ${activeWorkerExecutionId}):`, err);
   } finally {
+    console.log(`[PrintQueueService] 🏁 Print queue worker finished (Exec ID: ${activeWorkerExecutionId})`);
     isProcessing = false;
+    activeWorkerExecutionId = null;
+    activeJobId = null;
+    updateWorkerPhase('IDLE', null);
+    phaseStartTime = null;
+    workerStartTime = null;
     if (hasPendingWork) {
       triggerQueueProcessing();
     }
@@ -434,6 +594,7 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
   const db = getDatabase();
   if (!db) return;
 
+  updateWorkerPhase('CLAIMING', item.id);
   const cleanPath = item.file_path.replace(/^file:\/\/\/?/, '');
 
   // Check if file exists on disk, attempt rehydration from R2 if pruned
@@ -451,6 +612,7 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
       try {
         db.prepare('UPDATE sessions SET print_status = ? WHERE id = ?').run('failed', item.session_id);
       } catch (_) {}
+      updateWorkerPhase('FAILED', item.id);
       return;
     }
   }
@@ -462,6 +624,7 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
   if (getIsBypassMode()) {
     console.log(`[PrintQueueService] [BYPASS] Simulated print job: ${cleanPath} (x${item.copies})`);
     const printingTime = new Date().toISOString();
+    updateWorkerPhase('PRINTING', item.id);
     db.prepare(`
       UPDATE print_queue 
       SET status = 'PRINTING', updated_at = ? 
@@ -469,14 +632,20 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
     `).run(printingTime, item.id);
     printResult = { success: true };
   } else {
-    console.log(`[PrintQueueService] Performing authoritative hardware pre-flight for job ${item.id} on '${targetPrinter}'...`);
-    const hwStatus = await queryPrinterHealth(targetPrinter, true);
+    updateWorkerPhase('PRE_FLIGHT', item.id);
+    pulseWorkerHeartbeat();
 
-    if (!hwStatus.ready) {
-      console.warn(`[PrintQueueService] ⚠️ Pre-print hardware block: ${hwStatus.code} - ${hwStatus.message}`);
-      printResult = { success: false, error: hwStatus.message || 'Printer hardware error' };
+    // RCA-7 Advisory In-Memory Pre-Dispatch Gate (0ms read from sole monitor)
+    const cachedHealth = getCachedPrinterHardwareStatus();
+
+    // If cached status clearly indicates printer is unavailable before dispatch:
+    if (!cachedHealth.ready && (cachedHealth.status === 'OFFLINE' || cachedHealth.status === 'DOOR_OPEN' || cachedHealth.status === 'PAPER_OUT' || cachedHealth.status === 'PAPER_JAM')) {
+      console.warn(`[PrintQueueService] ⚠️ Pre-dispatch advisory gate blocked: ${cachedHealth.status} - ${cachedHealth.message}`);
+      printResult = { success: false, error: cachedHealth.message || `Printer ${cachedHealth.status}` };
     } else {
       // 2. Transition: PENDING -> PRINTING
+      updateWorkerPhase('PRINTING', item.id);
+      pulseWorkerHeartbeat();
       const printingTime = new Date().toISOString();
       db.prepare(`
         UPDATE print_queue 
@@ -484,11 +653,24 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
         WHERE id = ?
       `).run(printingTime, item.id);
 
-      console.log(`[PrintQueueService] Printing job ${item.id} (Session: ${item.session_id}, Attempt: ${item.attempts + 1})...`);
+      console.log(`[PrintQueueService] Dispatching print job ${item.id} (Session: ${item.session_id}, Attempt: ${item.attempts + 1}, Exec: ${activeWorkerExecutionId}) to '${targetPrinter}'...`);
 
-      // 3. Dispatch to PrintService, handing off the validated hwStatus directly to prevent redundant probes
-      const resolvedActivePrinter = hwStatus.name || targetPrinter;
-      printResult = await printImage(cleanPath, resolvedActivePrinter, item.copies, hwStatus);
+      // 3. Dispatch to PrintService (which invokes print.exe directly)
+      setPrintDispatchActive(true);
+      try {
+        printResult = await printImage(
+          cleanPath,
+          targetPrinter,
+          item.copies,
+          undefined,
+          (phase) => {
+            updateWorkerPhase(phase, item.id);
+          }
+        );
+      } finally {
+        setPrintDispatchActive(false);
+      }
+      pulseWorkerHeartbeat();
     }
   }
 
@@ -496,6 +678,7 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
 
   // 3. Status Transitions
   if (printResult.success) {
+    updateWorkerPhase('COMPLETED', item.id);
     // Transition: PRINTING -> COMPLETED
     db.prepare(`
       UPDATE print_queue 
@@ -514,8 +697,9 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
       console.warn('[PrintQueueService] Failed to record paper consumption:', e);
     }
 
-    console.log(`[PrintQueueService] ✓ Print job ${item.id} COMPLETED successfully`);
+    console.log(`[PrintQueueService] ✓ Print job ${item.id} COMPLETED successfully (Exec: ${activeWorkerExecutionId})`);
   } else {
+    updateWorkerPhase('FAILED', item.id);
     const newAttempts = item.attempts + 1;
     const maxAttempts = item.max_attempts || 5;
     const errText = printResult.error || 'Unknown printer error';
@@ -532,7 +716,7 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
         db.prepare('UPDATE sessions SET print_status = ? WHERE id = ?').run('failed', item.session_id);
       } catch (_) {}
 
-      console.error(`[PrintQueueService] ✗ Print job ${item.id} entered DEAD_LETTER state after ${newAttempts} attempts: ${errText}`);
+      console.error(`[PrintQueueService] ✗ Print job ${item.id} entered DEAD_LETTER state after ${newAttempts} attempts: ${errText} (Exec: ${activeWorkerExecutionId})`);
     } else {
       // Retry Scheduler: Transition PRINTING -> PENDING with exponential backoff
       const backoffMs = BACKOFF_DELAYS[Math.min(item.attempts, BACKOFF_DELAYS.length - 1)];
@@ -544,7 +728,7 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
         WHERE id = ?
       `).run(newAttempts, errText, nextRetryDate, completeTime, item.id);
 
-      console.warn(`[PrintQueueService] ⚠️ Print job ${item.id} failed (Attempt ${newAttempts}/${maxAttempts}). Next retry in ${backoffMs / 1000}s. Error: ${errText}`);
+      console.warn(`[PrintQueueService] ⚠️ Print job ${item.id} failed (Attempt ${newAttempts}/${maxAttempts}). Next retry in ${backoffMs / 1000}s. Error: ${errText} (Exec: ${activeWorkerExecutionId})`);
     }
   }
 }

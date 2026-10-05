@@ -689,9 +689,9 @@ export default function QRScreen({ navigate, session, resetSession }: ScreenProp
               <div className="flex items-center justify-between mb-0.5">
                 <span className="font-black text-xs uppercase tracking-wide">
                   {printStatus === 'printing'
-                    ? 'Mencetak Foto Fisik...'
+                    ? 'Mengirim Berkas ke Printer...'
                     : printStatus === 'success'
-                    ? 'Foto Fisik Selesai Dicetak!'
+                    ? 'Foto Dikirim ke Printer!'
                     : 'Kendala Cetak Foto Fisik'}
                 </span>
                 <span className="font-mono text-[10px] font-bold opacity-75">
@@ -701,9 +701,9 @@ export default function QRScreen({ navigate, session, resetSession }: ScreenProp
 
               <p className="text-[10px] leading-tight opacity-80 mb-1.5 truncate">
                 {printStatus === 'printing'
-                  ? 'Mesin sedang memproses & mencetak strip foto...'
+                  ? 'Mesin sedang menyiapkan & mengirim berkas ke printer...'
                   : printStatus === 'success'
-                  ? 'Silakan ambil 2 lembar Photostrip 2R di baki bawah printer.'
+                  ? 'Perintah cetak diterima printer. Strip foto akan keluar di baki bawah.'
                   : 'Terjadi kendala pada printer. Silakan hubungi staff booth untuk bantuan cetak.'}
               </p>
 

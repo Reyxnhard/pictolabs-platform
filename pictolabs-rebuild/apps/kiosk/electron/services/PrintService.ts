@@ -609,7 +609,8 @@ export async function printImage(
   imagePath: string,
   printerName: string,
   copies: number,
-  preValidatedHealth?: PrinterHealth
+  preValidatedHealth?: PrinterHealth,
+  onPhaseChange?: (phase: 'PRINTING' | 'VERIFYING') => void
 ): Promise<{ success: boolean; error?: string }> {
   // 1. Bypass Mode check
   if (isBypassMode) {
@@ -636,43 +637,10 @@ export async function printImage(
     return { success: false, error: `File not found: ${targetPath}` };
   }
 
-  const profile = resolvePrinterProfile(printerName);
+  // 2. Resolve Active Printer Identity with Strict Exact Matching
+  const activePrinter = printerName || defaultPrinterName || 'DS-RX1';
 
-  // 2. Authoritative Pre-flight Hardware Verification (with Direct Handoff Reuse)
-  let preCheck: PrinterHealth;
-  const isHandoffValid = isPrinterHandoffValid(preValidatedHealth, printerName);
-
-  if (isHandoffValid) {
-    preCheck = preValidatedHealth!;
-    console.log(`[PrintService] ⚡ Reusing authoritative pre-flight health for '${preCheck.name}' (media: ${preCheck.mediaRemaining ?? 'unknown'})`);
-  } else {
-    if (preValidatedHealth && preValidatedHealth.name !== printerName) {
-      console.warn(`[PrintService] ⚠️ Pre-flight handoff identity mismatch: '${preValidatedHealth.name}' !== '${printerName}'. Re-running fresh authoritative validation for '${printerName}'`);
-    }
-    preCheck = await queryPrinterHealth(printerName, true);
-  }
-
-  if (!preCheck.ready) {
-    console.warn(`[PrintService] Pre-flight failed: ${preCheck.code} - ${preCheck.message}`);
-    return { success: false, error: preCheck.message };
-  }
-
-  const activePrinter = preCheck.name || defaultPrinterName || printerName;
-  if (activePrinter !== printerName) {
-    console.log(`[PrintService] 🖨️ Dispatching print to dynamic active queue: '${activePrinter}' (requested: '${printerName}')`);
-  }
-
-  // 3. Baseline: capture baseline media count and existing spooler jobs
-  let baselineMedia = preCheck.mediaRemaining;
-  if (baselineMedia === undefined) {
-    const preHw = await getHardwareStatus(activePrinter, true);
-    baselineMedia = preHw.mediaRemaining;
-  }
-  console.log(`[PrintService] Baseline media count before print: ${baselineMedia ?? 'unknown'}`);
-  const preSnapshot = await querySpoolerSnapshot(activePrinter, profile);
-  const baselineJobIds = new Set(preSnapshot.jobs.map((j) => j.id));
-
-  // 4. Dispatch print command via native print.exe CLI
+  // 3. Dispatch print command via native print.exe CLI
   const printExe = findPrintExePath();
   if (!printExe) {
     console.error('[PrintService] print.exe utility not found on disk');
@@ -691,6 +659,10 @@ export async function printImage(
   ];
 
   console.log(`[PrintService] Dispatching print via print.exe to '${activePrinter}' (x${copies})`);
+
+  if (onPhaseChange) {
+    onPhaseChange('PRINTING');
+  }
 
   const dispatchResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
     execFile(
@@ -716,190 +688,12 @@ export async function printImage(
     return { success: false, error: dispatchResult.error || 'Gagal mengirim berkas ke spooler Windows' };
   }
 
-  console.log(`[PrintService] Print job dispatched to Windows spooler via print.exe: ${path.basename(imagePath)} (x${copies}). Monitoring spooler transmission...`);
-
-  // 5. Post-Submission Spooler Job Lifecycle Monitoring (Timeout: 25 seconds)
-  const startTime = Date.now();
-  const TIMEOUT_MS = 25000;
-  const POLL_INTERVAL_MS = 1200;
-
-  let observedJobInSpooler = false;
-  const trackedJobIds = new Set<number>();
-
-  while (Date.now() - startTime < TIMEOUT_MS) {
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-
-    const snap = await querySpoolerSnapshot(activePrinter, profile);
-
-    // A. Physical Presence Loss Check
-    if (!snap.physicalPresent) {
-      console.error('[PrintService] ✗ Physical printer disconnected mid-transmission!');
-      await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
-      return { success: false, error: 'Printer terputus atau mati saat proses transmisi cetak' };
-    }
-
-    // B. Printer Hardware Error State Check (WMI + Real Hardware Telemetry)
-    if (snap.detectedError === 4) {
-      await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
-      return { success: false, error: 'Kertas foto habis di dalam tray (Paper Out)' };
-    }
-    if (snap.detectedError === 6) {
-      await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
-      return { success: false, error: 'Pita ribbon habis / perlu diganti (Ribbon Out)' };
-    }
-    if (snap.detectedError === 7) {
-      await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
-      return { success: false, error: 'Pintu penutup printer terbuka (Door Open)' };
-    }
-    if (snap.detectedError === 8) {
-      await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
-      return { success: false, error: 'Kertas macet di dalam printer (Paper Jam)' };
-    }
-
-    // Direct DNP hardware telemetry probe during spooler transmission
-    const midHw = await getHardwareStatus(activePrinter);
-    if (
-      midHw.state === 'PAPER_OUT' ||
-      midHw.state === 'COVER_OPEN' ||
-      midHw.state === 'RIBBON_OUT' ||
-      midHw.state === 'JAMMED' ||
-      midHw.state === 'ERROR' ||
-      midHw.state === 'OFFLINE'
-    ) {
-      console.error(`[PrintService] ✗ Mid-flight hardware failure: ${midHw.state} - ${midHw.message}`);
-      await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
-      return { success: false, error: midHw.message };
-    }
-
-    // Identify jobs belonging to this submission (not in baseline)
-    const newJobs = snap.jobs.filter((j) => !baselineJobIds.has(j.id));
-    for (const j of newJobs) {
-      trackedJobIds.add(j.id);
-    }
-
-    if (newJobs.length > 0) {
-      observedJobInSpooler = true;
-
-      // C. Active Job Status Error Check
-      for (const j of newJobs) {
-        const s = j.status.toLowerCase();
-        if (s.includes('paperout') || s.includes('paper out')) {
-          await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
-          return { success: false, error: 'Kertas foto habis di dalam tray (Paper Out)' };
-        }
-        if (s.includes('door') || s.includes('cover')) {
-          await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
-          return { success: false, error: 'Pintu penutup printer terbuka (Door Open)' };
-        }
-        if (s.includes('jam')) {
-          await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
-          return { success: false, error: 'Kertas macet di dalam printer (Paper Jam)' };
-        }
-        if (s.includes('toner') || s.includes('ribbon')) {
-          await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
-          return { success: false, error: 'Pita ribbon habis (Ribbon Out)' };
-        }
-        if (s.includes('offline')) {
-          await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
-          return { success: false, error: 'Printer offline atau kabel USB terputus' };
-        }
-        if (s.includes('userintervention')) {
-          await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
-          return { success: false, error: 'Printer membutuhkan intervensi teknisi' };
-        }
-        if (s.includes('error') || s.includes('blocked')) {
-          await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
-          return { success: false, error: `Error transmisi spooler: ${j.status}` };
-        }
-      }
-    } else {
-      // If we observed the job in spooler, and now it has cleared:
-      if (observedJobInSpooler) {
-        console.log(`[PrintService] Spooler transmission completed for ${path.basename(imagePath)}. Verifying physical hardware state...`);
-
-        // Post-submission physical verification
-        // DNP DS-RX1 mechanical printing takes ~12-15 seconds per photo.
-        const postStartTime = Date.now();
-        const POST_TIMEOUT_MS = 25000;
-        let verifiedPhysical = false;
-
-        while (Date.now() - postStartTime < POST_TIMEOUT_MS) {
-          await new Promise((r) => setTimeout(r, 1200));
-          const postHw = await getHardwareStatus(activePrinter, true);
-
-          // 1. Mechanical failure states: fail immediately
-          if (
-            postHw.state === 'PAPER_OUT' ||
-            postHw.state === 'COVER_OPEN' ||
-            postHw.state === 'RIBBON_OUT' ||
-            postHw.state === 'JAMMED' ||
-            postHw.state === 'ERROR' ||
-            postHw.state === 'OFFLINE'
-          ) {
-            console.error(`[PrintService] ✗ Post-submission hardware failure: ${postHw.state} - ${postHw.message}`);
-            return { success: false, error: postHw.message };
-          }
-
-          // 2. Media counter confirmation (strong physical evidence)
-          if (baselineMedia !== undefined && postHw.mediaRemaining !== undefined) {
-            if (postHw.mediaRemaining <= baselineMedia - copies) {
-              console.log(`[PrintService] ✓ Physical media counter verified: ${baselineMedia} -> ${postHw.mediaRemaining} (-${copies} prints)`);
-              verifiedPhysical = true;
-              break;
-            }
-          }
-
-          // 3. Printer returned to READY after minimum physical print duration
-          if (postHw.state === 'READY') {
-            if (Date.now() - postStartTime >= 3000) {
-              console.log(`[PrintService] ✓ Physical printer confirmed READY after print cycle: ${path.basename(imagePath)}`);
-              verifiedPhysical = true;
-              break;
-            }
-          }
-        }
-
-        if (verifiedPhysical) {
-          console.log(`[PrintService] ✓ Print job successfully printed on ${activePrinter}: ${path.basename(imagePath)}`);
-          return { success: true };
-        } else {
-          const postHealth = await queryPrinterHealth(activePrinter, true);
-          if (!postHealth.ready) {
-            return { success: false, error: postHealth.message };
-          }
-          console.log(`[PrintService] ✓ Print job completed (health OK): ${path.basename(imagePath)}`);
-          return { success: true };
-        }
-      }
-
-      // If we haven't observed it in spooler, but at least 2.5s elapsed without error:
-      if (Date.now() - startTime > 2500) {
-        const postHw = await getHardwareStatus(activePrinter, true);
-        if (
-          postHw.state === 'PAPER_OUT' ||
-          postHw.state === 'COVER_OPEN' ||
-          postHw.state === 'RIBBON_OUT' ||
-          postHw.state === 'JAMMED' ||
-          postHw.state === 'ERROR' ||
-          postHw.state === 'OFFLINE'
-        ) {
-          console.error(`[PrintService] ✗ Fast-transmit hardware failure: ${postHw.state} - ${postHw.message}`);
-          return { success: false, error: postHw.message };
-        }
-        const postHealth = await queryPrinterHealth(activePrinter, true);
-        if (!postHealth.ready) {
-          return { success: false, error: postHealth.message };
-        }
-        console.log(`[PrintService] ✓ Print job fast-transmitted to ${activePrinter}: ${path.basename(imagePath)}`);
-        return { success: true };
-      }
-    }
-  }
-
-  // 6. Timeout exceeded
-  console.warn(`[PrintService] ⚠️ Spooler transmission timeout after ${TIMEOUT_MS / 1000}s`);
-  await cancelSpoolerJobs(activePrinter, Array.from(trackedJobIds));
-  return { success: false, error: 'Batas waktu transmisi spooler printer terlampaui (Timeout 25s)' };
+  // RCA-7 Contract:
+  // Once print.exe exits with code 0, Windows GDI has committed the job to the Windows Print Spooler.
+  // Physical print lifecycle is handed off to Windows Spooler and DNP printer firmware.
+  // We do NOT perform blocking spooler polling loops or DNP USB telemetry interrogation during active printing.
+  console.log(`[PrintService] ✓ Print job accepted by Windows Spooler via print.exe: ${path.basename(imagePath)} (x${copies})`);
+  return { success: true };
 }
 
 export function registerPrintHandlers(config: PrintServiceConfig): void {

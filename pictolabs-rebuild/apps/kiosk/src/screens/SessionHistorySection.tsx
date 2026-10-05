@@ -475,9 +475,9 @@ export default function SessionHistorySection({ isOnline, onShowToast }: Session
                       >
                         <Printer className="w-3 h-3" />
                         {session.printStatus === 'COMPLETED' || session.printStatus === 'printed'
-                          ? 'TERCETAK'
+                          ? 'DIKIRIM KE PRINTER'
                           : session.printStatus === 'PRINTING'
-                          ? 'SEDANG CETAK'
+                          ? 'SEDANG MENGIRIM'
                           : session.printStatus === 'FAILED' || session.printStatus === 'failed'
                           ? 'GAGAL CETAK'
                           : session.printStatus === 'NOT_QUEUED'

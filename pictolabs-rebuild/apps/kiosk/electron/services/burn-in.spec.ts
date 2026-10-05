@@ -245,14 +245,8 @@ async function runBurnInTestSuite() {
   assert(printRescueE.rescuedCount >= 1, 'Print Watchdog rescued stuck print job');
 
   const printRowE = db.prepare('SELECT status, attempts, last_error FROM print_queue WHERE id = ?').get(stuckPrintId) as any;
-  assert(printRowE.status === 'PENDING', 'Stuck print job reverted from PRINTING back to PENDING');
+  assert(printRowE.status === 'DEAD_LETTER', 'Stuck in-flight print job transitioned to terminal DEAD_LETTER (no duplicate physical retry)');
   assert(printRowE.last_error?.includes('Print watchdog'), 'Diagnostic error attached to rescued job');
-
-  // Validate Dead Letter escalation
-  db.prepare("UPDATE print_queue SET attempts = 4, status = 'PRINTING', updated_at = ? WHERE id = ?").run(pastTime, stuckPrintId);
-  resetStuckPrintJobs(1000);
-  const deadPrintRowE = db.prepare('SELECT status FROM print_queue WHERE id = ?').get(stuckPrintId) as any;
-  assert(deadPrintRowE.status === 'DEAD_LETTER', 'Print job transitioned to DEAD_LETTER after reaching max_attempts');
 
   // ─────────────────────────────────────────────────────────────────────────────
   // SCENARIO F: Crash During Upload & Startup Reconciliation

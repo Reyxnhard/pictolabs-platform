@@ -58,23 +58,7 @@ export default function RenderScreen({ session, updateSession, navigate }: Scree
           ? dataUrl 
           : `file://${dataUrl}`;
 
-        // Generate animated looping GIF from poses
-        let gifPath: string | undefined;
-        let gifUrl: string | undefined;
-        try {
-          if (typeof kiosk?.livePhoto?.generateGif === 'function') {
-            const gifRes = await kiosk.livePhoto.generateGif(session.sessionId || 'session', cleanPhotos);
-            if (gifRes && gifRes.success) {
-              gifPath = gifRes.gifPath;
-              gifUrl = gifRes.mp4Path || gifRes.gifPath;
-              console.log('[RenderScreen] ✓ GIF loop generated successfully:', gifPath);
-            }
-          }
-        } catch (gErr) {
-          console.warn('[RenderScreen] GIF generation warning:', gErr);
-        }
-
-        // Save session directly to SQLite (WAL Mode) via SyncEngine
+        // Save session directly to SQLite (WAL Mode) via SyncEngine immediately upon composite completion
         let createdSessionId: string | undefined;
         try {
           const sessionRecord = await kiosk.session.create({
@@ -85,11 +69,10 @@ export default function RenderScreen({ session, updateSession, navigate }: Scree
             compositePath: filePath,
             liveVideoPath: session.liveVideoPath,
             liveVideoPaths: session.liveVideoPaths,
-            gifPath,
             printStatus: 'pending',
           });
           createdSessionId = sessionRecord?.id || session.sessionId;
-          console.log('[RenderScreen] ✓ Session saved in SQLite & upload queued:', createdSessionId);
+          console.log('[RenderScreen] ✓ Session saved in SQLite & print ready:', createdSessionId);
         } catch (sErr) {
           console.warn('[RenderScreen] SQLite session creation warning:', sErr);
         }
@@ -99,23 +82,38 @@ export default function RenderScreen({ session, updateSession, navigate }: Scree
           kiosk.recovery?.checkpoint?.(effectiveSessionId, 'READY_FOR_PRINT', cleanPhotos.length, {
             compositePath: filePath,
             compositeUrl,
-            gifPath,
-            gifUrl,
           }).catch(() => {});
+        }
+
+        // RCA-7 Performance Optimization: Asynchronous Background GIF Generation
+        // Do NOT block customer flow or print dispatch on heavy FFmpeg video/GIF transcoding.
+        if (typeof kiosk?.livePhoto?.generateGif === 'function') {
+          kiosk.livePhoto.generateGif(effectiveSessionId || 'session', cleanPhotos)
+            .then(async (gifRes) => {
+              if (gifRes && gifRes.success) {
+                console.log('[RenderScreen] ✓ Background GIF loop generated successfully:', gifRes.gifPath);
+                if (effectiveSessionId && typeof kiosk.session?.update === 'function') {
+                  await kiosk.session.update(effectiveSessionId, {
+                    gifPath: gifRes.gifPath,
+                  }).catch(() => {});
+                }
+              }
+            })
+            .catch((gErr) => {
+              console.warn('[RenderScreen] Background GIF generation non-blocking warning:', gErr);
+            });
         }
 
         updateSession({ 
           compositeUrl, 
           compositePath: filePath,
-          gifPath,
-          gifUrl,
           sessionId: createdSessionId,
         });
         
         setStageText('Selesai! Membuka halaman unduh dan mencetak foto...');
         setProgress(100);
         clearInterval(interval);
-        setTimeout(() => navigate('qr'), 600);
+        setTimeout(() => navigate('qr'), 350);
       } catch (err) {
         console.error('Render error:', err);
         setError('Gagal memproses foto. Silakan hubungi operator.');

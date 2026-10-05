@@ -37,6 +37,20 @@ let consecutiveErrorCount = 0;
 let lastWin32CheckTime = 0;
 const DEBOUNCE_THRESHOLD = 2; // Require 2 consecutive failed queries to escalate to OFFLINE (hysteresis)
 
+let isDispatchActive = false;
+let lastDispatchEndTime = 0;
+
+/**
+ * Lifecycle coordination: Notify printer monitor when print.exe dispatch begins or finishes.
+ * When dispatch is active, PrinterMonitorService skips native DNP USB queries to prevent handle collisions.
+ */
+export function setPrintDispatchActive(active: boolean): void {
+  isDispatchActive = active;
+  if (!active) {
+    lastDispatchEndTime = Date.now();
+  }
+}
+
 /**
  * Query native Win32 printer hardware state and physical USB presence using PowerShell CIM and PnP.
  */
@@ -166,6 +180,13 @@ export async function checkPrinterHardware(forceFresh = false): Promise<PrinterH
       }
 
       const targetPrinter = getDefaultPrinterName() || 'DS-RX1';
+
+      // RCA-7 Lifecycle Boundary Guard:
+      // Do NOT interrogate DNP USB channel while a print job is actively dispatching
+      // or within 4 seconds of dispatch completion, preserving clean USB streaming.
+      if (isDispatchActive || (lastDispatchEndTime > 0 && Date.now() - lastDispatchEndTime < 4000)) {
+        return cachedHardwareStatus;
+      }
 
       // 1. Direct DNP mechanical telemetry probe
       const hw = await getHardwareStatus(targetPrinter, forceFresh);

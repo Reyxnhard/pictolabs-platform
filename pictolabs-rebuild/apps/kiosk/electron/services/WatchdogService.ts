@@ -49,6 +49,9 @@ export interface WatchdogTelemetryDTO {
   };
   printQueue: {
     isProcessing: boolean;
+    activeJobId?: string | null;
+    workerPhase?: string;
+    workerExecutionId?: string | null;
     pendingCount: number;
     printingCount: number;
     failedCount: number;
@@ -70,7 +73,7 @@ let options: Required<WatchdogOptions> = {
   sessionTimeoutMs: 120_000,
   captureTimeoutMs: 180_000,
   uploadTimeoutMs: 60_000,
-  printTimeoutMs: 120_000,
+  printTimeoutMs: 45_000,
 };
 
 /**
