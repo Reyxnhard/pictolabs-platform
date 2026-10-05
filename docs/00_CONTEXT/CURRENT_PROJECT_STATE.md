@@ -1,42 +1,57 @@
 # CURRENT PROJECT STATE & CODEBASE AUDIT REPORT
 **Target System:** Pictolabs Enterprise Unattended Photobooth Platform  
-**Document Location:** `/docs/CURRENT_PROJECT_STATE.md`  
-**Audit Date:** September 14, 2026  
-**Auditor:** Autonomous Senior Systems Architect (Antigravity Core)  
-**Standard:** Strict Source Code Inspection (Evidence-Based, Zero Marketing Language, Zero Optimism Bias)  
+**Document Location:** `docs/00_CONTEXT/CURRENT_PROJECT_STATE.md`  
+**Initial Codebase Audit:** September 14, 2026  
+**State Synchronization Date:** October 6, 2026 (Synchronized against Master Timeline v3.1)  
+**Engineering Authority:** Antigravity Core Engineering  
+**Standard:** Strict Source Code Inspection & Empirical Hardware UAT Evidence (Zero Marketing Language, Zero Optimism Bias)  
 
 ---
 
-## 1. Executive Summary
+## 1. Executive Summary & Master Timeline Synchronization
 
-### Completion Estimate Based on Code Only: **78%**
+### Current Platform Stage: **Pilot Hardening**
+### Current Active Gate: **Formal Printer RCA-7 Release Closure (`RELEASE_CLOSURE_PENDING`)**
+### Next Technical Workstream: **Camera Reliability RCA (`CAMERA-01`)**
 
-This estimate is derived exclusively from line-by-line inspection of executable source code across `apps/backend`, `apps/kiosk`, `apps/dashboard`, and `packages/shared`. Outdated documentation claims, planning artifacts, and aspirational roadmaps were explicitly ignored.
+The completion status of the Pictolabs platform reflects strict source-code reality and physical hardware UAT sign-offs across `apps/backend`, `apps/kiosk`, `apps/dashboard`, and `packages/shared`. Outdated documentation claims, planning artifacts, and aspirational roadmaps were reconciled against the authoritative [`docs/00_CONTEXT/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/00_CONTEXT/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md).
 
-```
+```text
 ┌───────────────────────────────────────────────────────────────────────────────────┐
-│                      PICTOLABS REBUILD IMPLEMENTATION STATUS                      │
-├────────────────────────────┬────────────┬─────────────────────────────────────────┤
-│ Subsystem                  │ Completion │ Primary Implementation State            │
-├────────────────────────────┼────────────┼─────────────────────────────────────────┤
-│ Kiosk Core Hardware Engine │    88%     │ Production-Grade (Canon EDSDK + Sharp)   │
-│ Kiosk UI & User Flow       │    82%     │ Operational (2R Strip Single Flow)      │
-│ Backend API & Services     │    82%     │ Operational (NestJS + Prisma + R2)      │
-│ Database & Migrations      │    90%     │ Production-Grade (PostgreSQL 16)        │
-│ Cloud Dashboard            │    72%     │ Operational (Booths, Support, Ledger)   │
-│ Production Infrastructure  │    70%     │ Operational (Docker Compose + Nginx)    │
-│ Automated Test Coverage    │    45%     │ Partial (Backend/Electron only; No UI)  │
-├────────────────────────────┼────────────┼─────────────────────────────────────────┤
-│ OVERALL PLATFORM REALITY   │    78%     │ STABLE TRANSACTION CORE / INCOMPLETE CMS│
-└────────────────────────────┴────────────┴─────────────────────────────────────────┘
+│                      PICTOLABS MASTER EXECUTION STATUS MATRIX                     │
+├────────────────────────────┬─────────────────────────────┬────────────────────────┤
+│ Subsystem / Component      │ Current Canonical Status    │ Governance Note        │
+├────────────────────────────┼─────────────────────────────┼────────────────────────┤
+│ Architecture / Foundation  │ CLOSED                      │ Monorepo & DB verified │
+│ P0 Admin Panel & Security  │ CLOSED                      │ Offline hash PIN PASS  │
+│ Session History (Kiosk P1-2) CLOSED                      │ Founder UAT PASS       │
+│ Printer Execution (RCA-7)  │ RELEASE_CLOSURE_PENDING     │ Founder UAT PASS (10/10)│
+│ Camera Core Architecture   │ AUTOMATED_VERIFIED          │ Canon EDSDK 13.x native│
+│ Camera Reliability (Sync)  │ OPEN (KNOWN BUG)            │ Requires CAMERA-01 RCA │
+│ Camera Management/Selector │ NOT_STARTED                 │ Future operator UI     │
+│ Cloudflare R2 Storage Core │ PRODUCTION_VERIFIED         │ S3 presigned PUT active│
+│ Upload Retail Outage Gate  │ OPEN                        │ Reliability test pend. │
+│ Midtrans Dynamic QRIS Core │ AUTOMATED_VERIFIED (Sandbox)│ Webhook & auto-advance │
+│ Midtrans Merchant Account  │ NOT_STARTED                 │ Production credentials │
+│ Offline Payment Bypass     │ CLOSED / VERIFIED           │ 6-digit PIN bypass PASS│
+│ Dashboard Session History  │ NOT_STARTED                 │ Phase 3 fleet archive  │
+│ Remote Edge Reprint        │ NOT_STARTED                 │ WebSocket edge command │
+│ Restart Recovery Engine    │ NOT_STARTED                 │ Post-camera hardening  │
+│ Full Customer Regression   │ PENDING                     │ End-to-end journey gate│
+│ Founder Pilot Hardware UAT │ PENDING                     │ Booth #1 repeated run  │
+│ Production Installer Build │ PENDING                     │ Standalone packaging   │
+│ Production VPS Deployment  │ PENDING (HELD)              │ Docker deploy + smoke  │
+│ Pilot Booth #1 Launch      │ NOT_READY                   │ Hardening in progress  │
+└────────────────────────────┴─────────────────────────────┴────────────────────────┘
 ```
 
-### Key Findings
-1. **Core Photobooth Loop is Fully Functional**: The unattended physical customer journey (`WelcomeScreen` $\rightarrow$ `ProductSelectScreen` $\rightarrow$ `PaymentScreen` $\rightarrow$ `CaptureScreen` $\rightarrow$ `FilterScreen` $\rightarrow$ `RenderScreen` $\rightarrow$ `PrintScreen` $\rightarrow$ `QRScreen`) is fully implemented with native hardware bindings and SQLite crash-resilience.
-2. **Hardware Sovereignty Achieved**: All proprietary legacy locks (`bytenode`, `node-machine-id`, vendor licenses) have been stripped. Camera integration uses a native C++ addon (`@photolab/canon` via Canon EDSDK 13.x) with automatic fallback to WebRTC webcam.
-3. **Database Architecture Validated**: PostgreSQL 16 is active via Prisma ORM with 6 sequential migrations applied, 21 relational models, and zero un-migrated schema drifts.
-4. **Administrative CMS & Dynamic Catalogs Missing**: Frame templates (`FRAME_DESIGNS`), print layouts, and product definitions are hardcoded in frontend TypeScript arrays. No web frame editor, frame asset uploader, or dynamic catalog REST API exists.
-5. **Partial Multi-Device Identity Transition**: While Phase 3.3 successfully implemented the `Device` and `ActivationToken` models, legacy routes (`storage.controller.ts:73`, `sessions.controller.ts:115`, `auth.service.ts:65`, `booth-secret.guard.ts:18`) still query `booth.deviceSecret` directly, creating authorization blind spots for newly paired hardware.
+### Key Technical Realities:
+1. **Core Customer Journey Functional**: Unattended flow (`WelcomeScreen` $\rightarrow$ `ProductSelectScreen` $\rightarrow$ `PaymentScreen` $\rightarrow$ `CaptureScreen` $\rightarrow$ `FilterScreen` $\rightarrow$ `RenderScreen` $\rightarrow$ `PrintScreen` $\rightarrow$ `QRScreen`) operates with native hardware bindings and SQLite crash-resilience.
+2. **Printer Failure Handling (RCA-7)**: Streamlined native GDI `print.exe` dispatch (~1.0s) fully implemented; background GIF transcoding decouples customer UI; in-flight retry strictly prohibited; all 10 physical hardware scenarios passed Founder UAT on Booth #1. Status is `RELEASE_CLOSURE_PENDING` (must NOT be marked `CLOSED` until production packaging, commit, push, VPS deploy, and smoke test complete).
+3. **Camera Source Synchronization Bug**: When Canon LiveView is delayed, webcam preview engages for countdown framing, but the capture trigger unconditionally actuates the Canon DSLR lens (`CaptureScreen.tsx:450-462`). This is an `OPEN` reliability defect requiring `CAMERA-01 RCA`.
+4. **Session History Center Boundary**: Kiosk Phase 1–2 (local SQLite, gallery, reprint 1x/2x with 4s debounce, double-tap protection, offline history, force-upload) is `CLOSED`. Web Dashboard Phase 3 and Remote Edge Reprint are `NOT_STARTED`.
+5. **Payment Production Boundary**: Sandbox QRIS and offline PIN bypass are verified. Production merchant approval and live banking network verification remain `NOT_STARTED`.
+6. **Multi-Device Identity Transition**: Phase 3.3 implemented `Device` and `ActivationToken` models, but legacy routes (`storage.controller.ts:73`, `sessions.controller.ts:115`, `auth.service.ts:65`, `booth-secret.guard.ts:18`) still query `booth.deviceSecret` directly.
 
 ---
 
@@ -122,35 +137,47 @@ c:\Users\ezarh\.gemini\antigravity-ide\scratch\Pictolabs
 ## 3. Implemented Features
 
 ### Camera System
-- **Status:** `IMPLEMENTED`
-- **Evidence:** 
+- **Current Timeline Status:**
+  - **Core Architecture & Driver:** `AUTOMATED_VERIFIED`
+  - **Session Isolation (P0 Fix):** `AUTOMATED_VERIFIED` (Commit `c2ec517`, 23/23 tests pass)
+  - **Camera Reliability Workstream:** `OPEN`
+  - **Preview ↔ Capture Synchronization:** `OPEN / KNOWN BUG`
+- **Technical Reality & Active Reliability Defect:**
   - Direct integration with Canon EDSDK 13.x via `@photolab/canon` native C++ binding in [`apps/kiosk/electron/services/CameraService.ts:9-120`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/CameraService.ts#L9-L120).
   - Multi-tier capture fallback: Mode A (`DownloadRequest` USB event), Mode B (SD card DCIM directory volume scan in lines 83-125), Mode C (instant LiveView sensor buffer grab).
   - Anti-Sleep keepalive heartbeat running every 10 seconds invoking `ExtendShutDownTimer` ([`CameraService.ts:130-143`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/CameraService.ts#L130-L143)).
   - Auto-reconnect background poller running every 1.5 seconds ([`CameraService.ts:152-160`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/CameraService.ts#L152-L160)).
   - USB bandwidth management: Automatically pauses LiveView streaming during shutter actuation to ensure 100% USB bandwidth for full-resolution JPEG transfer.
+  - **Active Blocker / Preview ↔ Capture Defect:** When Canon LiveView experiences delay, [`CaptureScreen.tsx`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/src/screens/CaptureScreen.tsx) engages WebRTC webcam preview during countdown, but lines 450–462 unconditionally trigger native Canon DSLR shutter over IPC upon countdown reaching zero. The customer looks at the wrong physical camera lens.
+  - **Next Technical Hardening:** `CAMERA-01 RCA` (Mapping camera lifecycle and preview/capture synchronization; strictly zero code changes until RCA is audited).
 - **Files Involved:**
   - `apps/kiosk/electron/services/CameraService.ts`
   - `apps/kiosk/src/screens/CaptureScreen.tsx`
   - `apps/kiosk/src/ipc/bridge.ts`
-- **Confidence Level:** `HIGH` (Physical Canon EOS 60D release validated at 240ms latency).
+- **Confidence Level:** `HIGH` (Physical Canon EOS release validated; preview mismatch confirmed and cited).
 
 ---
 
-### Session System
-- **Status:** `IMPLEMENTED`
-- **Evidence:**
+### Session System & Session History Center
+- **Current Timeline Status:**
+  - **Kiosk Session History Center (Phase 1–2):** `CLOSED`
+  - **Dashboard Session History (Phase 3):** `NOT_STARTED`
+  - **Remote Edge Physical Reprint Dispatch:** `NOT_STARTED`
+- **Technical Reality & Operational Evidence:**
   - Relational persistence in PostgreSQL via model `Session` ([`apps/backend/prisma/schema.prisma:147-170`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/backend/prisma/schema.prisma#L147-L170)).
   - Edge local storage in SQLite table `sessions` in WAL mode ([`apps/kiosk/electron/services/SyncEngine.ts:84-125`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/SyncEngine.ts#L84-L125)).
   - Lifecycle state machine: `PENDING_PAYMENT` $\rightarrow$ `CAPTURING` $\rightarrow$ `PROCESSING` $\rightarrow$ `PRINTING` $\rightarrow$ `COMPLETED` / `FAILED` / `ABANDONED`.
   - Resolution of Session ID Fracture (Phase 2): `PaymentScreen.tsx:142` calls `updateSession({ sessionId })`, binding the backend-generated QRIS session ID through all downstream screens.
+  - **Founder Physical UAT Sign-off:** Kiosk Phase 1–2 is verified PASS by Founder across: automatic upload, Force Upload, watchdog stability, full customer flow, physical reprint 1x, physical reprint 2x (4,000ms debounce), double-tap protection, offline history, and offline HOT reprint (Commit `ca0d092`).
+  - **Scope Boundary:** Web Dashboard Session History Phase 3 (search/filters across fleet) and Remote Edge WebSocket Reprint Dispatch remain `NOT_STARTED`.
 - **Files Involved:**
   - `apps/backend/src/sessions/sessions.service.ts`
   - `apps/backend/src/sessions/sessions.controller.ts`
   - `apps/kiosk/electron/services/SyncEngine.ts`
   - `apps/kiosk/src/screens/PaymentScreen.tsx`
   - `apps/kiosk/src/screens/RenderScreen.tsx`
-- **Confidence Level:** `HIGH` (Eliminated UUID fracture; verified by automated script `scratch_test_backend_api_upload.js`).
+  - `apps/kiosk/src/screens/SessionHistorySection.tsx`
+- **Confidence Level:** `HIGH` (Founder physical hardware verification confirmed).
 
 ---
 
@@ -185,20 +212,24 @@ c:\Users\ezarh\.gemini\antigravity-ide\scratch\Pictolabs
 ---
 
 ### Payment
-- **Status:** `IMPLEMENTED`
-- **Evidence:**
-  - Production Midtrans Dynamic QRIS integration in [`apps/backend/src/payments/payments.service.ts:50-135`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/backend/src/payments/payments.service.ts#L50-L135).
+- **Current Timeline Status:**
+  - **Midtrans Dynamic QRIS Core:** `AUTOMATED_VERIFIED`
+  - **Offline Payment Bypass Mode:** `CLOSED / VERIFIED`
+  - **Production Merchant Account Onboarding:** `NOT_STARTED`
+- **Technical Reality & Operational Evidence:**
+  - Midtrans Dynamic QRIS integration in [`apps/backend/src/payments/payments.service.ts:50-135`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/backend/src/payments/payments.service.ts#L50-L135).
   - Standardized order IDs: `TRX_<boothPrefix>_<timestamp>_<randomHex>`.
-  - Webhook listener `POST /api/payments/webhook` with cryptographic signature verification using SHA-512 (`order_id + status_code + gross_amount + ServerKey`) ([`payments.service.ts:168-195`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/backend/src/payments/payments.service.ts#L168-L195)).
-  - Real-time auto-advance: Emits `payment_success` over WebSocket (`KioskGateway`) with 120ms average settlement-to-screen latency.
-  - Dual fallback: 2-second HTTP polling loop in `PaymentScreen.tsx:180-210` ensures advancement even if WebSocket disconnects.
-  - Pre-payment hardware blocker: Actively checks printer status and paper roll lockout before generating invoices ([`PaymentScreen.tsx:63-100`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/src/screens/PaymentScreen.tsx#L63-L100)).
+  - Inbound webhook listener `POST /api/payments/webhook` with SHA-512 signature validation (`order_id + status_code + gross_amount + ServerKey`) ([`payments.service.ts:168-195`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/backend/src/payments/payments.service.ts#L168-L195)).
+  - Real-time auto-advance: Emits `payment_success` over WebSocket (`KioskGateway`) with sub-second screen transition.
+  - Payment Loop & Blink Fix: Session reference pinning eliminates QR code regeneration loops (validated in `PAYMENT_BLINK_FIX_VALIDATION.md`).
+  - Offline Payment Bypass Mode: 6-digit Admin PIN allows cash/voucher bypass during internet outages (Commit `157975b`), logging an immutable SQLite audit trail.
+  - **Production Boundary:** Sandbox simulation is verified (`verify_payment_transaction_lifecycle.mjs`). Live merchant account registration and production banking app settlement (BCA, Mandiri, GoPay) remain `NOT_STARTED`.
 - **Files Involved:**
   - `apps/backend/src/payments/payments.service.ts`
   - `apps/backend/src/payments/payments.controller.ts`
   - `apps/backend/src/gateway/kiosk.gateway.ts`
   - `apps/kiosk/src/screens/PaymentScreen.tsx`
-- **Confidence Level:** `HIGH` (Full end-to-end sandbox settlement validated).
+- **Confidence Level:** `HIGH` (Sandbox transaction lifecycle mathematically confirmed; production merchant open).
 
 ---
 
@@ -263,24 +294,34 @@ c:\Users\ezarh\.gemini\antigravity-ide\scratch\Pictolabs
 
 ---
 
-### Printer
-- **Status:** `IMPLEMENTED`
-- **Evidence:**
-  - Windows Spooler integration via PowerShell and rundll32 in [`apps/kiosk/electron/services/PrintService.ts:1-522`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/PrintService.ts#L1-L522).
-  - Persistent SQLite print queue in [`apps/kiosk/electron/services/PrintQueueService.ts:1-893`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/PrintQueueService.ts#L1-L893):
-    - Background queue worker running every 3 seconds with exponential backoff (5s, 10s, 20s, 40s, 80s).
-    - Unique index `idx_print_queue_active` preventing accidental double-prints on concurrent jobs.
-    - Startup crash recovery: Automatically resets hanging `PRINTING` jobs back to `PENDING` on reboot.
-    - Dead-letter queue preservation: Failed jobs persist in `DEAD_LETTER` state without hard deletion.
-  - Win32 CIM status monitor ([`PrinterMonitorService.ts`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/PrinterMonitorService.ts)): Interrogates Win32_Printer bitmasks every 5 seconds for paper jams, out-of-paper, and offline states.
-  - Paper roll tracking ([`PaperTrackerService.ts`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/PaperTrackerService.ts)): Tracks sheets remaining (default 700), enforces warning at 10 sheets, and engages hard lockout at $\le 2$ sheets.
+### Printer & Hardware Output
+- **Current Timeline Status:**
+  - **RCA-7 Execution Simplification:** `IMPLEMENTED`
+  - **Automated Verification:** `AUTOMATED_VERIFIED` (49/49 PASS across 4 suites)
+  - **Founder Physical Hardware UAT:** `FOUNDER_UAT_PASS`
+  - **Current Release State:** `RELEASE_CLOSURE_PENDING`
+  - **Governance Invariant:** DO NOT mark Printer `CLOSED` until formal release packaging, commit, push, VPS deploy, and smoke test are completed.
+- **Technical Reality & Operational Evidence:**
+  - Streamlined Direct GDI Dispatch: Replaced legacy polling loops with native `print.exe` direct invocation (~1.0s software dispatch boundary) in [`apps/kiosk/electron/services/PrintService.ts`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/PrintService.ts).
+  - Exact Printer Identity & Dynamic Active Queue Resolution: Resolves active Windows queue (e.g. `DS-RX1 (Copy 1)`) dynamically while strictly preventing cross-printer model collisions.
+  - In-Memory Advisory Health Gate: `getCachedPrinterHardwareStatus()` (0ms) in [`PrintQueueService.ts`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/PrintQueueService.ts) checks for `OFFLINE` or `DOOR_OPEN` pre-dispatch without spawning child processes.
+  - Decoupled GIF Transcode: Moved dual FFmpeg transcoding to background in `RenderScreen.tsx`, reducing customer UI wait from 24.5s to <2.5s.
+  - Non-Duplication Watchdog Safety: Stuck print jobs strictly transition to terminal `DEAD_LETTER`; automatic retry of in-flight prints is strictly BANNED (Commit `787b95d`).
+  - USB Channel Lifecycle Guard: `PrinterMonitorService.ts` suppresses native DNP USB queries during active `print.exe` spooling, eliminating Win32 kernel USB driver collisions.
+  - Admin Reprint: 4,000ms debounce prevents double-tapping and physical print queue flooding.
+  - Spooler Handoff Semantics: `COMPLETED` is explicitly defined as **Print Dispatch / Windows Spooler Accepted**, not optical proof of physical paper exit.
+  - **Automated Test Coverage:** 100% PASS across 4 suites (49/49 specs: `rca7-simplification.spec.ts`, `rca6-regression.spec.ts`, `print-queue.spec.ts`, `burn-in.spec.ts`).
+  - **Founder Physical UAT:** **PASS.** Founder personally tested physical hardware on Booth #1 across 10 scenarios: normal customer print, background GIF transcode, printer OFF before dispatch (pending queue dispatches when printer returns), reconnect pending queue, disconnect after dispatch, paper out, cover open, admin reprint (1x/2x with debounce), watchdog delayed previous-session scenario, and duplicate physical print protection.
+  - **Next Formal Action:** Build standalone installer package (`Pictolabs Kiosk Setup 1.0.0.exe`), clean commit, push GitHub, deploy VPS, and execute VPS smoke test.
 - **Files Involved:**
   - `apps/kiosk/electron/services/PrintService.ts`
   - `apps/kiosk/electron/services/PrintQueueService.ts`
   - `apps/kiosk/electron/services/PrinterMonitorService.ts`
   - `apps/kiosk/electron/services/PaperTrackerService.ts`
-  - `apps/kiosk/src/screens/PrintScreen.tsx`
-- **Confidence Level:** `HIGH` (All 9 scenarios in `print-queue.spec.ts` passed 100%).
+  - `apps/kiosk/src/screens/RenderScreen.tsx`
+  - `apps/kiosk/src/screens/QRScreen.tsx`
+  - `apps/kiosk/src/screens/SessionHistorySection.tsx`
+- **Confidence Level:** `HIGH` (Empirical Founder physical hardware UAT pass confirmed; zero duplicate print symptoms).
 
 ---
 
@@ -320,22 +361,24 @@ c:\Users\ezarh\.gemini\antigravity-ide\scratch\Pictolabs
 
 ---
 
-### Storage
-- **Status:** `IMPLEMENTED`
-- **Evidence:**
+### Storage & Cloudflare R2
+- **Current Timeline Status:**
+  - **Cloudflare R2 Bucket & CORS Setup:** `PRODUCTION_VERIFIED`
+  - **Backend Presigned Upload S3 Generator:** `PRODUCTION_VERIFIED`
+  - **Kiosk Direct Upload Pipeline:** `AUTOMATED_VERIFIED`
+  - **7-Day Local Retention Daemon:** `AUTOMATED_VERIFIED`
+  - **Production Internet Outage Reliability Gate:** `OPEN`
+- **Technical Reality & Operational Evidence:**
   - S3-compatible Cloudflare R2 client using `@aws-sdk/client-s3` in [`apps/backend/src/storage/storage.service.ts:35-95`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/backend/src/storage/storage.service.ts#L35-L95).
-  - Presigned direct upload generator: `POST /api/storage/presigned-url` issues secure PUT URLs with 15-minute expiration ([`storage.service.ts:100-148`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/backend/src/storage/storage.service.ts#L100-L148)).
-  - Graceful local fallback: Automatically falls back to serving static files from `public/uploads` if R2 credentials are unset.
-  - Kiosk 3-Key Safety Lock daemon in [`apps/kiosk/electron/services/StorageRetentionService.ts:1-611`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/StorageRetentionService.ts#L1-L611):
-    - Key 1: Media age $\ge 7$ days (or $\ge 48$h during low disk emergency).
-    - Key 2: Cloud sync verified (`upload_queue.status == 'COMPLETED'`).
-    - Key 3: Print queue settled (no pending print jobs).
-  - Low-disk priority emergency waterfall (<5 GB) and critical lockout (<2 GB).
+  - Presigned direct upload generator: `POST /api/storage/presigned-url` issues secure PUT URLs with 15-minute expiration ([`storage.service.ts:100-148`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/backend/src/storage/storage.service.ts#L100-L148)). Direct client streaming ensures the VPS never buffers media binaries.
+  - Kiosk 3-Key Safety Lock daemon in [`apps/kiosk/electron/services/StorageRetentionService.ts:1-611`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/StorageRetentionService.ts#L1-L611) enforces 7-day retention and verified cloud upload before disk pruning.
+  - **Targeted UAT Verified:** Founder scanned physical QR code from printed photostrip and successfully downloaded photo and animated GIF on mobile device.
+  - **Open Reliability Gate:** The full retail mall failure scenario (Internet OFF $\rightarrow$ local capture $\rightarrow$ pending queue $\rightarrow$ Internet returns $\rightarrow$ auto retry $\rightarrow$ R2 upload $\rightarrow$ completed) remains an unverified pilot gate.
 - **Files Involved:**
   - `apps/backend/src/storage/storage.service.ts`
   - `apps/backend/src/storage/storage.controller.ts`
   - `apps/kiosk/electron/services/StorageRetentionService.ts`
-- **Confidence Level:** `HIGH` (All 6 retention scenarios verified in `storage-retention.spec.ts`).
+- **Confidence Level:** `HIGH`.
 
 ---
 
@@ -355,21 +398,28 @@ c:\Users\ezarh\.gemini\antigravity-ide\scratch\Pictolabs
 
 ---
 
-### Monitoring
-- **Status:** `IMPLEMENTED`
-- **Evidence:**
+### Monitoring, Kiosk Hardening & Supervisor
+- **Current Timeline Status:**
+  - **Windows Custom Shell & Hotkey Interception:** `AUTOMATED_VERIFIED` (`lockdown-kiosk.ps1`)
+  - **Supervisor Watchdog Daemon:** `AUTOMATED_VERIFIED` (`watchdog-kiosk.ps1`)
+  - **In-Process Watchdog Supervisor:** `AUTOMATED_VERIFIED` (`WatchdogService.ts`)
+  - **Restart Recovery Engine:** `NOT_STARTED / PLANNED`
+- **Technical Reality & Operational Evidence:**
   - In-process 5-layer supervisor watchdog daemon in [`apps/kiosk/electron/services/WatchdogService.ts:1-364`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/WatchdogService.ts#L1-L364):
     1. Upload Watchdog: Detects and rescues stuck in-flight R2 uploads (>60s).
-    2. Print Watchdog: Cleans hung spooler processes and resets stalled print jobs (>90s).
+    2. Print Watchdog: Bounded at 45s (RCA-7 aligned); terminates hung `print.exe` and transitions stuck jobs to `DEAD_LETTER` (zero automatic retry).
     3. Session Walkaway Watchdog: Resets orphaned sessions to `WelcomeScreen` after 120s of customer inactivity.
     4. Disk Space Watchdog: Polls free SSD capacity every 60s and triggers alerts.
     5. Memory Watchdog: Purges Sharp buffers and forces garbage collection when RSS exceeds 500MB; initiates soft-restart if idle memory exceeds 800MB.
   - Backend health probes: `GET /health` and `GET /api/storage/health`.
   - Session health diagnostic engine ([`session-health.service.ts`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/backend/src/sessions/session-health.service.ts)): Analyzes lifecycle event sequences and flags sessions as `HEALTHY`, `DEGRADED`, `FAILED`, or `ABANDONED` with root-cause diagnoses.
+  - **Restart Recovery Engine Status:** Planned dedicated pilot-hardening gate (restart during active session, restart during upload, restart during print, recovery ledger consistency, zero duplicate prints/uploads).
 - **Files Involved:**
   - `apps/kiosk/electron/services/WatchdogService.ts`
   - `apps/backend/src/health/health.controller.ts`
   - `apps/backend/src/sessions/session-health.service.ts`
+  - `scripts/lockdown-kiosk.ps1`
+  - `scripts/watchdog-kiosk.ps1`
 - **Confidence Level:** `HIGH`.
 
 ---
@@ -602,22 +652,52 @@ The following risks are derived exclusively from actual code patterns:
 
 ---
 
-## 11. Recommended Next Milestone
+## 11. Recommended Next Milestones & Execution Roadmap
 
-### Next Milestone: **Phase 3.4 — Controller Unification & Hardware Hardening**
+### Current Stage: **Pilot Hardening**
+### Current Active Gate: **Formal Printer RCA-7 Release Closure (`RELEASE_CLOSURE_PENDING`)**
+### Next Technical Workstream: **Camera Reliability RCA (`CAMERA-01`)**
 
-Based on code reality, engineering effort must **not** proceed to new commercial features (such as AI filters or corporate portals) until the following technical debt is closed:
+In strict accordance with the approved [`docs/00_CONTEXT/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/00_CONTEXT/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md), the technical roadmap is governed by physical reliability gates rather than speculative commercial feature development.
 
-1. **Unify Device Secret Resolution**:
-   Update `storage.controller.ts`, `sessions.controller.ts`, `auth.service.ts`, and `booth-secret.guard.ts` to use `boothsService.findBoothByIdentifier()` so newly paired `Device` hardware can sync sessions and upload photos.
-2. **Harden Session Ingestion**:
-   Replace `any` payload in `sessions.controller.ts:syncSession()` with a validated `SyncSessionDto`. Eliminate error swallowing: throw standard NestJS HTTP exceptions (`400 Bad Request`, `401 Unauthorized`) on failed ingestions.
-3. **Standardize Binaries & Addons**:
-   Bundle `ffmpeg.exe` directly inside `apps/kiosk/resources/bin` and migrate `@photolab/canon` into an internal workspace package (`packages/canon`) rather than referencing external relative directories.
-4. **Connect Dashboard Email Action**:
-   Wire `apps/dashboard/src/components/gallery/EmailDeliveryStub.tsx` to `POST /api/sessions/:id/redelivery/email`.
-5. **Implement Basic Frame Catalog API**:
-   Provide a minimal REST controller for `Frame` records in NestJS so frame names, themes, and slot coordinates can be pushed to kiosks remotely.
+```text
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│                    CERTIFIED PILOT HARDENING EXECUTION SEQUENCE                   │
+├───────────────────────────────────────────────────────────────────────────────────┤
+│ 1. Formal Printer RCA-7 Release Closure                                           │
+│    (Packaging -> Clean Commit -> Push GitHub -> Deploy VPS -> VPS Smoke Test)     │
+│       ↓                                                                           │
+│ 2. Camera Reliability RCA & Hardening                                             │
+│    (CAMERA-01 RCA -> Sensor Sync -> Preview ↔ Capture Consistency CAMERA-06)     │
+│       ↓                                                                           │
+│ 3. Upload & Internet Production Reliability Gate                                  │
+│    (Internet Outage Simulation -> Local Queue -> Reconnect -> R2 Upload PASS)     │
+│       ↓                                                                           │
+│ 4. Kiosk Restart & Session Crash Recovery Gate                                    │
+│    (Mid-Session Restart -> Ledger Recovery -> Zero Duplicate Print / Upload)      │
+│       ↓                                                                           │
+│ 5. Real Midtrans Payment Production Gate                                          │
+│    (Production Merchant Credentials -> Live Banking App Settlement E2E)           │
+│       ↓                                                                           │
+│ 6. Full Customer Journey End-to-End Regression                                    │
+│    (Normal Flow + Degraded Outages + Recovery Scenarios on Booth #1)              │
+│       ↓                                                                           │
+│ 7. Founder Pilot Physical Hardware UAT                                            │
+│    (Repeated Production Runs on Booth #1 Hardware)                                │
+│       ↓                                                                           │
+│ 8. Production Installer Packaging & Git Release Tagging                           │
+│       ↓                                                                           │
+│ 9. Production VPS Deployment & Automated Health Smoke Test                        │
+│       ↓                                                                           │
+│ 10. PILOT BOOTH #1 COMMERCIALLY READY                                             │
+└───────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Actionable Technical Tasks:
+1. **Execute Printer Release Closure Gate**: Package standalone installer (`Pictolabs Kiosk Setup 1.0.0.exe`), commit verified printer hardening changes, push `docs-cleanup-phase-a` to `origin`, deploy production containers to VPS, and verify health probes.
+2. **Execute `CAMERA-01 RCA`**: Map camera lifecycle states in [`CameraService.ts`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/CameraService.ts) and [`CaptureScreen.tsx`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/src/screens/CaptureScreen.tsx); deliver `CAMERA_RELIABILITY_RCA.md` to resolve the live preview vs shutter trigger lens mismatch.
+3. **Execute Upload Outage Gate**: Validate that simulated internet disconnection during photo capture holds files safely in local SQLite and completes upload upon network restoration without duplicate records.
+4. **Harden Backend Controller Secrets**: Update legacy `booth.deviceSecret` queries in `storage.controller.ts:73`, `sessions.controller.ts:115`, `auth.service.ts:65`, and `booth-secret.guard.ts:18` to use `boothsService.findBoothByIdentifier()`.
 
 ---
 

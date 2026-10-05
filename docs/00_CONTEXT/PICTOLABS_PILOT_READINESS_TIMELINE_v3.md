@@ -2,12 +2,12 @@
 
 **Purpose:** master continuity timeline untuk menjaga roadmap historis, status aktual, execution order, dan release gates Pictolabs tetap konsisten ketika proyek berpindah chat.
 
-**Version:** Master Timeline v3.0  
+**Version:** Master Timeline v3.1  
 **Updated:** 6 October 2026  
 
 **Current stage:** Pilot Hardening  
-**Current active phase:** Transition from Printer RCA-7 closure → Camera Reliability & Camera Management  
-**Current gate:** Formal Printer RCA-7 release closure, then Camera RCA / mapping  
+**Current active phase:** Phase 1 — Formal Printer RCA-7 Release Closure (Transition to Phase 2 — Camera Reliability)  
+**Current gate:** Formal Printer RCA-7 Release Closure (Production Build → Commit → Push → VPS Deploy → VPS Smoke Test)  
 **Pilot target:** 1 booth → operational proof → scale 5–10 booths
 
 ---
@@ -15,12 +15,13 @@
 ## 1. Project Rules
 
 ### Source of truth
-- `MASTER_PROJECT_STATUS.md`
-- `PICTOLABS_MASTER_BLUEPRINT.md`
-- `PROJECT_HANDOFF.md`
-- Sprint/phase plans
-- Feature-specific RCA / Fix Reports
-- Founder Physical UAT
+- Canonical Master Timeline: `docs/00_CONTEXT/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md`
+- Current Project State: `docs/00_CONTEXT/CURRENT_PROJECT_STATE.md`
+- Master Blueprint: `docs/00_CONTEXT/PICTOLABS_MASTER_BLUEPRINT.md`
+- Canonical Workstream Hubs: `docs/01_WORKSTREAMS/*.md`
+- Canonical Evidence & RCAs: `docs/02_EVIDENCE/`
+- Operational Runbooks: `docs/03_RUNBOOKS/`
+- Founder Physical UAT Logs: `docs/02_EVIDENCE/UAT/`
 
 ### Architecture constraints
 - Do not redesign architecture.
@@ -94,34 +95,34 @@ Roadmap ini dipertahankan sebagai baseline historis. Status di bawah adalah stat
 
 | Priority | Original item | Current status | Notes |
 |---|---|---|---|
-| P0 | Admin Panel remains accessible offline | **CLOSED / PASS** | Offline Admin PIN telah diperbaiki dengan local secure hash verification dan admin panel telah tervalidasi dalam offline flow. |
-| P0 | Session corruption after camera failure | **UNRESOLVED / NEEDS VALIDATION** | Belum ada bukti penutupan eksplisit untuk requirement historis ini. Jangan samakan dengan bug sinkronisasi webcam/DSLR yang saat ini didefer. |
+| P0 | Admin Panel remains accessible offline | **CLOSED** | Offline Admin PIN fixed with local secure hash verification; admin panel validated in offline flow. |
+| P0 | Session corruption after camera failure | **AUTOMATED_VERIFIED / OPEN INVESTIGATION** | P0 data isolation fix verified across 23/23 automated tests (commit `c2ec517`). Live USB disconnect and sensor synchronization remain under Camera Reliability workstream. |
 
 ## P1 — Pilot-Critical Features
 
 | Priority | Original item | Current status | Notes |
 |---|---|---|---|
-| P1 | Printer offline during session handling | **UAT PASS — FORMAL CLOSURE PENDING** | RCA-7 simplification implemented, automated/build verification passed, Founder Physical UAT passed. Remaining gate is clean commit → push → VPS deploy → smoke test. |
-| P1 | Upload queue monitoring | **FUNCTIONAL PASS / PRODUCTION REGRESSION OPEN** | Automatic upload, Force Upload, queue/recovery behavior and Session History correlation have passed Founder UAT. Dedicated internet-outage regression and production verification remain. |
-| P1 | Session history + reprint center | **CLOSED — PHASE 1–2** | History, detail, reprint 1x/2x, double-tap protection, offline history, offline HOT reprint, automatic upload, Force Upload telah Founder-verified PASS. |
-| P1 | Real Midtrans Sandbox | **OPEN — SANDBOX / PRODUCTION VERIFICATION** | Functional payment flow exists and sandbox/real-provider verification remains a separate gate. Production merchant approval/credentials/E2E are not closed. |
+| P1 | Printer offline during session handling | **FOUNDER_UAT_PASS → RELEASE_CLOSURE_PENDING** | RCA-7 simplification implemented, 49/49 automated tests passed, Founder Physical UAT passed on Booth #1 hardware with zero duplicate prints. Remaining gate: production build, release commit, push, VPS deploy, and smoke test. |
+| P1 | Upload queue monitoring | **AUTOMATED_VERIFIED / FOUNDER_UAT_PASS (Targeted) → PRODUCTION_REGRESSION_PENDING** | Automatic upload, Force Upload, SQLite queue recovery, and Session History correlation verified PASS by Founder. Dedicated internet-outage reliability scenario remains to be run. |
+| P1 | Session history + reprint center | **CLOSED** | Kiosk Phase 1–2: History, detail, reprint 1x/2x with debounce, double-tap protection, offline history, offline HOT reprint, automatic upload, and Force Upload verified PASS by Founder. Web Dashboard Phase 3 remains `NOT_STARTED`. |
+| P1 | Real Midtrans Sandbox | **AUTOMATED_VERIFIED (Sandbox) / NOT_STARTED (Production Merchant)** | Functional payment flow & sandbox webhook verified; production merchant approval and live banking E2E settlement remain open. |
 
 ## P2 — Camera / UX Capability
 
 | Priority | Original item | Current status | Notes |
 |---|---|---|---|
-| P2 | Camera Device Selector | **OPEN — NEW CAMERA WORKSTREAM** | Kebutuhan baru diperluas menjadi pemilihan DSLR / mirrorless / webcam per booth. Belum closed. |
-| P2 | Webcam Live Preview | **CORE CAPABILITY EXISTS / RELIABILITY OPEN** | Webcam live preview sudah digunakan, tetapi source preview ↔ capture consistency belum closed. |
-| P2 | Camera Settings | **NOT STARTED** | ISO, shutter, aperture, WB, exposure compensation, focus/AF sesuai capability perlu dipetakan dan diimplementasikan secara capability-based. |
-| P2 | DSLR / Mirrorless / Webcam Support | **OPEN — ARCHITECTURE + DEVICE ABSTRACTION** | Perlu camera abstraction dan device capability model tanpa membongkar CameraService yang sudah stabil kecuali diperlukan. |
-| P2 | Preview ↔ Capture Consistency | **OPEN — RELIABILITY BUG** | Ada evidence preview/countdown dapat menggunakan webcam sementara capture menggunakan DSLR. Ini menjadi reliability requirement. |
+| P2 | Camera Device Selector | **NOT_STARTED** | Multi-camera selection per booth planned for operator UI. |
+| P2 | Webcam Live Preview | **AUTOMATED_VERIFIED (Fallback Core) / DEFERRED (Consistency Fix)** | WebRTC fallback functions, but preview/countdown source ↔ capture source consistency requires RCA-01 fix. |
+| P2 | Camera Settings | **NOT_STARTED** | ISO, shutter, aperture, WB, exposure compensation capability model planned. |
+| P2 | DSLR / Mirrorless / Webcam Support | **NOT_STARTED (Device Abstraction Model)** | Architecture & capability model planned; no code changes until RCA-01. |
+| P2 | Preview ↔ Capture Consistency | **BLOCKED / OPEN RELIABILITY BUG** | Active issue: countdown uses webcam, capture triggers DSLR. Active reliability investigation (`CAMERA-01`). |
 
 ## P3 — Operational / Extended Center
 
 | Priority | Original item | Current status | Notes |
 |---|---|---|---|
-| P3 | Session History Center | **PHASE 1–2 CLOSED / DASHBOARD PHASE 3 NOT STARTED** | Jangan mengubah status menjadi fully complete: core kiosk history/reprint/force-upload sudah closed, tetapi Dashboard Session History Phase 3 masih belum dimulai. |
-| P3 | Restart Recovery | **OPEN / NEXT AFTER CAMERA** | Kiosk restart recovery tetap menjadi phase tersendiri setelah printer formal closure dan camera reliability gate. |
+| P3 | Session History Center | **CLOSED (Phase 1–2 Kiosk Core) / NOT_STARTED (Dashboard Phase 3)** | Core kiosk history/reprint/force-upload is CLOSED; web dashboard archive and remote edge reprint are NOT_STARTED. |
+| P3 | Restart Recovery | **NOT_STARTED / PLANNED** | Kiosk restart recovery remains a dedicated hardening gate after printer formal closure and camera reliability. |
 
 ### Roadmap interpretation rule
 
@@ -245,7 +246,8 @@ Features:
 - offline history → PASS
 - offline HOT reprint → PASS
 
-**Session History Phase 1–2 = CLOSED.**
+**Session History Phase 1–2 = CLOSED.**  
+*(Note: Web Dashboard Session History Phase 3 and Remote Edge Reprint Dispatch remain `NOT_STARTED` and are decoupled from the Kiosk Phase 1–2 closure).*
 
 ---
 
@@ -388,9 +390,9 @@ This is invalid for the DNP DS-RX1.
 
 ---
 
-# 10. Printer Execution Simplification / RCA-7 — IMPLEMENTED + FOUNDER UAT PASS
+# 10. Printer Execution Simplification / RCA-7 — IMPLEMENTED & FOUNDER_UAT_PASS
 
-V2 implementation is complete and has passed automated verification. Founder Physical UAT remains the final closure gate.
+RCA-7 simplification is fully **IMPLEMENTED**, **AUTOMATED_VERIFIED** (49/49 PASS across test suites), and has achieved **FOUNDER_UAT_PASS** on physical Booth #1 hardware. Current status is **RELEASE_CLOSURE_PENDING**.
 
 ### Confirmed V2 root cause discovered during UAT
 
@@ -423,33 +425,38 @@ V2 therefore adds **dynamic active printer resolution** rather than assuming the
 
 ### Automated verification
 
-- PRN hardening suite: 49/49 PASS.
+- PRN hardening suite: 49/49 PASS across 4 suites (`rca7-simplification.spec.ts`, `rca6-regression.spec.ts`, `print-queue.spec.ts`, `burn-in.spec.ts`).
 - Electron TypeScript build: PASS.
 - Renderer build: PASS.
 
-### Founder UAT status
+### Founder Physical UAT Status — PASS
 
-RCA-7 Founder Physical UAT is **PASS**. Confirmed:
-- Normal customer print.
-- Background GIF/MP4 no longer blocks print path.
-- Printer OFF before dispatch → queue remains pending and later dispatches when printer returns.
-- Disconnect after dispatch.
-- Paper Out behavior.
-- Cover Open behavior.
-- Admin reprint.
-- No delayed watchdog-driven duplicate print.
-- No spontaneous second physical print.
+RCA-7 Founder Physical UAT is **FOUNDER_UAT_PASS**. Confirmed on physical hardware:
+- **Normal Customer Print:** PASS.
+- **Background GIF/MP4 Decoupling:** PASS (no longer blocks print path).
+- **Printer OFF Before Dispatch:** PASS (queue remains pending and dispatches when printer returns).
+- **Reconnect Pending Queue:** PASS.
+- **Disconnect After Dispatch:** PASS.
+- **Paper Out Behavior:** PASS.
+- **Cover Open Behavior:** PASS.
+- **Admin Reprint (1x / 2x with 4,000ms debounce):** PASS.
+- **Watchdog / Delayed Previous-Session Scenario:** PASS (no phantom duplicates).
+- **Duplicate Physical Print Protection:** PASS (duplicate reprint bug completely eradicated).
 
 Important semantic decision:
 - `COMPLETED` in the simplified execution boundary means **Print Dispatch / Windows Spooler Accepted**, not guaranteed physical mechanical completion.
 - A pending queue that prints once after the printer returns is expected behavior.
 - A physical print followed by application retry that creates a second physical print remains a critical bug.
 
-Formal closure still requires:
-- clean commit
-- push GitHub
-- production deploy
+### Current Release State: FOUNDER_UAT_PASS → RELEASE_CLOSURE_PENDING
+
+Formal closure requirements:
+- Production installer packaging
+- Clean commit
+- Push GitHub
+- Production VPS deploy
 - VPS smoke test
+- Formal sign-off → **CLOSED**
 
 ---
 
@@ -515,7 +522,7 @@ This feature belongs to the **future fleet/configuration roadmap**, not the curr
 
 # 11. P1 Printer Closure Gate
 
-RCA-7 is now **Founder-UAT PASS**, but the project phase is not formally closed until the release gate is completed:
+RCA-7 is now **FOUNDER_UAT_PASS**, but the workstream is not formally closed until the release closure gate is completed:
 
 ```text
 RCA / design audit        PASS
@@ -523,6 +530,8 @@ Implementation            PASS
 Automated regression      PASS
 Production build          PASS
 Founder Physical UAT      PASS
+        ↓ (CURRENT POSITION: RELEASE_CLOSURE_PENDING)
+Production packaging
         ↓
 Clean commit
         ↓
@@ -537,9 +546,11 @@ CLOSED
 
 The future Admin Printer Selection / Multi-Printer feature is **not required** to close the current printer failure-handling phase.
 
-# 12. Camera Management & Reliability — NEW ACTIVE WORKSTREAM
+# 12. Camera Management & Reliability — ACTIVE HARDENING WORKSTREAM (NEXT)
 
-The original timeline described the camera core as ~95% / stable. That remains valid for the existing core capture path, but new evidence and founder requirements create a separate workstream.
+The original timeline described the camera core as ~95% / stable. That remains valid for the existing core capture path, but new evidence and founder requirements create a dedicated reliability and capability workstream.
+
+**Status:** `OPEN RELIABILITY INVESTIGATION` (Next technical hardening priority after Printer release closure).
 
 ## Existing reliability evidence
 
@@ -559,7 +570,7 @@ Camera restart + USB reconnect
 → behavior normalizes
 ```
 
-This must be treated as a real reliability issue, not merely a future UI enhancement.
+This is an **OPEN reliability defect** (preview/countdown source and capture source resolve to different sensors), not merely a future UI enhancement.
 
 ## Founder requirements
 
@@ -669,11 +680,12 @@ Correctness takes priority over latency optimization.
 
 # 14. Current / Upcoming Pilot Hardening Timeline
 
-## Phase 1 — Formal Printer RCA-7 Closure
-**CURRENT RELEASE GATE**
+## Phase 1 — Formal Printer RCA-7 Release Closure
+**CURRENT RELEASE GATE (`RELEASE_CLOSURE_PENDING`)**
 
 ```text
 Founder UAT PASS
+→ production packaging
 → clean commit
 → push GitHub
 → deploy VPS
@@ -683,10 +695,10 @@ Founder UAT PASS
 
 No new printer redesign unless new evidence appears.
 
-## Phase 2 — Camera Reliability RCA
-**NEXT**
+## Phase 2 — Camera Reliability RCA & Hardening
+**NEXT MAJOR TECHNICAL WORKSTREAM (`OPEN`)**
 
-RCA-only first:
+RCA-only first (`CAMERA-01`):
 - reproduce preview/capture mismatch
 - map camera lifecycle
 - identify source-of-truth state
@@ -697,22 +709,21 @@ RCA-only first:
 Deliverable:
 `CAMERA_RELIABILITY_RCA.md`
 
-No implementation until RCA is audited.
+No implementation until RCA is audited. Architecture rule: Do NOT modify `CameraService` code during unrelated documentation tasks.
 
-## Phase 3 — Camera Management & Device Capability
+## Phase 3 — Camera Management & Device Capability (`NOT_STARTED`)
 After RCA approval:
 - device selector
 - DSLR / mirrorless / webcam abstraction
 - capability detection
 - in-app camera settings
-- preview/capture consistency
+- preview/capture consistency (`CAMERA-06`)
 - reconnect/recovery
 
 Each feature must pass automated/build/runtime/Founder UAT gates.
 
-## Phase 4 — Upload / Internet Production Regression
-
-Validate:
+## Phase 4 — Upload / Internet Production Reliability (`OPEN`)
+Targeted upload UAT passed, but the complete internet-outage reliability scenario remains open:
 
 ```text
 Internet OFF
@@ -724,7 +735,7 @@ Internet OFF
 → completed
 ```
 
-Also:
+Also validate:
 - Force Upload
 - duplicate prevention
 - upload failure recovery
@@ -732,23 +743,21 @@ Also:
 - retention rules
 - production R2 lifecycle/configuration
 
-## Phase 5 — Real Midtrans Verification
-
+## Phase 5 — Real Midtrans Verification (`OPEN`)
 Separate functional implementation from production readiness:
 
 ```text
-sandbox / provider E2E
-→ webhook / settlement
-→ failure / timeout
-→ production merchant readiness
-→ production E2E
+sandbox / provider E2E (AUTOMATED_VERIFIED)
+→ webhook / settlement (AUTOMATED_VERIFIED)
+→ offline bypass fallback (CLOSED / VERIFIED)
+→ production merchant readiness (NOT_STARTED)
+→ production E2E (NOT_STARTED)
 ```
 
-Do not call production payment readiness CLOSED until the actual production gate passes.
+Do not call production payment readiness CLOSED until the actual production merchant onboarding and live banking app transactions pass.
 
-## Phase 6 — Kiosk Restart / Session Recovery
-
-Test:
+## Phase 6 — Kiosk Restart & Session Recovery (`NOT_STARTED`)
+Planned pilot-hardening gate after camera reliability:
 - restart during active session
 - restart during upload
 - restart around print dispatch
@@ -758,11 +767,8 @@ Test:
 - no orphan session
 - recovery ledger consistency
 
-## Phase 7 — Dashboard Session History Phase 3 / Operational Layer
-
-Start only after core kiosk reliability gates are stable.
-
-Scope to be confirmed:
+## Phase 7 — Dashboard Session History Phase 3 / Operational Layer (`NOT_STARTED`)
+Start only after core kiosk reliability gates are stable:
 - dashboard session list
 - search/filter
 - session detail
@@ -770,6 +776,7 @@ Scope to be confirmed:
 - asset visibility
 - operational diagnostics
 - fleet correlation
+- remote edge reprint dispatch
 
 Do not assume every Photolab dashboard feature belongs in Pilot.
 
@@ -897,11 +904,11 @@ Install kiosk
 # 16. Non-Blocking / Deferred Backlog
 
 - PRN-03 final classification
-- ~5s print-start latency investigation
-- camera source synchronization bug
-- Midtrans production readiness/verification as applicable
+- ~5s print-start latency investigation (observation, not a blocker)
+- camera source synchronization bug (active investigation under Camera Reliability)
+- Midtrans production merchant onboarding & live banking app verification
 - Dashboard Session History Phase 3
-- remote reprint / broader fleet operations
+- remote edge reprint / broader fleet operations
 - scale from 1 → 5–10 booths
 
 ---
@@ -910,34 +917,37 @@ Install kiosk
 
 ```text
 Architecture / Foundation        CLOSED
-P0 Admin                         CLOSED
-Session History Phase 1–2       CLOSED
+P0 Admin Panel & Security        CLOSED
+Session History Phase 1–2 (Kiosk) CLOSED
 
-Printer RCA-7 Implementation    PASS
-Printer RCA-7 Founder UAT       PASS
-Printer Formal Release Closure  PENDING
+Printer RCA-7 Implementation     AUTOMATED_VERIFIED
+Printer RCA-7 Physical UAT       FOUNDER_UAT_PASS
+Printer Subsystem Release        RELEASE_CLOSURE_PENDING
 
-Camera Core                     STABLE
-Camera Reliability              OPEN
-Camera Management               NOT STARTED
-Camera Device Selector          NOT STARTED
-Camera Settings                 NOT STARTED
-DSLR/Mirrorless/Webcam model    OPEN
+Camera Core Architecture         AUTOMATED_VERIFIED
+Camera Reliability               OPEN (BLOCKED ON RCA)
+Camera Preview ↔ Capture Sync    OPEN (KNOWN BUG)
+Camera Device Selector           NOT_STARTED
+Camera Settings (ISO/Shutter)    NOT_STARTED
+DSLR/Mirrorless/Webcam Abstraction NOT_STARTED
 
-Upload Functional               PASS
-Upload Production Regression    OPEN
+Upload Core Pipeline             PRODUCTION_VERIFIED (Cloudflare R2 Bucket)
+Upload Kiosk Direct Pipeline     AUTOMATED_VERIFIED
+Upload Production Outage Gate    OPEN (RELIABILITY SCENARIO PENDING)
 
-Midtrans Functional             PASS / VERIFY
-Midtrans Production             OPEN
+Midtrans Sandbox API             AUTOMATED_VERIFIED
+Midtrans Production Account      NOT_STARTED (MERCHANT ONBOARDING OPEN)
+Offline Payment Bypass           CLOSED / VERIFIED
 
-Dashboard Session History P3    NOT STARTED
-Fleet Operations                PARTIAL / OPEN
-Restart Recovery                NEXT
+Dashboard Session History P3     NOT_STARTED
+Remote Edge Reprint Dispatch     NOT_STARTED
+Restart Recovery Engine          NOT_STARTED / NEXT AFTER CAMERA
 
-Full Regression                 PENDING
-Production Release              PENDING
-VPS Deployment                  PENDING
-Pilot Booth #1                  NOT READY
+Full Customer Flow Regression    PENDING
+Founder Pilot UAT                PENDING
+Production Installer Packaging   PENDING
+VPS Deployment & Smoke Test      PENDING
+Pilot Booth #1 Status            NOT_READY (HARDENING IN PROGRESS)
 ```
 
 ## Pilot Critical vs Post-Pilot
@@ -970,19 +980,37 @@ Pilot Booth #1                  NOT READY
 
 # 18. Continuity Rule for New Chats
 
-When moving the project to a new chat:
+When moving the project to a new chat, follow the canonical documentation hierarchy established by the project architecture:
 
-1. Load this timeline.
-2. Load `PROJECT_HANDOFF.md`.
-3. Load `MASTER_PROJECT_STATUS.md`.
-4. Load the latest feature RCA/Fix Report.
-5. Check the latest Founder Physical UAT.
-6. Continue from the current active gate.
-7. Do not restart analysis from zero.
-8. Do not declare a phase closed from an AG implementation report alone.
+### Recommended Reading Order
+1. **Master Timeline:** [`docs/00_CONTEXT/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/00_CONTEXT/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md)
+2. **Current Project State:** [`docs/00_CONTEXT/CURRENT_PROJECT_STATE.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/00_CONTEXT/CURRENT_PROJECT_STATE.md)
+3. **Master Blueprint (Architecture / Scope):** [`docs/00_CONTEXT/PICTOLABS_MASTER_BLUEPRINT.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/00_CONTEXT/PICTOLABS_MASTER_BLUEPRINT.md)
+4. **Relevant Workstream Context in `docs/01_WORKSTREAMS/`:**
+   - [`PRINTER_WORKSTREAM.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/01_WORKSTREAMS/PRINTER_WORKSTREAM.md)
+   - [`CAMERA_WORKSTREAM.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/01_WORKSTREAMS/CAMERA_WORKSTREAM.md)
+   - [`SESSION_HISTORY_WORKSTREAM.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/01_WORKSTREAMS/SESSION_HISTORY_WORKSTREAM.md)
+   - [`STORAGE_WORKSTREAM.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/01_WORKSTREAMS/STORAGE_WORKSTREAM.md)
+   - [`KIOSK_HARDENING_WORKSTREAM.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/01_WORKSTREAMS/KIOSK_HARDENING_WORKSTREAM.md)
+   - [`PAYMENT_WORKSTREAM.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/01_WORKSTREAMS/PAYMENT_WORKSTREAM.md)
+   - [`DEPLOYMENT_WORKSTREAM.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/01_WORKSTREAMS/DEPLOYMENT_WORKSTREAM.md)
+   - [`DASHBOARD_WORKSTREAM.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/01_WORKSTREAMS/DASHBOARD_WORKSTREAM.md)
+   - [`FLEET_WORKSTREAM.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/01_WORKSTREAMS/FLEET_WORKSTREAM.md)
+   - [`SECURITY_WORKSTREAM.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/01_WORKSTREAMS/SECURITY_WORKSTREAM.md)
+5. **Relevant Decision Records (when applicable):** e.g. [`docs/00_CONTEXT/HEARTBEAT_SOURCE_OF_TRUTH_DECISION.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/00_CONTEXT/HEARTBEAT_SOURCE_OF_TRUTH_DECISION.md)
+6. **Latest Canonical Evidence in `docs/02_EVIDENCE/`:** (RCA, FIX_REPORTS, UAT, AUDITS, SPECS_REPORTS)
+7. **Operational Runbooks in `docs/03_RUNBOOKS/`:** (DEPLOYMENT, OPERATOR, FOUNDER_UAT)
+8. **Implementation / Active Code:** in `apps/` and `packages/`
+
+> [!CAUTION]
+> **Continuity Invariants:**
+> - Do NOT tell AG to blindly read all Markdown files.
+> - Files in `docs/99_ARCHIVE/` are historical reference only and MUST NOT be used as current-state authority.
+> - Do not declare a phase closed from an implementation report alone. A Founder Physical UAT PASS does not equal release CLOSED until the release closure gate is completed.
+> - Do not reopen closed Session History work without new evidence.
+> - Do not start Camera implementation before the Camera RCA is audited.
+> - Do not modify `CameraService.ts` during unrelated work.
 
 **Current active gate:**
 
-> Formal closure of Printer RCA-7 (commit → push → VPS deploy → smoke), then Camera Reliability RCA.
-
-Do not reopen closed Session History work without new evidence. Do not start Camera implementation before the Camera RCA is audited. Do not treat Photolab reference features as automatic Pictolabs requirements.
+> Formal release closure of Printer RCA-7 (`RELEASE_CLOSURE_PENDING`), then Camera Reliability RCA (`CAMERA-01`).

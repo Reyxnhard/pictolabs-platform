@@ -5,6 +5,12 @@ The Session History Workstream manages persistence, retrieval, administrative re
 
 ## 2. Current Status
 
+### Phase & Execution Boundary Summary
+- **Kiosk Session History Phase 1–2:** `CLOSED` (Verified PASS by Founder Physical UAT on Booth #1)
+- **Dashboard Session History Phase 3:** `NOT_STARTED`
+- **Remote Edge Physical Reprint:** `NOT_STARTED`
+
+### Granular Component Status
 | Feature / Component | Status | Notes |
 |:---|:---:|:---|
 | **Local SQLite WAL Session Store** | `AUTOMATED_VERIFIED` | Stores session metadata, photo paths, and print status. |
@@ -32,7 +38,7 @@ The Session History Workstream manages persistence, retrieval, administrative re
 - **Data Retention Rule:** Local session composites and raw photo frames must NEVER be deleted prior to 7-day retention expiry and verified cloud upload.
 - **Reprint Debounce:** Admin reprint triggers must enforce a minimum 4,000ms debounce to prevent physical print queue flooding.
 - **Rate Limiting:** Emergency reprint rate limit mandates a maximum of 3 physical reprints per customer session.
-- **Scope Boundary:** Session History Center must NOT be classified as fully closed until Remote Edge Reprint is either implemented or formally deferred by the Founder.
+- **Scope Boundary:** Kiosk Session History Phase 1–2 is `CLOSED`. The overall Session History Center must NOT be classified as fully closed until Dashboard Session History Phase 3 and Remote Edge Physical Reprint are either implemented or formally deferred by the Founder.
 
 ## 6. Known Open Issues
 - **Planned / Scope Decision:** Remote Edge Reprint (dispatching physical reprint commands from the Web Dashboard to the Kiosk over live WebSocket) is currently unstarted.

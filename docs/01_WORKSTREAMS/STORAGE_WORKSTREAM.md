@@ -13,6 +13,7 @@ The Storage Workstream manages object storage for customer photostrip assets, an
 | **Digital Delivery Softfile Landing Page**| `PRODUCTION_VERIFIED` | Customers scan QR code to download photos and GIF. |
 | **7-Day Local Disk Retention Daemon** | `AUTOMATED_VERIFIED` | Retains local files for 7 days before pruning. |
 | **30-Day Cloudflare R2 Auto-Lifecycle** | `PRODUCTION_VERIFIED` | Bucket lifecycle rule automatically deletes old assets. |
+| **Upload Production Outage Gate** | `OPEN` | Retail mall network loss and auto-recovery reliability gate. |
 
 ## 3. Completed / Verified
 - **Implemented:** `storage.service.ts` in backend, `SyncEngine.ts` in kiosk, and public web download landing page (Sprint 3).
@@ -32,10 +33,11 @@ The Storage Workstream manages object storage for customer photostrip assets, an
 - **Signed URL Expiry:** Presigned upload URLs must enforce a maximum 15-minute validity window.
 
 ## 6. Known Open Issues
-- **None.** Storage subsystem is fully closed and production-verified.
+- **Open Pilot Reliability Gate:** The full retail mall failure scenario (Internet OFF during capture $\rightarrow$ held safely in SQLite pending queue $\rightarrow$ Internet returns $\rightarrow$ auto retry $\rightarrow$ R2 upload $\rightarrow$ completed) remains an unverified pilot gate (`Upload Production Outage Gate: OPEN`).
+- **Cloud Infrastructure Status:** Cloudflare R2 bucket credentials, CORS policy, and backend S3 presigned PUT generation are fully `PRODUCTION_VERIFIED`. However, the end-to-end edge client outage resilience under live mall network conditions remains an open verification gate.
 
 ## 7. Next Task
-Confirm production R2 API keys and public bucket domain are correctly set in the VPS `.env` file.
+Execute the retail internet outage and reconnection recovery test scenario on Booth #1 following camera reliability hardening.
 
 ## 8. Evidence
 1. [`docs/SPRINT_3_REVIEW.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/04_HISTORY/SPRINT_REVIEWS/SPRINT_3_REVIEW.md) — Comprehensive Sprint 3 review and architecture proof.

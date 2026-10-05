@@ -11,7 +11,8 @@ The Kiosk Hardening Workstream secures the physical photobooth running Windows 1
 | **Hardware Hotkey Interception** | `AUTOMATED_VERIFIED` | Blocks Ctrl+Alt+Del, Alt+Tab, Alt+F4, WinKey via registry. |
 | **Edge Touch Swipe Suppression** | `AUTOMATED_VERIFIED` | Disables Action Center and taskbar swipe gestures. |
 | **Supervisor Watchdog Daemon** | `AUTOMATED_VERIFIED` | PowerShell daemon relaunches kiosk in <5s if terminated. |
-| **Auto-Boot & Crash Auto-Recovery** | `AUTOMATED_VERIFIED` | Windows auto-login and recovery service configured. |
+| **Windows Auto-Boot & Shell Relaunch** | `AUTOMATED_VERIFIED` | Windows auto-login and supervisor watchdog configured. |
+| **Restart Recovery Engine** | `NOT_STARTED` | **PLANNED** — Application-level in-flight session crash recovery gate. |
 | **Technician Maintenance Shell Access** | `AUTOMATED_VERIFIED` | 6-digit Admin PIN allows exiting to Windows desktop. |
 | **On-Site Physical Hardware Execution** | `RELEASE_CLOSURE_PENDING` | PowerShell lockdown script ready for execution on Booth #1. |
 
@@ -31,9 +32,11 @@ The Kiosk Hardening Workstream secures the physical photobooth running Windows 1
 - **Zero Desktop Exposure:** Customers must NEVER be able to access the Windows desktop, taskbar, browser, or command line.
 - **Touch Edge Gesture Lockdown:** Windows 10/11 touch edge swipes must be disabled via policy registry (`HKLM:\SOFTWARE\Policies\Microsoft\Windows\EdgeUI\AllowEdgeSwipe = 0`) to prevent swipe gestures from exposing Action Center or notification flyouts during operation.
 - **Self-Healing Recovery:** If the kiosk software crashes or is killed, the supervisor daemon MUST restore it to the Welcome Screen in under 5,000ms.
+- **Process Relaunch ≠ Session Recovery:** The supervisor daemon automatically restoring the kiosk process in <5,000ms does NOT equal recovery of an interrupted customer session. Application-level in-flight crash recovery (resuming active capture/print from [`RecoveryLedgerService.ts`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/RecoveryLedgerService.ts) without duplicate prints or uploads) is a separate pilot hardening gate (`Restart Recovery Engine: NOT_STARTED / PLANNED`).
 - **Reversible Lockdown:** All lockdown modifications must be reversible via the companion maintenance script (`unlock-kiosk.ps1`) using the Admin PIN.
 
 ## 6. Known Open Issues
+- **Restart Recovery Gate:** In-flight crash/reboot recovery verification (restarting during active session, upload, or print) remains an open pilot hardening gate (`Restart Recovery Engine: NOT_STARTED / PLANNED`).
 - **Execution Gate:** Run `lockdown-kiosk.ps1` on the physical Booth #1 machine during store installation.
 
 ## 7. Next Task

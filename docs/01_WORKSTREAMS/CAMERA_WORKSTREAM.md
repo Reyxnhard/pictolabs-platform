@@ -13,7 +13,7 @@ The Camera Workstream governs image acquisition, live framing, sensor triggering
 | **Camera Disconnect / Reconnect Recovery** | `AUTOMATED_VERIFIED` | Hot-plug listener re-establishes EDSDK session automatically. |
 | **Session Isolation & Buffer Purge (P0 Fix)** | `AUTOMATED_VERIFIED` | Commit `c2ec517` verified via 23/23 automated test checks. |
 | **Session Isolation Founder Physical UAT** | `FOUNDER_UAT_PENDING` | Physical USB disconnect test on Booth #1 hardware pending. |
-| **Preview ↔ Capture Consistency** | `PLANNED` | **ACTIVE RELIABILITY ISSUE (OPEN)** — Requires `CAMERA-01 RCA`. |
+| **Preview ↔ Capture Consistency** | `OPEN (KNOWN BUG)` | **ACTIVE RELIABILITY ISSUE (OPEN)** — Requires `CAMERA-01 RCA`. |
 | **Multi-Camera Device Selector** | `NOT_STARTED` | Future operator UI for multi-camera booths. |
 | **In-App Camera Settings (ISO/Shutter)** | `NOT_STARTED` | Planned for remote administrative calibration. |
 | **Mirrorless SDK Support** | `NOT_STARTED` | Post-pilot roadmap item. |
