@@ -12,15 +12,17 @@ The Printer Workstream manages physical photostrip output on DNP DS-RX1 dye-subl
 | **Decoupled GIF/LivePhoto Transcode** | `AUTOMATED_VERIFIED` | FFmpeg transcoding moved to background; customer UI wait <3.5s. |
 | **Anti-Duplication Watchdog (`DEAD_LETTER`)**| `AUTOMATED_VERIFIED` | In-flight jobs timeout to `DEAD_LETTER`; automatic retry strictly banned. |
 | **Admin Reprint (1x / 2x with Debounce)** | `AUTOMATED_VERIFIED` | Debounced at 4,000ms; dispatches exactly one physical reprint. |
-| **Founder Physical Hardware UAT** | `FOUNDER_UAT_PASS` | **PASS** — Founder V7 physical UAT confirmed zero duplicate prints. |
-| **Release Closure** | `RELEASE_CLOSURE_PENDING` | Awaiting production installer packaging and VPS deployment. |
+| **Startup Freeze Elimination & Async Discovery** | `CLOSED` | Electron getPrintersAsync (<15ms), 3s deferred monitor; sub-second boot. |
+| **Founder Physical Hardware UAT** | `FOUNDER_UAT_PASS` | **PASS** — Founder physical UAT: zero duplicate prints, customer print & admin reprint verified on Booth #1. |
+| **Printer RCA-7 Physical Regression** | `PASS` | **PASS** — Live physical printing, mechanical cutter, and DS-RX1 detection verified during Startup UAT. |
+| **Release Closure** | `RELEASE_CLOSURE_PENDING` | Production installer packaged (`Pictolabs Kiosk Setup 1.0.0.exe`); awaiting VPS deployment. |
 | **Physical Paper Sensor Verification** | `DEFERRED` | Application relies on Windows Spooler acceptance semantics. |
 
 ## 3. Completed / Verified
-- **Implemented:** Streamlined `PrintService.ts` (~1.0s dispatch), advisory cache in `PrintQueueService.ts`, background transcoding in `RenderScreen.tsx`, and telemetry suppression during USB write in `PrinterMonitorService.ts` (Commit `787b95d`).
-- **Automated Verified:** 100% PASS across 4 automated suites: `rca7-simplification.spec.ts` (6/6), `rca6-regression.spec.ts` (36/36), `print-queue.spec.ts` (9/9), `burn-in.spec.ts` (34/34).
-- **Founder Physical UAT:** **PASS.** Founder personally tested physical V7 hardware build and verified duplicate printing was fully resolved.
-- **Production Verified:** Verified in local hardware kiosk staging environment.
+- **Implemented:** Streamlined `PrintService.ts` (~1.0s dispatch), advisory cache in `PrintQueueService.ts`, background transcoding in `RenderScreen.tsx`, telemetry suppression during USB write in `PrinterMonitorService.ts`, and non-blocking asynchronous printer discovery (`getPrintersAsync()`).
+- **Automated Verified:** 100% PASS across 5 automated suites: `rca7-simplification.spec.ts` (6/6), `rca6-regression.spec.ts` (36/36), `printer-failure-hardening.spec.ts` (9/9), `print-queue.spec.ts` (9/9), `burn-in.spec.ts` (34/34).
+- **Founder Physical UAT:** **PASS.** Founder personally tested physical Booth #1 hardware: customer capture + physical print PASS, Admin reprint PASS, zero duplicate printing, cold startup < 2s PASS.
+- **Production Verified:** Verified in local hardware kiosk staging environment; standalone installer packaged (`apps/kiosk/release/Pictolabs Kiosk Setup 1.0.0.exe`).
 
 ## 4. Current Architecture
 The printer pipeline follows a streamlined, direct-dispatch architecture:

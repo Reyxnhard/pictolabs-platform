@@ -25,12 +25,13 @@ The completion status of the Pictolabs platform reflects strict source-code real
 │ Architecture / Foundation  │ CLOSED                      │ Monorepo & DB verified │
 │ P0 Admin Panel & Security  │ CLOSED                      │ Offline hash PIN PASS  │
 │ Session History (Kiosk P1-2) CLOSED                      │ Founder UAT PASS       │
-│ Printer Execution (RCA-7)  │ RELEASE_CLOSURE_PENDING     │ Founder UAT PASS (10/10)│
+│ Printer Execution (RCA-7)  │ PHYSICAL_REGRESSION_PASS    │ Founder UAT PASS (10/10)│
 │ Camera Core Architecture   │ AUTOMATED_VERIFIED          │ Canon EDSDK 13.x native│
 │ Camera Reliability (Sync)  │ OPEN (KNOWN BUG)            │ Requires CAMERA-01 RCA │
 │ Camera Management/Selector │ NOT_STARTED                 │ Future operator UI     │
 │ Cloudflare R2 Storage Core │ PRODUCTION_VERIFIED         │ S3 presigned PUT active│
-│ Upload Retail Outage Gate  │ OPEN                        │ Reliability test pend. │
+│ Upload Outage Reliability  │ CLOSED                      │ Founder UAT PASS (S1-S6)│
+│ Startup Freeze Fix         │ CLOSED                      │ Founder UAT PASS (<2s) │
 │ Midtrans Dynamic QRIS Core │ AUTOMATED_VERIFIED (Sandbox)│ Webhook & auto-advance │
 │ Midtrans Merchant Account  │ NOT_STARTED                 │ Production credentials │
 │ Offline Payment Bypass     │ CLOSED / VERIFIED           │ 6-digit PIN bypass PASS│
@@ -38,8 +39,8 @@ The completion status of the Pictolabs platform reflects strict source-code real
 │ Remote Edge Reprint        │ NOT_STARTED                 │ WebSocket edge command │
 │ Restart Recovery Engine    │ NOT_STARTED                 │ Post-camera hardening  │
 │ Full Customer Regression   │ PENDING                     │ End-to-end journey gate│
-│ Founder Pilot Hardware UAT │ PENDING                     │ Booth #1 repeated run  │
-│ Production Installer Build │ PENDING                     │ Standalone packaging   │
+│ Founder Pilot Hardware UAT │ PASS (Upload & Startup)     │ Booth #1 verified      │
+│ Production Installer Build │ PACKAGED                    │ NSIS Setup 1.0.0.exe   │
 │ Production VPS Deployment  │ PENDING (HELD)              │ Docker deploy + smoke  │
 │ Pilot Booth #1 Launch      │ NOT_READY                   │ Hardening in progress  │
 └────────────────────────────┴─────────────────────────────┴────────────────────────┘
@@ -47,11 +48,13 @@ The completion status of the Pictolabs platform reflects strict source-code real
 
 ### Key Technical Realities:
 1. **Core Customer Journey Functional**: Unattended flow (`WelcomeScreen` $\rightarrow$ `ProductSelectScreen` $\rightarrow$ `PaymentScreen` $\rightarrow$ `CaptureScreen` $\rightarrow$ `FilterScreen` $\rightarrow$ `RenderScreen` $\rightarrow$ `PrintScreen` $\rightarrow$ `QRScreen`) operates with native hardware bindings and SQLite crash-resilience.
-2. **Printer Failure Handling (RCA-7)**: Streamlined native GDI `print.exe` dispatch (~1.0s) fully implemented; background GIF transcoding decouples customer UI; in-flight retry strictly prohibited; all 10 physical hardware scenarios passed Founder UAT on Booth #1. Status is `RELEASE_CLOSURE_PENDING` (must NOT be marked `CLOSED` until production packaging, commit, push, VPS deploy, and smoke test complete).
-3. **Camera Source Synchronization Bug**: When Canon LiveView is delayed, webcam preview engages for countdown framing, but the capture trigger unconditionally actuates the Canon DSLR lens (`CaptureScreen.tsx:450-462`). This is an `OPEN` reliability defect requiring `CAMERA-01 RCA`.
-4. **Session History Center Boundary**: Kiosk Phase 1–2 (local SQLite, gallery, reprint 1x/2x with 4s debounce, double-tap protection, offline history, force-upload) is `CLOSED`. Web Dashboard Phase 3 and Remote Edge Reprint are `NOT_STARTED`.
-5. **Payment Production Boundary**: Sandbox QRIS and offline PIN bypass are verified. Production merchant approval and live banking network verification remain `NOT_STARTED`.
-6. **Multi-Device Identity Transition**: Phase 3.3 implemented `Device` and `ActivationToken` models, but legacy routes (`storage.controller.ts:73`, `sessions.controller.ts:115`, `auth.service.ts:65`, `booth-secret.guard.ts:18`) still query `booth.deviceSecret` directly.
+2. **Printer Failure Handling (RCA-7)**: Streamlined native GDI `print.exe` dispatch (~1.0s) fully implemented; background GIF transcoding decouples customer UI; in-flight retry strictly prohibited; all 10 physical hardware scenarios passed Founder UAT on Booth #1. Physical regression passed during Startup UAT on Booth #1 (`PRINTER RCA-7 PHYSICAL REGRESSION = PASS`).
+3. **Upload Outage Reliability**: Two-tier store-and-forward upload engine in SQLite WAL with automatic re-arm on network restoration, background GIF enqueueing, and idempotent backend photo ledger creation is **CLOSED** (Automated 47/47 PASS, Founder Physical UAT 6/6 PASS).
+4. **Startup Freeze Elimination**: Unconditional `localhost:3030` navigation replaced by direct bundle loading (`loadFile`), asynchronous native printer enumeration via Electron `getPrintersAsync()` (<15ms), and 3s deferred monitor check is **CLOSED** (Cold launch < 2s, zero "Not Responding" freeze, Founder Physical UAT 8/8 PASS).
+5. **Camera Source Synchronization Bug**: When Canon LiveView is delayed, webcam preview engages for countdown framing, but the capture trigger unconditionally actuates the Canon DSLR lens (`CaptureScreen.tsx:450-462`). This is an `OPEN` reliability defect requiring `CAMERA-01 RCA`.
+6. **Session History Center Boundary**: Kiosk Phase 1–2 (local SQLite, gallery, reprint 1x/2x with 4s debounce, double-tap protection, offline history, force-upload) is `CLOSED`. Web Dashboard Phase 3 and Remote Edge Reprint are `NOT_STARTED`.
+7. **Payment Production Boundary**: Sandbox QRIS and offline PIN bypass are verified. Production merchant approval and live banking network verification remain `NOT_STARTED`.
+8. **Multi-Device Identity Transition**: Phase 3.3 implemented `Device` and `ActivationToken` models, but legacy routes (`storage.controller.ts:73`, `sessions.controller.ts:115`, `auth.service.ts:65`, `booth-secret.guard.ts:18`) still query `booth.deviceSecret` directly.
 
 ---
 

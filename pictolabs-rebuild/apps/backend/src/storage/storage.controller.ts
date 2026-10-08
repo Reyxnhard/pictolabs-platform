@@ -96,20 +96,49 @@ export class StorageController {
         data: { status: 'COMPLETED' },
       });
 
-      await this.prisma.photo.create({
-        data: {
+      const targetStorageKey = body.key || body.fileName;
+      const targetFinalUrl = body.publicUrl || `/uploads/${body.fileName}`;
+
+      // Idempotency Guard: Deduplicate Photo rows for same session and storageKey
+      const existingPhoto = await this.prisma.photo.findFirst({
+        where: {
           sessionId: body.sessionId,
-          finalUrl: body.publicUrl || `/uploads/${body.fileName}`,
-          storageKey: body.key || body.fileName,
-          sequenceNo: body.sequenceNo || 1,
+          storageKey: targetStorageKey,
         },
       });
+
+      let photoRecord = existingPhoto;
+      if (!photoRecord) {
+        photoRecord = await this.prisma.photo.create({
+          data: {
+            sessionId: body.sessionId,
+            finalUrl: targetFinalUrl,
+            storageKey: targetStorageKey,
+            sequenceNo: body.sequenceNo || 1,
+          },
+        });
+        this.logger.log(
+          `[StorageController] Created new Photo record: ${photoRecord.id} (key=${targetStorageKey})`
+        );
+      } else {
+        this.logger.log(
+          `[StorageController] Idempotent confirmation: Photo record ${photoRecord.id} already exists for session=${body.sessionId}, key=${targetStorageKey}`
+        );
+        if (targetFinalUrl && photoRecord.finalUrl !== targetFinalUrl) {
+          photoRecord = await this.prisma.photo.update({
+            where: { id: photoRecord.id },
+            data: { finalUrl: targetFinalUrl },
+          });
+        }
+      }
 
       return {
         success: true,
         sessionId: body.sessionId,
         fileName: body.fileName,
         confirmed: true,
+        alreadyConfirmed: !!existingPhoto,
+        photoId: photoRecord.id,
         timestamp: new Date().toISOString(),
       };
     } catch (err: any) {
@@ -176,16 +205,32 @@ export class StorageController {
         : 'image/jpeg';
       const result = await this.storageService.saveFile(safeFilename, buffer, mimeType);
 
-      // Register photo record in PostgreSQL
+      // Register photo record in PostgreSQL (Idempotency Guard)
       try {
-        await this.prisma.photo.create({
-          data: {
+        const targetStorageKey = result.filename;
+        const targetFinalUrl = result.publicUrl || result.url || `/uploads/${safeFilename}`;
+
+        const existingPhoto = await this.prisma.photo.findFirst({
+          where: {
             sessionId,
-            finalUrl: result.publicUrl || result.url || `/uploads/${safeFilename}`,
-            storageKey: result.filename,
-            sequenceNo: 1,
+            storageKey: targetStorageKey,
           },
         });
+
+        if (!existingPhoto) {
+          await this.prisma.photo.create({
+            data: {
+              sessionId,
+              finalUrl: targetFinalUrl,
+              storageKey: targetStorageKey,
+              sequenceNo: 1,
+            },
+          });
+        } else {
+          this.logger.log(
+            `[StorageController] Idempotent upload: Photo record already exists for session=${sessionId}, key=${targetStorageKey}`
+          );
+        }
       } catch (photoErr: any) {
         this.logger.warn(`[StorageController] Photo registration notice: ${photoErr.message}`);
       }

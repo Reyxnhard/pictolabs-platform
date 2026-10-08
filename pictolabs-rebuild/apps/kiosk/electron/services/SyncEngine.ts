@@ -210,6 +210,12 @@ function initDatabase(dataDir: string): void {
     db.exec('ALTER TABLE sessions ADD COLUMN live_video_urls TEXT;');
   } catch (_) {}
   try {
+    db.exec('ALTER TABLE sessions ADD COLUMN gif_path TEXT;');
+  } catch (_) {}
+  try {
+    db.exec('ALTER TABLE sessions ADD COLUMN gif_url TEXT;');
+  } catch (_) {}
+  try {
     db.exec("ALTER TABLE sessions ADD COLUMN local_storage_state TEXT NOT NULL DEFAULT 'HOT';");
   } catch (_) {}
 
@@ -221,17 +227,19 @@ function initDatabase(dataDir: string): void {
 
   stmtUpdateSession = db.prepare(`
     UPDATE sessions 
-    SET frame_id = COALESCE(?, frame_id),
-        filter = COALESCE(?, filter),
-        photos = COALESCE(?, photos),
-        composite_path = COALESCE(?, composite_path),
-        live_video_path = COALESCE(?, live_video_path),
-        print_status = COALESCE(?, print_status),
-        synced = COALESCE(?, synced),
-        uploaded = COALESCE(?, uploaded),
-        remote_url = COALESCE(?, remote_url),
-        live_video_url = COALESCE(?, live_video_url)
-    WHERE id = ?
+    SET frame_id = COALESCE(@frameId, frame_id),
+        filter = COALESCE(@filter, filter),
+        photos = COALESCE(@photos, photos),
+        composite_path = COALESCE(@compositePath, composite_path),
+        live_video_path = COALESCE(@liveVideoPath, live_video_path),
+        gif_path = COALESCE(@gifPath, gif_path),
+        print_status = COALESCE(@printStatus, print_status),
+        synced = COALESCE(@synced, synced),
+        uploaded = COALESCE(@uploaded, uploaded),
+        remote_url = COALESCE(@remoteUrl, remote_url),
+        live_video_url = COALESCE(@liveVideoUrl, live_video_url),
+        gif_url = COALESCE(@gifUrl, gif_url)
+    WHERE id = @id
   `);
 
   stmtGetSession = db.prepare('SELECT * FROM sessions WHERE id = ?');
@@ -339,6 +347,8 @@ function rowToSession(row: any): Session {
     liveVideoPaths: row.live_video_paths ? JSON.parse(row.live_video_paths) : row.live_video_path ? [row.live_video_path] : [],
     liveVideoUrl: row.live_video_url || undefined,
     liveVideoUrls: row.live_video_urls ? JSON.parse(row.live_video_urls) : row.live_video_url ? [row.live_video_url] : [],
+    gifPath: row.gif_path || undefined,
+    gifUrl: row.gif_url || undefined,
     printStatus: row.print_status as Session['printStatus'],
     synced: Boolean(row.synced),
     uploaded: Boolean(row.uploaded),
@@ -419,6 +429,13 @@ export function createSession(data: Omit<Session, 'id' | 'createdAt' | 'synced'>
       } catch (_) {}
     }
 
+    // Save gif_path if provided
+    if (data.gifPath) {
+      try {
+        db.prepare('UPDATE sessions SET gif_path = ? WHERE id = ?').run(data.gifPath, id);
+      } catch (_) {}
+    }
+
     // Eager Sync session metadata directly to PostgreSQL cloud
     syncSingleSessionToCloud(id).catch((err: any) =>
       console.warn(`[SyncEngine] Eager session sync warning for ${id}:`, err?.message)
@@ -472,21 +489,38 @@ export function updateSession(id: string, update: Partial<Session>): Session | n
   const existingRow = stmtGetSession.get(id);
   if (!existingRow) return null;
 
-  stmtUpdateSession.run(
-    update.frameId ?? null,
-    update.filter ?? null,
-    update.photos ? JSON.stringify(update.photos) : null,
-    update.compositePath ?? null,
-    update.printStatus ?? null,
-    update.synced !== undefined ? (update.synced ? 1 : 0) : null,
-    update.uploaded !== undefined ? (update.uploaded ? 1 : 0) : null,
-    update.remoteUrl ?? null,
-    id
-  );
+  stmtUpdateSession.run({
+    id,
+    frameId: update.frameId ?? null,
+    filter: update.filter ?? null,
+    photos: update.photos ? JSON.stringify(update.photos) : null,
+    compositePath: update.compositePath ?? null,
+    liveVideoPath: update.liveVideoPath ?? null,
+    gifPath: update.gifPath ?? null,
+    printStatus: update.printStatus ?? null,
+    synced: update.synced !== undefined ? (update.synced ? 1 : 0) : null,
+    uploaded: update.uploaded !== undefined ? (update.uploaded ? 1 : 0) : null,
+    remoteUrl: update.remoteUrl ?? null,
+    liveVideoUrl: update.liveVideoUrl ?? null,
+    gifUrl: update.gifUrl ?? null,
+  });
 
-  // If compositePath was just attached in this update, queue it for cloud upload!
+  let shouldTriggerWorker = false;
+
+  // If compositePath was attached in this update, queue it for cloud upload!
   if (update.compositePath && fs.existsSync(update.compositePath)) {
     enqueueUpload(id, update.compositePath, 'composite');
+    shouldTriggerWorker = true;
+  }
+
+  // If gifPath was attached in this update, queue it for cloud upload!
+  if (update.gifPath && fs.existsSync(update.gifPath)) {
+    enqueueUpload(id, update.gifPath, 'video');
+    shouldTriggerWorker = true;
+  }
+
+  if (shouldTriggerWorker) {
+    processUploadQueue().catch(() => {});
   }
 
   const updatedRow = stmtGetSession.get(id);
@@ -816,6 +850,11 @@ export async function forceUploadSession(sessionId: string): Promise<{ success: 
         enqueueUpload(sessionId, session.live_video_path, 'video');
         enqueuedCount++;
       }
+      // Re-enqueue looping GIF
+      if (session.gif_path && fs.existsSync(session.gif_path)) {
+        enqueueUpload(sessionId, session.gif_path, 'video');
+        enqueuedCount++;
+      }
     }
 
     // 3. Mark session as not uploaded yet so it syncs
@@ -870,7 +909,115 @@ function resolveLanDownloadUrl(url: string, baseUrl: string): string {
   return fullUrl;
 }
 
-async function processUploadQueue(): Promise<void> {
+/**
+ * Classifies upload errors to isolate permanent failures from retryable network/storage faults.
+ * Permanent failures (missing file, 400 Bad Request, 401/Invalid Device, 403 Forbidden, 404 Session Not Found, DEAD_LETTER)
+ * must NEVER enter infinite automatic retry loops.
+ */
+export function isPermanentUploadError(errorMessage?: string | null): boolean {
+  if (!errorMessage) return false;
+  const msg = errorMessage.toLowerCase();
+
+  // Missing local disk file
+  if (
+    msg.includes('file missing') ||
+    msg.includes('not found on local disk') ||
+    msg.includes('enoent')
+  ) {
+    return true;
+  }
+
+  // Exceeded watchdog retries in terminal DEAD_LETTER state
+  if (msg.includes('dead_letter') || msg.includes('exceeded max retries in uploading state')) {
+    return true;
+  }
+
+  // Authentication / device decommissioning
+  if (msg.includes('invalid_device') || msg.includes('unauthorized') || msg.includes('http 401')) {
+    return true;
+  }
+
+  // Permanent client errors (400 Bad Request, payload too large)
+  if (
+    msg.includes('http 400') ||
+    msg.includes('bad request') ||
+    msg.includes('payload too large') ||
+    msg.includes('http 413')
+  ) {
+    return true;
+  }
+
+  // Forbidden
+  if (msg.includes('http 403') || msg.includes('forbidden')) {
+    return true;
+  }
+
+  // Not Found / uncommitted session (404 / SESSION_NOT_FOUND)
+  if (msg.includes('http 404') || msg.includes('session_not_found')) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Re-arms transient network/storage failed uploads back to PENDING.
+ * Strictly ignores permanent failures (file missing on disk, 400/401/403/404, dead-letter items).
+ * Called automatically upon network recovery triggers:
+ * 1. WebSocket reconnect ('connect' event)
+ * 2. HTTP heartbeat success (res.ok)
+ * 3. Bounded store-and-forward worker cycle (items waiting > 60s)
+ */
+export function rearmRetryableUploads(triggerWorker: boolean = true): number {
+  if (!db) return 0;
+  let rearmedCount = 0;
+  try {
+    const failedItems = db.prepare(`
+      SELECT * FROM upload_queue WHERE status = 'FAILED'
+    `).all() as any[];
+
+    if (!failedItems || failedItems.length === 0) return 0;
+
+    const now = new Date().toISOString();
+    const updateStmt = db.prepare(`
+      UPDATE upload_queue 
+      SET status = 'PENDING', attempts = 0, updated_at = ?
+      WHERE id = ?
+    `);
+
+    for (const item of failedItems) {
+      if (isPermanentUploadError(item.error_message)) {
+        continue;
+      }
+      if (!fs.existsSync(item.file_path)) {
+        continue;
+      }
+
+      updateStmt.run(now, item.id);
+      rearmedCount++;
+    }
+
+    if (rearmedCount > 0) {
+      console.log(`[SyncEngine] 🔄 Network recovery: re-armed ${rearmedCount} retryable upload(s)`);
+      recordSystemEvent(
+        'UPLOAD_NETWORK_RECOVERY',
+        'INFO',
+        'SyncEngine',
+        `Re-armed ${rearmedCount} retryable upload items following network connectivity restoration`
+      );
+      if (triggerWorker) {
+        processUploadQueue().catch((err) =>
+          console.warn('[SyncEngine] Error triggering upload queue after re-arm:', err?.message)
+        );
+      }
+    }
+  } catch (err: any) {
+    console.warn('[SyncEngine] Error in rearmRetryableUploads:', err?.message);
+  }
+  return rearmedCount;
+}
+
+export async function processUploadQueue(): Promise<void> {
   if (isUploading || !config?.apiBaseUrl || !db || !stmtGetPendingUploads || !stmtUpdateUploadStatus) {
     return;
   }
@@ -880,7 +1027,38 @@ async function processUploadQueue(): Promise<void> {
 
   try {
     const pending = stmtGetPendingUploads.all() as any[];
-    if (!pending || pending.length === 0) return;
+
+    // Store-and-forward bounded retry:
+    // If fast queue is empty, inspect if any retryable FAILED items have waited past the 60s bounded backoff window
+    if (!pending || pending.length === 0) {
+      try {
+        const cutoff60s = new Date(Date.now() - 60_000).toISOString();
+        const exhaustedRetryables = db.prepare(`
+          SELECT * FROM upload_queue 
+          WHERE status = 'FAILED' AND attempts >= 5 AND updated_at < ?
+          ORDER BY updated_at ASC LIMIT 5
+        `).all(cutoff60s) as any[];
+
+        if (exhaustedRetryables.length > 0) {
+          const now = new Date().toISOString();
+          let rearmedAny = false;
+          for (const item of exhaustedRetryables) {
+            if (!isPermanentUploadError(item.error_message) && fs.existsSync(item.file_path)) {
+              db.prepare('UPDATE upload_queue SET status = "PENDING", attempts = 0, updated_at = ? WHERE id = ?').run(now, item.id);
+              rearmedAny = true;
+            }
+          }
+          if (rearmedAny) {
+            const refetched = stmtGetPendingUploads.all() as any[];
+            if (refetched && refetched.length > 0) {
+              pending.push(...refetched);
+            }
+          }
+        }
+      } catch (_) {}
+
+      if (pending.length === 0) return;
+    }
 
     for (const item of pending) {
       lastUploadActivity = Date.now();
@@ -1068,6 +1246,12 @@ async function processUploadQueue(): Promise<void> {
         stmtUpdateUploadStatus.run('COMPLETED', null, remoteUrl, now, item.id);
 
         if (db) {
+          const isGif = item.file_path.toLowerCase().endsWith('.gif');
+          if (isGif) {
+            try {
+              db.prepare('UPDATE sessions SET gif_url = ?, uploaded = 1, synced = 1 WHERE id = ?').run(remoteUrl, item.session_id);
+            } catch (_) {}
+          }
           if (item.file_type === 'video') {
             try {
               const row = db.prepare('SELECT live_video_urls FROM sessions WHERE id = ?').get(item.session_id) as any;
@@ -1324,6 +1508,7 @@ function setupSocketConnection(): void {
 
   socket.on('connect', () => {
     console.log('✓ [SyncEngine] Real-time WebSocket connected to cloud backend:', targetUrl);
+    rearmRetryableUploads(true);
   });
 
   socket.on('disconnect', (reason) => {
@@ -1448,6 +1633,7 @@ async function sendHttpHeartbeat(): Promise<void> {
     if (res.ok) {
       const data = (await res.json()) as any;
       console.log(`[SyncEngine] ✓ HTTP Heartbeat sent -> Effective Status: ${data.status} (Maintenance: ${data.isMaintenance})`);
+      rearmRetryableUploads(true);
     } else {
       const errText = await res.text().catch(() => '');
       console.warn(`[SyncEngine] HTTP Heartbeat returned status ${res.status}: ${errText.slice(0, 100)}`);

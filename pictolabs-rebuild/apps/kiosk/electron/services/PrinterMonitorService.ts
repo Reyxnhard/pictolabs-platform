@@ -24,6 +24,7 @@ export interface PrinterHardwareStatus {
 }
 
 let monitorInterval: NodeJS.Timeout | null = null;
+let initialCheckTimeout: NodeJS.Timeout | null = null;
 let cachedHardwareStatus: PrinterHardwareStatus = {
   connected: true,
   ready: true,
@@ -34,7 +35,7 @@ let cachedHardwareStatus: PrinterHardwareStatus = {
 };
 
 let consecutiveErrorCount = 0;
-let lastWin32CheckTime = 0;
+let lastWin32CheckTime = Date.now();
 const DEBOUNCE_THRESHOLD = 2; // Require 2 consecutive failed queries to escalate to OFFLINE (hysteresis)
 
 let isDispatchActive = false;
@@ -362,11 +363,17 @@ export function startPrinterMonitor(intervalMs: number = 5000): void {
   if (monitorInterval) {
     clearInterval(monitorInterval);
   }
+  if (initialCheckTimeout) {
+    clearTimeout(initialCheckTimeout);
+  }
 
-  // Run immediate initial check
-  checkPrinterHardware().catch((err) => {
-    console.warn('[PrinterMonitorService] Initial check error:', err);
-  });
+  // Defer heavy initial hardware probe by 3s to prevent CPU contention during window startup
+  initialCheckTimeout = setTimeout(() => {
+    initialCheckTimeout = null;
+    checkPrinterHardware().catch((err) => {
+      console.warn('[PrinterMonitorService] Initial check error:', err);
+    });
+  }, 3000);
 
   monitorInterval = setInterval(() => {
     checkPrinterHardware().catch((err) => {
@@ -374,13 +381,17 @@ export function startPrinterMonitor(intervalMs: number = 5000): void {
     });
   }, intervalMs);
 
-  console.log(`[PrinterMonitorService] ✓ Printer hardware monitor started (${intervalMs}ms polling)`);
+  console.log(`[PrinterMonitorService] ✓ Printer hardware monitor started (${intervalMs}ms polling, initial probe deferred 3s)`);
 }
 
 /**
  * Stop background monitoring.
  */
 export function stopPrinterMonitor(): void {
+  if (initialCheckTimeout) {
+    clearTimeout(initialCheckTimeout);
+    initialCheckTimeout = null;
+  }
   if (monitorInterval) {
     clearInterval(monitorInterval);
     monitorInterval = null;
@@ -393,6 +404,7 @@ export function stopPrinterMonitor(): void {
  */
 export function registerPrinterMonitorHandlers(): void {
   ipcMain.handle('printer:get-hardware-status', async () => {
-    return checkPrinterHardware(true);
+    // Serve cached hardware status to eliminate UI freeze on first frame
+    return checkPrinterHardware(false);
   });
 }

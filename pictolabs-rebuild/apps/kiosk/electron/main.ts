@@ -72,8 +72,10 @@ function createWindow(): void {
 
   // Load the app
   const distIndex = path.join(__dirname, '..', 'renderer', 'index.html');
-  if (isDev) {
-    // In dev mode, attempt to load from Vite dev server
+  const useDevServer = isDev && process.env.VITE_DEV_SERVER === 'true';
+
+  if (useDevServer) {
+    // Only attempt Vite dev server if explicitly enabled via VITE_DEV_SERVER=true
     mainWindow.loadURL('http://localhost:3030').catch((err) => {
       console.warn(`[Electron] Vite dev server not reachable (${err.message}). Falling back to: ${distIndex}`);
       if (fs.existsSync(distIndex)) {
@@ -82,11 +84,11 @@ function createWindow(): void {
     });
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
-    // In production, load the built renderer files
+    // Default startup path (both dev and production): load pre-built bundle directly
     mainWindow.loadFile(distIndex);
   }
 
-  // Graceful fallback if initial Vite navigation fails with ERR_CONNECTION_REFUSED
+  // Graceful fallback if explicit Vite dev server navigation fails
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     if (validatedURL.includes('localhost:3030')) {
       console.warn(`[Electron] Failed to load ${validatedURL} (${errorCode}: ${errorDescription}). Loading pre-built bundle from: ${distIndex}`);

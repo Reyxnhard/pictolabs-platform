@@ -9,17 +9,17 @@ The Storage Workstream manages object storage for customer photostrip assets, an
 |:---|:---:|:---|
 | **Cloudflare R2 Bucket & CORS Setup** | `PRODUCTION_VERIFIED` | Production bucket provisioned and validated. |
 | **Backend Presigned Upload S3 Generator**| `PRODUCTION_VERIFIED` | Generates short-lived PUT URLs for kiosk direct upload. |
-| **Kiosk Direct Upload Pipeline** | `AUTOMATED_VERIFIED` | Production / live Booth #1 verification: **PENDING**. |
+| **Kiosk Direct Upload Pipeline** | `PRODUCTION_VERIFIED` | Live physical Booth #1 verification: **PASS** (Scenarios S1-S6). |
 | **Digital Delivery Softfile Landing Page**| `PRODUCTION_VERIFIED` | Customers scan QR code to download photos and GIF. |
 | **7-Day Local Disk Retention Daemon** | `AUTOMATED_VERIFIED` | Retains local files for 7 days before pruning. |
 | **30-Day Cloudflare R2 Auto-Lifecycle** | `PRODUCTION_VERIFIED` | Bucket lifecycle rule automatically deletes old assets. |
-| **Upload Production Outage Gate** | `OPEN` | Retail mall network loss and auto-recovery reliability gate. |
+| **Upload Production Outage Gate** | `CLOSED` | Retail mall network loss and auto-recovery reliability gate: **Founder Physical UAT PASS (S1–S6)**. |
 
 ## 3. Completed / Verified
-- **Implemented:** `storage.service.ts` in backend, `SyncEngine.ts` in kiosk, and public web download landing page (Sprint 3).
-- **Automated Verified:** Presigned URL generation, S3 client signatures, and upload retries verified in unit test suites.
-- **Founder Physical UAT:** Founder scanned physical QR code from photostrip and successfully downloaded photo and GIF onto mobile phone.
-- **Production Verified:** Cloudflare R2 bucket credentials, CORS policy, and backend S3 API verified with live assets. Kiosk edge client direct-upload under live retail mall conditions is **PENDING** physical Booth #1 launch.
+- **Implemented:** `storage.service.ts` in backend, `SyncEngine.ts` in kiosk (with two-tier store-and-forward and idempotent confirmation), and public web download landing page.
+- **Automated Verified:** 100% PASS across 47 automated outage scenarios in `upload-outage-recovery.spec.ts`.
+- **Founder Physical UAT:** **PASS.** Founder personally tested live retail internet outage and recovery (Scenarios S1 through S6) on Booth #1: offline queueing, automatic link resumption, zero duplicate photo records, and customer QR downloads.
+- **Production Verified:** Cloudflare R2 bucket credentials, CORS policy, and backend S3 API verified with live assets. Standalone installer packaged (`Pictolabs Kiosk Setup 1.0.0.exe`).
 
 ## 4. Current Architecture
 1. **Presigned Upload Flow:** Upon composite rendering, the kiosk requests presigned S3 URLs from backend `POST /api/storage/presigned-url`.
@@ -33,8 +33,9 @@ The Storage Workstream manages object storage for customer photostrip assets, an
 - **Signed URL Expiry:** Presigned upload URLs must enforce a maximum 15-minute validity window.
 
 ## 6. Known Open Issues
-- **Open Pilot Reliability Gate:** The full retail mall failure scenario (Internet OFF during capture $\rightarrow$ held safely in SQLite pending queue $\rightarrow$ Internet returns $\rightarrow$ auto retry $\rightarrow$ R2 upload $\rightarrow$ completed) remains an unverified pilot gate (`Upload Production Outage Gate: OPEN`).
-- **Cloud Infrastructure Status:** Cloudflare R2 bucket credentials, CORS policy, and backend S3 presigned PUT generation are fully `PRODUCTION_VERIFIED`. However, the end-to-end edge client outage resilience under live mall network conditions remains an open verification gate.
+- **Blockers:** None. Subsystem logic is closed and verified.
+- **Closed Pilot Reliability Gate:** The full retail mall failure scenario (Internet OFF during capture $\rightarrow$ held safely in SQLite pending queue $\rightarrow$ Internet returns $\rightarrow$ auto retry $\rightarrow$ R2 upload $\rightarrow$ completed) has been verified and marked **CLOSED** via Founder Physical UAT (S1–S6 100% PASS).
+- **Release Closure:** Final release pre-commit synchronization and VPS deployment.
 
 ## 7. Next Task
 Execute the retail internet outage and reconnection recovery test scenario on Booth #1 following camera reliability hardening.

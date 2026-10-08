@@ -1,5 +1,5 @@
-import { ipcMain } from 'electron';
-import { exec, execFile, execSync } from 'child_process';
+import { ipcMain, BrowserWindow } from 'electron';
+import { exec, execFile } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -64,7 +64,7 @@ let cachedHealth: PrinterHealth = {
   name: 'DS-RX1',
   code: 'OK',
   message: 'Printer siap',
-  checkedAt: 0,
+  checkedAt: Date.now(),
 };
 let activeHealthPromise: Promise<PrinterHealth> | null = null;
 let backgroundHealthTimer: NodeJS.Timeout | null = null;
@@ -90,29 +90,54 @@ export function setIsBypassMode(val: boolean): void {
 }
 
 /**
- * Discover available printers via PowerShell.
+ * Discover available printers asynchronously.
+ * Prioritizes Electron native getPrintersAsync() when a window is available (<15ms, non-blocking Win32 EnumPrinters),
+ * with non-blocking PowerShell exec fallback.
  */
-function listPrintersSync(): string[] {
+export async function listPrinters(): Promise<string[]> {
   try {
-    const output = execSync(
-      'powershell -NoProfile -Command "Get-CimInstance Win32_Printer | Sort-Object WorkOffline | Select-Object -ExpandProperty Name"',
-      { encoding: 'utf-8', timeout: 8000 }
-    );
-    return output
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
+    const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+    if (win && win.webContents) {
+      const nativePrinters = await win.webContents.getPrintersAsync();
+      if (Array.isArray(nativePrinters) && nativePrinters.length > 0) {
+        return nativePrinters.map((p) => p.name).filter(Boolean);
+      }
+    }
   } catch (err) {
-    console.error('[PrintService] Failed to list printers:', err);
-    return [];
+    console.warn('[PrintService] Native getPrintersAsync failed, falling back to PowerShell:', err);
   }
+
+  return new Promise<string[]>((resolve) => {
+    exec(
+      'powershell -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Printer | Sort-Object WorkOffline | Select-Object -ExpandProperty Name"',
+      { timeout: 8000 },
+      (err, stdout) => {
+        if (err || !stdout) {
+          resolve([]);
+          return;
+        }
+        const names = stdout
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean);
+        resolve(names);
+      }
+    );
+  });
+}
+
+/**
+ * Backward-compatible synchronous stub (returns currently detected default or empty array, non-blocking).
+ */
+export function listPrintersSync(): string[] {
+  return defaultPrinterName ? [defaultPrinterName] : [];
 }
 
 /**
  * Auto-detect a photo printer by name heuristics.
  * Prioritizes: DNP > Citizen > any "Photo" printer > first available.
  */
-function autoDetectPrinter(printers: string[]): string | null {
+export function autoDetectPrinter(printers: string[]): string | null {
   const priorities = ['DNP', 'Citizen', 'Photo', 'Mitsubishi', 'HiTi', 'RX1', 'DS620', 'CX-02'];
   for (const keyword of priorities) {
     const match = printers.find((p) =>
@@ -121,6 +146,50 @@ function autoDetectPrinter(printers: string[]): string | null {
     if (match) return match;
   }
   return printers[0] || null;
+}
+
+/**
+ * Asynchronously initialize printer detection and bypass state post-startup.
+ */
+export async function initPrinterDiscovery(config: PrintServiceConfig = {}): Promise<string[]> {
+  try {
+    const printers = await listPrinters();
+    const resolvedDefault = config.defaultPrinter || autoDetectPrinter(printers);
+    if (resolvedDefault) {
+      defaultPrinterName = resolvedDefault;
+    }
+
+    const priorities = ['DNP', 'Citizen', 'HiTi', 'RX1', 'DS620', 'CX-02', 'P525L', 'Mitsubishi'];
+    const hasPhotoHardware = printers.some((p) =>
+      priorities.some((keyword) => p.toLowerCase().includes(keyword.toLowerCase()))
+    );
+
+    if (config.bypassPrinter !== undefined) {
+      isBypassMode = config.bypassPrinter;
+    } else if (!hasPhotoHardware) {
+      isBypassMode = true;
+      console.log('[PrintService] ⚠️ No dedicated photo printer detected. Auto-enabling BYPASS / SIMULATION MODE.');
+    } else {
+      isBypassMode = false;
+    }
+
+    cachedHealth = {
+      ready: true,
+      name: defaultPrinterName || 'DS-RX1',
+      code: 'OK',
+      message: isBypassMode ? 'Printer siap (Bypass / Virtual Mode)' : 'Printer siap',
+      checkedAt: Date.now(),
+    };
+
+    console.log(`[PrintService] Detected printers (async): [${printers.join(', ')}]`);
+    console.log(`[PrintService] Default printer: ${defaultPrinterName || 'NONE'}`);
+    console.log(`[PrintService] Bypass Mode: ${isBypassMode ? 'ENABLED (Simulated Spooler)' : 'DISABLED (Hardware Gate)'}`);
+
+    return printers;
+  } catch (err) {
+    console.error('[PrintService] Async printer discovery error:', err);
+    return [];
+  }
 }
 
 // ─── Printer Hardware Profiles & PnP Detection ──────────────
@@ -697,28 +766,29 @@ export async function printImage(
 }
 
 export function registerPrintHandlers(config: PrintServiceConfig): void {
-  // Initialize printer on startup
-  const printers = listPrintersSync();
-  defaultPrinterName = config.defaultPrinter || autoDetectPrinter(printers);
-
-  const priorities = ['DNP', 'Citizen', 'HiTi', 'RX1', 'DS620', 'CX-02', 'P525L', 'Mitsubishi'];
-  const hasPhotoHardware = printers.some((p) =>
-    priorities.some((keyword) => p.toLowerCase().includes(keyword.toLowerCase()))
-  );
-
-  // Auto-enable bypass if no dedicated photo printer hardware is attached
+  // Set initial synchronous defaults without blocking main thread
+  defaultPrinterName = config.defaultPrinter || null;
   if (config.bypassPrinter !== undefined) {
     isBypassMode = config.bypassPrinter;
-  } else if (!hasPhotoHardware) {
-    isBypassMode = true;
-    console.log('[PrintService] ⚠️ No dedicated photo printer detected. Auto-enabling BYPASS / SIMULATION MODE.');
   } else {
-    isBypassMode = false;
+    isBypassMode = true; // Safe default until printer discovery completes
   }
 
-  console.log(`[PrintService] Detected printers: [${printers.join(', ')}]`);
-  console.log(`[PrintService] Default printer: ${defaultPrinterName || 'NONE'}`);
-  console.log(`[PrintService] Bypass Mode: ${isBypassMode ? 'ENABLED (Simulated Spooler)' : 'DISABLED (Hardware Gate)'}`);
+  // Seed cached health with initial ready state and timestamp
+  cachedHealth = {
+    ready: true,
+    name: defaultPrinterName || 'DS-RX1',
+    code: 'OK',
+    message: isBypassMode ? 'Printer siap (Bypass / Virtual Mode)' : 'Printer siap',
+    checkedAt: Date.now(),
+  };
+
+  // Kick off non-blocking printer discovery in the background
+  setImmediate(() => {
+    initPrinterDiscovery(config).catch((err) => {
+      console.warn('[PrintService] Background printer discovery error:', err);
+    });
+  });
 
   // ─── Print ─────────────────────────────────────────────
   ipcMain.handle(
@@ -772,7 +842,7 @@ export function registerPrintHandlers(config: PrintServiceConfig): void {
 
   // ─── List Printers ─────────────────────────────────────
   ipcMain.handle('printer:list', async () => {
-    return listPrintersSync();
+    return listPrinters();
   });
 
   // ─── Set Default Printer ───────────────────────────────
