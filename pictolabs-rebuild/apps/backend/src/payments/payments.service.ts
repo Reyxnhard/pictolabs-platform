@@ -1,4 +1,13 @@
-import { Injectable, Logger, UnauthorizedException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  UnauthorizedException,
+  NotFoundException,
+  BadRequestException,
+  ServiceUnavailableException,
+  BadGatewayException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { KioskGateway } from '../gateway/kiosk.gateway';
 import { CreateQRISDto, MidtransWebhookDto } from './dto/payment.dto';
@@ -36,11 +45,20 @@ export class PaymentsService {
   }
 
   /**
-   * Generates an EMVCo-compliant QRIS test string for offline / sandbox simulation
+   * Helper to check if a valid, non-placeholder server key is configured
    */
-  private generateFallbackQRIS(orderId: string, amount: number): string {
-    const formattedAmount = Math.round(amount).toString();
-    return `00020101021226590014ID.LINKAJA.WWW01189360091100222071850215${orderId.padEnd(20, '0')}0303UMI51440014ID.CO.QRIS.WWW0215ID10200210000010303UMI520458125303360540${formattedAmount.length.toString().padStart(2, '0')}${formattedAmount}5802ID5909PICTOLABS6007JAKARTA61051234062070703A016304`;
+  public isConfiguredKey(): boolean {
+    if (!this.serverKey) return false;
+    const trimmed = this.serverKey.trim();
+    if (!trimmed) return false;
+    if (
+      trimmed === 'SB-Mid-server-test-key' ||
+      trimmed.includes('test-key') ||
+      trimmed.startsWith('SB-Mid-server-test')
+    ) {
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -52,47 +70,67 @@ export class PaymentsService {
   }
 
   /**
+   * Resolves the authoritative expected payment amount for a transaction.
+   * PR-01 Foundation: Authoritative baseline is BoothConfig.pricing.basePrice (defaults to 35000).
+   * Extension point for PR-05: Cleanly accepts dto (e.g. quantity, tier, voucher) to calculate
+   * total amount without altering the caller's financial integrity validation contract.
+   */
+  public resolveExpectedAmount(boothConfig: any, dto: CreateQRISDto): number {
+    let basePrice = 35000;
+    if (boothConfig?.generalSettings) {
+      try {
+        const parsed = typeof boothConfig.generalSettings === 'string'
+          ? JSON.parse(boothConfig.generalSettings)
+          : boothConfig.generalSettings;
+        if (typeof parsed?.pricing?.basePrice === 'number') {
+          basePrice = parsed.pricing.basePrice;
+        } else if (typeof parsed?.price === 'number') {
+          basePrice = parsed.price;
+        }
+      } catch (err: any) {
+        this.logger.warn(`Failed to parse booth config for pricing check: ${err?.message}`);
+      }
+    }
+
+    // PR-01 baseline resolution is 1x basePrice.
+    // PR-05 Extension Hook: (basePrice * quantity) or tiered pricing rules will plug in here.
+    return basePrice;
+  }
+
+  /**
    * Request Dynamic QRIS from Midtrans Core API and persist transaction record
    */
   async createQRIS(dto: CreateQRISDto) {
     this.logger.log(`[PaymentsService] Creating QRIS for booth=${dto.boothId}, amount=${dto.amount}`);
 
-    // 1. Resolve Booth
-    let booth = await this.prisma.booth.findFirst({
+    // 1. Resolve Booth (strict validation, no silent fallback to random booth)
+    const booth = await this.prisma.booth.findFirst({
       where: {
         OR: [
           { id: dto.boothId },
           { deviceSecret: dto.boothId },
+          { device: { deviceSecret: dto.boothId, status: 'ACTIVE' } },
         ],
       },
+      include: { config: true },
     });
 
     if (!booth) {
-      // If booth is not in DB yet (e.g., local dev), fetch any booth or create default
-      booth = await this.prisma.booth.findFirst();
-      if (!booth) {
-        // Create fallback company & branch if needed
-        let branch = await this.prisma.branch.findFirst();
-        if (!branch) {
-          const company = await this.prisma.company.create({
-            data: { name: 'Pictolabs Default Company' },
-          });
-          branch = await this.prisma.branch.create({
-            data: { name: 'Main Branch', companyId: company.id },
-          });
-        }
-        booth = await this.prisma.booth.create({
-          data: {
-            name: 'Booth Alpha 01',
-            deviceSecret: dto.boothId || 'dev-secret-booth-01',
-            branchId: branch.id,
-            status: 'ONLINE',
-          },
-        });
-      }
+      throw new NotFoundException(`Booth not found: ${dto.boothId}`);
     }
 
-    // 2. Resolve or create Session
+    // 2. Resolve authoritative expected amount via calculation boundary (PR-05 extensible)
+    const expectedAmount = this.resolveExpectedAmount(booth.config, dto);
+
+    // Financial integrity verification: validate client amount against resolved expected amount
+    const requestedAmount = Number(dto.amount);
+    if (isNaN(requestedAmount) || Math.round(requestedAmount) !== Math.round(expectedAmount)) {
+      throw new BadRequestException(
+        `Payment amount mismatch: expected amount is Rp ${expectedAmount.toLocaleString('id-ID')}, received Rp ${requestedAmount}`
+      );
+    }
+
+    // 3. Resolve or create Session
     let session = dto.sessionId
       ? await this.prisma.session.findUnique({ where: { id: dto.sessionId } })
       : null;
@@ -109,7 +147,7 @@ export class PaymentsService {
     }
 
     const orderId = this.generateOrderId(booth.id);
-    let amount = Number(dto.amount) || 35000;
+    let amount = expectedAmount;
 
     // Apply voucher discount if supplied
     if (dto.voucherCode) {
@@ -131,57 +169,80 @@ export class PaymentsService {
     let paymentRef: string | undefined = undefined;
 
     // 3. Request QRIS from Midtrans Core API
-    const isMockKey = !this.serverKey || this.serverKey.includes('test-key') || this.serverKey.startsWith('SB-Mid-server-test');
-
-    if (!isMockKey) {
-      try {
-        const authHeader = `Basic ${Buffer.from(`${this.serverKey}:`).toString('base64')}`;
-        const chargePayload = {
-          payment_type: 'qris',
-          transaction_details: {
-            order_id: orderId,
-            gross_amount: Math.round(amount),
-          },
-          qris: {
-            acquirer: 'gopay',
-          },
-          custom_field1: booth.id,
-          custom_field2: session.id,
-        };
-
-        const response = await fetch(`${this.apiUrl}/charge`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'Authorization': authHeader,
-          },
-          body: JSON.stringify(chargePayload),
-        });
-
-        const resData = await response.json();
-
-        if (response.ok && (resData.status_code === '201' || resData.status_code === '200')) {
-          qrisString = resData.qr_string || '';
-          paymentRef = resData.transaction_id;
-          const qrAction = resData.actions?.find((a: any) => a.name === 'generate-qr-code');
-          if (qrAction) {
-            qrisUrl = qrAction.url;
-          }
-          this.logger.log(`[PaymentsService] ✓ Midtrans QRIS charge success: ${orderId} (ref: ${paymentRef})`);
-        } else {
-          this.logger.warn(`[PaymentsService] Midtrans returned status ${resData.status_code}: ${resData.status_message}`);
-          qrisString = this.generateFallbackQRIS(orderId, amount);
-        }
-      } catch (err: any) {
-        this.logger.error(`[PaymentsService] Failed calling Midtrans API: ${err.message}. Using fallback QRIS.`);
-        qrisString = this.generateFallbackQRIS(orderId, amount);
-      }
-    } else {
-      // Sandbox test key or development environment
-      this.logger.log(`[PaymentsService] Using sandbox simulation mode for QRIS: ${orderId}`);
-      qrisString = this.generateFallbackQRIS(orderId, amount);
+    if (!this.isConfiguredKey()) {
+      this.logger.error(
+        `[PaymentsService] Midtrans server key is unconfigured or a placeholder (${this.serverKey?.slice(0, 10)}...). Refusing to generate fake payment QR.`
+      );
+      throw new ServiceUnavailableException(
+        'Layanan pembayaran QRIS belum dikonfigurasi dengan kredensial gateway yang valid.'
+      );
     }
+
+    const authHeader = `Basic ${Buffer.from(`${this.serverKey}:`).toString('base64')}`;
+    const chargePayload = {
+      payment_type: 'qris',
+      transaction_details: {
+        order_id: orderId,
+        gross_amount: Math.round(amount),
+      },
+      qris: {
+        acquirer: 'gopay',
+      },
+      custom_field1: booth.id,
+      custom_field2: session.id,
+    };
+
+    let response: Response;
+    let resData: any;
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+      response = await fetch(`${this.apiUrl}/charge`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': authHeader,
+        },
+        body: JSON.stringify(chargePayload),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      resData = await response.json().catch(() => ({}));
+    } catch (err: any) {
+      this.logger.error(`[PaymentsService] Failed calling Midtrans API: ${err.message}`);
+      throw new BadGatewayException(
+        `Gagal menghubungi gerbang pembayaran Midtrans: ${err.name === 'AbortError' ? 'Koneksi timeout' : err.message}`
+      );
+    }
+
+    if (!response.ok || (resData.status_code !== '201' && resData.status_code !== '200')) {
+      const statusMsg =
+        resData.status_message ||
+        (Array.isArray(resData.validation_messages)
+          ? resData.validation_messages.join(', ')
+          : 'Permintaan ditolak gerbang pembayaran');
+      this.logger.error(
+        `[PaymentsService] Midtrans charge failed (HTTP ${response.status}, code ${resData.status_code}): ${statusMsg}`
+      );
+      throw new BadGatewayException(
+        `Gerbang pembayaran Midtrans menolak pembuatan QRIS (${resData.status_code || response.status}): ${statusMsg}`
+      );
+    }
+
+    qrisString = resData.qr_string || '';
+    paymentRef = resData.transaction_id;
+    const qrAction = resData.actions?.find((a: any) => a.name === 'generate-qr-code');
+    if (qrAction) {
+      qrisUrl = qrAction.url;
+    }
+
+    if (!qrisString) {
+      this.logger.error(`[PaymentsService] Midtrans response missing qr_string for order ${orderId}`);
+      throw new BadGatewayException('Gerbang pembayaran tidak mengembalikan qr_string yang valid.');
+    }
+
+    this.logger.log(`[PaymentsService] ✓ Midtrans QRIS charge success: ${orderId} (ref: ${paymentRef})`);
 
     const expiresAt = new Date(Date.now() + 270 * 1000); // 270 seconds = 4.5 minutes
 
@@ -232,14 +293,23 @@ export class PaymentsService {
     const { order_id, status_code, gross_amount, signature_key, transaction_status, fraud_status } = payload;
 
     // 1. Verify Cryptographic Signature
-    const isMockKey = !this.serverKey || this.serverKey.includes('test-key') || this.serverKey.startsWith('SB-Mid-server-test');
-    if (!isMockKey && signature_key) {
+    if (this.isConfiguredKey()) {
+      if (!signature_key) {
+        this.logger.error(`[PaymentsService] ✗ Missing signature_key for order ${order_id}`);
+        throw new UnauthorizedException('Missing cryptographic signature');
+      }
       const expectedSignature = this.calculateSignature(order_id, status_code, gross_amount);
       if (signature_key !== expectedSignature) {
         this.logger.error(`[PaymentsService] ✗ Invalid signature key for order ${order_id}`);
         throw new UnauthorizedException('Invalid cryptographic signature');
       }
       this.logger.log(`[PaymentsService] ✓ Signature verified for order ${order_id}`);
+    } else if (signature_key && this.serverKey) {
+      const expectedSignature = this.calculateSignature(order_id, status_code, gross_amount);
+      if (signature_key !== expectedSignature) {
+        this.logger.error(`[PaymentsService] ✗ Invalid signature key for order ${order_id}`);
+        throw new UnauthorizedException('Invalid cryptographic signature');
+      }
     }
 
     // 2. Fetch Transaction and Payment
@@ -387,9 +457,8 @@ export class PaymentsService {
       return { success: false, message: 'Cannot cancel an already settled transaction' };
     }
 
-    // Attempt to cancel on Midtrans if live API key
-    const isMockKey = !this.serverKey || this.serverKey.includes('test-key') || this.serverKey.startsWith('SB-Mid-server-test');
-    if (!isMockKey) {
+    // Attempt to cancel on Midtrans if configured API key
+    if (this.isConfiguredKey()) {
       try {
         const authHeader = `Basic ${Buffer.from(`${this.serverKey}:`).toString('base64')}`;
         await fetch(`${this.apiUrl}/${orderId}/cancel`, {
@@ -423,12 +492,29 @@ export class PaymentsService {
    * Testing & Development Helper: Simulates a successful settlement webhook
    */
   async simulateSettlement(orderId: string) {
+    if (this.isProduction || process.env.NODE_ENV === 'production') {
+      throw new ForbiddenException('Payment simulation is strictly forbidden in production mode.');
+    }
+
     const transaction = await this.prisma.transaction.findFirst({
       where: { orderId },
+      include: { payment: true },
     });
 
     if (!transaction) {
       throw new NotFoundException(`Transaction with orderId ${orderId} not found`);
+    }
+
+    if (transaction.status !== 'PENDING') {
+      throw new BadRequestException(`Cannot simulate settlement: transaction is already in ${transaction.status} status`);
+    }
+
+    // Safety guard: do not allow internal backdoor simulation on real Midtrans gateway transactions.
+    // Real gateway transactions must be settled via the Midtrans QRIS Simulator or official webhook.
+    if (transaction.payment?.paymentRef && !transaction.payment.paymentRef.startsWith('sim_')) {
+      throw new ForbiddenException(
+        'Simulasi internal tidak diizinkan untuk transaksi gerbang pembayaran nyata. Gunakan simulator resmi Midtrans (https://simulator.sandbox.midtrans.com/qris/index) atau callback webhook resmi.'
+      );
     }
 
     const payload: MidtransWebhookDto = {

@@ -25,13 +25,14 @@ type PaymentState =
 export default function PaymentScreen({ navigate, session, updateSession, onOpenAdmin }: ScreenProps) {
   const { config } = useKioskConfig();
   const themeColor = config.themeColor || '#3b82f6';
-  const price = config.price || 35000;
+  const price = config.pricing?.basePrice ?? config.price ?? 35000;
   const priceFormatted = price.toLocaleString('id-ID');
+  const paymentTimeoutSec = config.timing?.paymentTimeoutSec ?? config.timeout ?? 270;
 
   const [paymentState, setPaymentState] = useState<PaymentState>('INITIAL');
   const [orderId, setOrderId] = useState<string>('');
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
-  const [timeLeft, setTimeLeft] = useState<number>(270);
+  const [timeLeft, setTimeLeft] = useState<number>(paymentTimeoutSec);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isBypassing, setIsBypassing] = useState<boolean>(false);
   const [isBypassSettled, setIsBypassSettled] = useState<boolean>(false);
@@ -163,7 +164,12 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
       });
 
       if (!res.success || !res.qrisString) {
-        throw new Error(res.error || 'Gagal menghasilkan barcode QRIS');
+        throw new Error(res.error || (res as any).message || 'Gagal menghasilkan barcode QRIS');
+      }
+
+      // Validate standard EMVCo prefix for QRIS
+      if (typeof res.qrisString !== 'string' || !res.qrisString.startsWith('000201')) {
+        throw new Error('Format QRIS dari gerbang pembayaran tidak valid (bukan standar EMVCo).');
       }
 
       setOrderId(res.orderId);
@@ -184,7 +190,7 @@ export default function PaymentScreen({ navigate, session, updateSession, onOpen
       });
 
       setQrDataUrl(url);
-      setTimeLeft(270);
+      setTimeLeft(paymentTimeoutSec);
       setPaymentState('AWAITING_PAYMENT');
     } catch (err: any) {
       console.error('[PaymentScreen] Error creating QRIS:', err);
