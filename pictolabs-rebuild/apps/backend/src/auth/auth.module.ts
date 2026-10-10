@@ -6,6 +6,7 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { BoothSecretGuard } from './guards/booth-secret.guard';
+import { BoothConfigAuthGuard } from './guards/booth-config-auth.guard';
 
 @Module({
   imports: [
@@ -16,7 +17,7 @@ import { BoothSecretGuard } from './guards/booth-secret.guard';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard, BoothSecretGuard],
-  exports: [AuthService, JwtModule, JwtAuthGuard, BoothSecretGuard],
+  providers: [AuthService, JwtStrategy, JwtAuthGuard, BoothSecretGuard, BoothConfigAuthGuard],
+  exports: [AuthService, JwtModule, JwtAuthGuard, BoothSecretGuard, BoothConfigAuthGuard],
 })
 export class AuthModule {}

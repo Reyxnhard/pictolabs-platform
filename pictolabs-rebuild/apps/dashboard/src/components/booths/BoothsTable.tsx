@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { StatusBadge } from '../common/StatusBadge';
 import type { Booth } from '../../types/booth';
-import { MapPin, Settings2, Laptop } from 'lucide-react';
+import { MapPin, Settings2, Laptop, Banknote } from 'lucide-react';
+import { getBoothPrice } from './BoothDetailDrawer';
 
 interface BoothsTableProps {
   booths: Booth[];
@@ -37,6 +38,15 @@ export const BoothsTable: React.FC<BoothsTableProps> = ({
     return `${days}d ago`;
   };
 
+  const getEffectiveStatus = (b: Booth) => {
+    if (b.isMaintenance) return 'MAINTENANCE';
+    if (!b.lastSeen) return 'OFFLINE';
+    const seconds = Math.max(0, Math.floor((Date.now() - new Date(b.lastSeen).getTime()) / 1000));
+    if (seconds < 60) return 'ONLINE';
+    if (seconds < 300) return 'DEGRADED';
+    return 'OFFLINE';
+  };
+
   if (isLoading) {
     return (
       <div className="p-12 text-center text-slate-400 space-y-3">
@@ -64,6 +74,7 @@ export const BoothsTable: React.FC<BoothsTableProps> = ({
           <tr>
             <th className="py-4 px-6">Booth & Location</th>
             <th className="py-4 px-6">Status</th>
+            <th className="py-4 px-6">Base Price (Harga Dasar)</th>
             <th className="py-4 px-6">Version</th>
             <th className="py-4 px-6">Host Runtime</th>
             <th className="py-4 px-6">Last Heartbeat</th>
@@ -92,7 +103,27 @@ export const BoothsTable: React.FC<BoothsTableProps> = ({
 
               {/* Status */}
               <td className="py-4 px-6">
-                <StatusBadge status={booth.status} isMaintenance={booth.isMaintenance} />
+                <StatusBadge status={getEffectiveStatus(booth)} isMaintenance={booth.isMaintenance} />
+              </td>
+
+              {/* Base Price / Harga Dasar */}
+              <td className="py-4 px-6 font-mono" onClick={(e) => { e.stopPropagation(); onInspect(booth); }}>
+                <div className="flex items-center gap-2">
+                  <span className="font-extrabold text-amber-300 text-sm">
+                    Rp {getBoothPrice(booth).toLocaleString('id-ID')}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onInspect(booth)}
+                    className="p-1 rounded bg-slate-800/60 hover:bg-amber-500/20 text-slate-400 hover:text-amber-300 border border-slate-700/50 transition cursor-pointer"
+                    title="Ubah Harga Dasar (Base Price)"
+                  >
+                    <Banknote className="w-3 h-3" />
+                  </button>
+                </div>
+                <div className="text-[10px] text-slate-500 font-sans">
+                  Tarif Sesi Kiosk
+                </div>
               </td>
 
               {/* Version */}

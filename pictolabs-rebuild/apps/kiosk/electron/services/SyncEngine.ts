@@ -67,6 +67,17 @@ let socket: Socket | null = null;
 let isUploading = false;
 let lastUploadActivity = Date.now();
 
+function broadcastToWindows(channel: string, ...args: any[]): void {
+  try {
+    if (typeof BrowserWindow !== 'undefined' && BrowserWindow && typeof BrowserWindow.getAllWindows === 'function') {
+      const windows = BrowserWindow.getAllWindows();
+      for (const win of windows) {
+        win.webContents?.send(channel, ...args);
+      }
+    }
+  } catch (_) {}
+}
+
 // ─── Prepared Statements Cache ──────────────────────────────
 let stmtInsertSession: Database.Statement | null = null;
 let stmtUpdateSession: Database.Statement | null = null;
@@ -1509,6 +1520,9 @@ function setupSocketConnection(): void {
   socket.on('connect', () => {
     console.log('✓ [SyncEngine] Real-time WebSocket connected to cloud backend:', targetUrl);
     rearmRetryableUploads(true);
+    reconcileRemoteConfig().catch((err) =>
+      console.warn('[SyncEngine] Post-connect config reconciliation deferred:', err?.message)
+    );
   });
 
   socket.on('disconnect', (reason) => {
@@ -1520,46 +1534,53 @@ function setupSocketConnection(): void {
   });
 
   socket.on('CONFIG_UPDATE', (newConfig) => {
-    console.log('[SyncEngine] Received remote CONFIG_UPDATE from Cloud:', newConfig);
-    const configPath = path.join(config.dataDir, 'kiosk-config.json');
-    let existing = {};
-    try {
-      if (fs.existsSync(configPath)) {
-        existing = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      }
-    } catch {}
-    const merged = { ...existing, ...newConfig };
-    fs.writeFileSync(configPath, JSON.stringify(merged, null, 2), 'utf-8');
-    
-    // Broadcast config update to all React Renderer windows
-    const windows = BrowserWindow.getAllWindows();
-    for (const win of windows) {
-      win.webContents.send('kiosk:config-updated', merged);
+    if (!newConfig || typeof newConfig !== 'object') {
+      console.warn('[SyncEngine] Rejected invalid CONFIG_UPDATE payload');
+      return;
     }
+
+    // Verify booth identity if boothId is specified
+    if (newConfig.boothId && config?.boothId && newConfig.boothId !== config.boothId) {
+      console.warn(`[SyncEngine] Ignored CONFIG_UPDATE for mismatched booth ${newConfig.boothId} (active: ${config.boothId})`);
+      return;
+    }
+
+    const currentLocal = readLocalKioskConfig();
+    const localVersion = typeof currentLocal.configVersion === 'number' ? currentLocal.configVersion : 1;
+    const incomingVersion = typeof newConfig.configVersion === 'number' ? newConfig.configVersion : 0;
+
+    // Stale version check: Never downgrade local configuration
+    if (incomingVersion > 0 && incomingVersion < localVersion) {
+      console.log(`[SyncEngine] Ignored stale CONFIG_UPDATE (incoming v${incomingVersion} < local v${localVersion})`);
+      return;
+    }
+
+    console.log(`[SyncEngine] Applying remote CONFIG_UPDATE from Cloud (incoming v${incomingVersion} >= local v${localVersion})`);
+    const merged = { ...currentLocal, ...newConfig };
+    const saved = writeLocalKioskConfig(merged);
+
+    // Notify registered listeners (e.g. background tests or workers)
+    configUpdateListeners.forEach((fn) => {
+      try { fn(saved); } catch (_) {}
+    });
+
+    // Broadcast config update to all React Renderer windows
+    broadcastToWindows('kiosk:config-updated', saved);
   });
 
   socket.on('payment:settled', (data) => {
     console.log('[SyncEngine] Received remote payment:settled from Cloud:', data);
-    const windows = BrowserWindow.getAllWindows();
-    for (const win of windows) {
-      win.webContents.send('payment:settled', data);
-    }
+    broadcastToWindows('payment:settled', data);
   });
 
   socket.on('PAYMENT_SETTLED', (data) => {
     console.log('[SyncEngine] Received remote PAYMENT_SETTLED from Cloud:', data);
-    const windows = BrowserWindow.getAllWindows();
-    for (const win of windows) {
-      win.webContents.send('payment:settled', data);
-    }
+    broadcastToWindows('payment:settled', data);
   });
 
   socket.on('payment:expired', (data) => {
     console.log('[SyncEngine] Received remote payment:expired from Cloud:', data);
-    const windows = BrowserWindow.getAllWindows();
-    for (const win of windows) {
-      win.webContents.send('payment:expired', data);
-    }
+    broadcastToWindows('payment:expired', data);
   });
 
   // Start health ping (transmits real-time hardware telemetry to Cloud Backend)
@@ -1600,7 +1621,8 @@ function getPrimaryLocalIp(): string {
 async function sendHttpHeartbeat(): Promise<void> {
   if (!config?.apiBaseUrl || !config?.deviceSecret) return;
 
-  const targetUrl = `${config.apiBaseUrl}/api/booths/${config.deviceSecret}/heartbeat`;
+  const targetIdentifier = config.boothId || config.deviceSecret;
+  const targetUrl = `${config.apiBaseUrl}/api/booths/${targetIdentifier}/heartbeat`;
   let paperRemaining = 700;
   try {
     const row = db?.prepare('SELECT prints_remaining FROM paper_tracker WHERE id = 1').get() as any;
@@ -1681,6 +1703,201 @@ export function updateSyncCredentials(apiBaseUrl: string, deviceSecret: string, 
   sendHttpHeartbeat().catch((err) => {
     console.warn('[SyncEngine] Immediate post-pairing heartbeat warning:', err?.message);
   });
+
+  if (!httpHeartbeatInterval) {
+    httpHeartbeatInterval = setInterval(() => {
+      sendHttpHeartbeat().catch((err) =>
+        console.error('[SyncEngine] HTTP Heartbeat timer error:', err)
+      );
+    }, 30_000);
+  }
+
+  reconcileRemoteConfig(true).catch((err) => {
+    console.warn('[SyncEngine] Immediate post-pairing config reconciliation warning:', err?.message);
+  });
+}
+
+/**
+ * Reads local cached booth configuration from kiosk-config.json.
+ * If file is missing or corrupt, returns safe production defaults for Booth #1.
+ */
+export function readLocalKioskConfig(): Record<string, any> {
+  const defaultFallback: Record<string, any> = {
+    configVersion: 1,
+    pricing: { basePrice: 35000, currency: 'IDR', enableVoucher: true, enableQRIS: true },
+    timing: { paymentTimeoutSec: 270, poseCountdownSec: 5, qrTimeoutSec: 60, idleResetSec: 120 },
+    hardware: { cameraProfileId: null, printerProfileId: null, mirrorViewfinder: true, paperSize: '4R' },
+    frames: { allowedFrameIds: [] },
+    system: { themeColor: '#3b82f6', eventName: 'PICTOLABS SELF PHOTOBOOTH', subText: 'TOUCH SCREEN TO START' },
+    price: 35000,
+    countdown: 5,
+    timeout: 270,
+    themeColor: '#3b82f6',
+    eventName: 'PICTOLABS SELF PHOTOBOOTH',
+    subText: 'TOUCH SCREEN TO START',
+  };
+
+  const dataDir = config?.dataDir || path.join(os.homedir(), '.pictolabs');
+  const configPath = path.join(dataDir, 'kiosk-config.json');
+
+  try {
+    if (fs.existsSync(configPath)) {
+      const raw = fs.readFileSync(configPath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        const merged: Record<string, any> = { ...defaultFallback, ...parsed };
+
+        // Defensive normalization: resolve pricing.basePrice and price consistently
+        const hasParsedBasePrice =
+          typeof parsed?.pricing?.basePrice === 'number' &&
+          !isNaN(parsed.pricing.basePrice) &&
+          parsed.pricing.basePrice > 0;
+        const hasParsedPrice =
+          typeof parsed?.price === 'number' &&
+          !isNaN(parsed.price) &&
+          parsed.price > 0;
+
+        if (hasParsedBasePrice) {
+          merged.pricing = {
+            ...defaultFallback.pricing,
+            ...(parsed.pricing || {}),
+            basePrice: parsed.pricing.basePrice,
+          };
+          merged.price = parsed.pricing.basePrice;
+        } else if (hasParsedPrice) {
+          merged.pricing = {
+            ...defaultFallback.pricing,
+            ...(parsed.pricing || {}),
+            basePrice: parsed.price,
+          };
+          merged.price = parsed.price;
+        } else {
+          // Both missing or invalid (<= 0 / NaN) -> preserve default fallback
+          merged.pricing = { ...defaultFallback.pricing };
+          merged.price = defaultFallback.price;
+        }
+
+        return merged;
+      }
+    }
+  } catch (err: any) {
+    console.warn('[SyncEngine] Corrupt or unreadable kiosk-config.json, using safe defaults:', err?.message);
+  }
+  return defaultFallback;
+}
+
+/**
+ * Atomically writes configuration to local disk cache using temporary file replacement.
+ */
+export function writeLocalKioskConfig(newConfig: Record<string, any>): Record<string, any> {
+  const dataDir = config?.dataDir || path.join(os.homedir(), '.pictolabs');
+  if (!fs.existsSync(dataDir)) {
+    try {
+      fs.mkdirSync(dataDir, { recursive: true });
+    } catch (_) {}
+  }
+
+  const configPath = path.join(dataDir, 'kiosk-config.json');
+  const tempPath = `${configPath}.${Date.now()}.tmp`;
+
+  // Normalize pricing structure before persisting to disk
+  const normalized: Record<string, any> = { ...newConfig };
+  const hasBasePrice =
+    typeof normalized?.pricing?.basePrice === 'number' &&
+    !isNaN(normalized.pricing.basePrice) &&
+    normalized.pricing.basePrice > 0;
+  const hasPrice =
+    typeof normalized?.price === 'number' &&
+    !isNaN(normalized.price) &&
+    normalized.price > 0;
+
+  if (hasBasePrice) {
+    normalized.price = normalized.pricing.basePrice;
+  } else if (hasPrice) {
+    normalized.pricing = {
+      ...(normalized.pricing || { currency: 'IDR', enableVoucher: true, enableQRIS: true }),
+      basePrice: normalized.price,
+    };
+  }
+
+  try {
+    fs.writeFileSync(tempPath, JSON.stringify(normalized, null, 2), 'utf-8');
+    fs.renameSync(tempPath, configPath);
+  } catch (err: any) {
+    console.error('[SyncEngine] Failed to atomically write kiosk-config.json:', err?.message);
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch (_) {}
+  }
+
+  return normalized;
+}
+
+/**
+ * Reconciles local configuration against backend HTTP API (GET /api/booths/:id/config).
+ * Uses a non-blocking 3s timeout to ensure the kiosk never freezes on boot.
+ */
+export async function reconcileRemoteConfig(force: boolean = false): Promise<any> {
+  if (!config || !config.boothId || !config.apiBaseUrl) {
+    return readLocalKioskConfig();
+  }
+
+  const targetBoothId = config.boothId;
+  const baseUrl = config.apiBaseUrl;
+  const url = `${baseUrl}/api/booths/${targetBoothId}/config`;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+
+    const headers: Record<string, string> = {
+      'Accept': 'application/json',
+    };
+    if (config.deviceSecret) {
+      headers['x-device-secret'] = config.deviceSecret;
+    }
+
+    const res = await fetch(url, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) {
+      console.warn(`[SyncEngine] Remote config fetch returned HTTP ${res.status}`);
+      return readLocalKioskConfig();
+    }
+
+    const remoteConfig = await res.json();
+    if (!remoteConfig || typeof remoteConfig !== 'object') {
+      console.warn('[SyncEngine] Remote config returned malformed payload');
+      return readLocalKioskConfig();
+    }
+
+    const localConfig = readLocalKioskConfig();
+    const localVersion = typeof localConfig.configVersion === 'number' ? localConfig.configVersion : 1;
+    const remoteVersion = typeof remoteConfig.configVersion === 'number' ? remoteConfig.configVersion : 0;
+
+    if (remoteVersion >= localVersion || force) {
+      console.log(`[SyncEngine] Remote config reconciled: updating local cache from v${localVersion} to v${remoteVersion}`);
+      const merged = { ...localConfig, ...remoteConfig };
+      const saved = writeLocalKioskConfig(merged);
+
+      configUpdateListeners.forEach((fn) => {
+        try { fn(saved); } catch (_) {}
+      });
+
+      broadcastToWindows('kiosk:config-updated', saved);
+      return saved;
+    } else {
+      console.log(`[SyncEngine] Local config is up to date (local v${localVersion} >= remote v${remoteVersion})`);
+      return localConfig;
+    }
+  } catch (err: any) {
+    console.warn('[SyncEngine] Remote config reconciliation skipped (offline or timeout):', err?.message);
+    return readLocalKioskConfig();
+  }
 }
 
 export function registerSyncHandlers(engineConfig: SyncEngineConfig): void {
@@ -1695,6 +1912,9 @@ export function registerSyncHandlers(engineConfig: SyncEngineConfig): void {
 
   // Setup WebSocket connection to backend
   setupSocketConnection();
+
+  // Attempt non-blocking background remote config reconciliation on startup
+  reconcileRemoteConfig().catch(() => {});
 
   // Start periodic HTTP heartbeat as single source of truth (every 30 seconds)
   sendHttpHeartbeat().catch(() => {});
@@ -1721,26 +1941,19 @@ export function registerSyncHandlers(engineConfig: SyncEngineConfig): void {
   // ─── IPC Handlers ────────────────────────────────────────
   if (ipcMain && typeof ipcMain.handle === 'function') {
     ipcMain.handle('config:get', async () => {
-    const configPath = path.join(config.dataDir, 'kiosk-config.json');
-    try {
-      if (fs.existsSync(configPath)) {
-        return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      }
-    } catch {}
-    return {};
-  });
+      return readLocalKioskConfig();
+    });
 
-  ipcMain.handle('config:set', async (_event, partial: Record<string, unknown>) => {
-    const configPath = path.join(config.dataDir, 'kiosk-config.json');
-    let existing: Record<string, unknown> = {};
-    try {
-      if (fs.existsSync(configPath)) {
-        existing = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      }
-    } catch {}
-    const merged = { ...existing, ...partial };
-    fs.writeFileSync(configPath, JSON.stringify(merged, null, 2), 'utf-8');
-  });
+    ipcMain.handle('config:reconcile', async () => {
+      return reconcileRemoteConfig(true);
+    });
+
+    ipcMain.handle('config:set', async (_event, partial: Record<string, unknown>) => {
+      const current = readLocalKioskConfig();
+      const merged = { ...current, ...partial };
+      const saved = writeLocalKioskConfig(merged);
+      return saved;
+    });
 
   // ─── IPC: Session Management ───────────────────────────
   ipcMain.handle(
@@ -1826,12 +2039,19 @@ export function registerSyncHandlers(engineConfig: SyncEngineConfig): void {
           body: JSON.stringify({
             boothId,
             sessionId: params.sessionId,
-            amount: params.amount || 35000,
+            amount: params.amount ?? (readLocalKioskConfig()?.pricing?.basePrice ?? 35000),
             productName: params.productName,
             voucherCode: params.voucherCode,
           }),
         });
-        return await res.json();
+        const data = await res.json();
+        if (!res.ok) {
+          return {
+            success: false,
+            error: data.message || data.error || `HTTP ${res.status}: Gagal membuat pembayaran QRIS`,
+          };
+        }
+        return data;
       } catch (err: any) {
         console.error('[SyncEngine] Failed to create QRIS:', err.message);
         return { success: false, error: err.message };
@@ -1994,6 +2214,16 @@ export function runDatabaseCompaction(): { success: boolean; message: string } {
   } catch (err: any) {
     return { success: false, message: err.message };
   }
+}
+
+type ConfigListener = (config: any) => void;
+const configUpdateListeners: ConfigListener[] = [];
+export function onConfigUpdated(listener: ConfigListener): () => void {
+  configUpdateListeners.push(listener);
+  return () => {
+    const idx = configUpdateListeners.indexOf(listener);
+    if (idx !== -1) configUpdateListeners.splice(idx, 1);
+  };
 }
 
 

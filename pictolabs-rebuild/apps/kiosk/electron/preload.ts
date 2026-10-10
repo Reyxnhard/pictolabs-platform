@@ -176,6 +176,8 @@ const kioskApi = {
   config: {
     get: (): Promise<Record<string, unknown>> =>
       ipcRenderer.invoke('config:get'),
+    reconcile: (): Promise<Record<string, unknown>> =>
+      ipcRenderer.invoke('config:reconcile'),
     set: (partial: Record<string, unknown>): Promise<void> =>
       ipcRenderer.invoke('config:set', partial),
     onConfigUpdated: (cb: (config: any) => void): (() => void) => {

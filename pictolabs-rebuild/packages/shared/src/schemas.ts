@@ -15,8 +15,9 @@ export const PrinterSettingsSchema = z.object({
 });
 
 export const GeneralSettingsSchema = z.object({
-  price: z.number().min(0).default(35000),
+  price: z.number().int().positive().default(35000),
   countdownTimer: z.number().min(3).max(10).default(5),
   timeout: z.number().min(60).max(600).default(270),
   voucherOnly: z.boolean().default(false)
 });
+

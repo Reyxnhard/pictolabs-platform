@@ -3,9 +3,10 @@ import { kiosk } from '../ipc/bridge';
 
 interface ActivationScreenProps {
   onActivated: (identity: any) => void;
+  onCancel?: () => void;
 }
 
-export const ActivationScreen: React.FC<ActivationScreenProps> = ({ onActivated }) => {
+export const ActivationScreen: React.FC<ActivationScreenProps> = ({ onActivated, onCancel }) => {
   const [token, setToken] = useState('');
   const [apiBaseUrl, setApiBaseUrl] = useState(
     (import.meta as any).env?.VITE_BACKEND_URL || 'http://localhost:4000'
@@ -264,6 +265,28 @@ export const ActivationScreen: React.FC<ActivationScreenProps> = ({ onActivated 
         >
           {isLoading ? 'Menghubungkan ke Backend...' : 'PASANGKAN BOOTH INI'}
         </button>
+
+        {onCancel && (
+          <button
+            onClick={onCancel}
+            disabled={isLoading || !!successInfo}
+            style={{
+              marginTop: '12px',
+              width: '100%',
+              backgroundColor: 'transparent',
+              color: '#94A3B8',
+              border: '1px solid #334155',
+              borderRadius: '14px',
+              padding: '12px 0',
+              fontSize: '14px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'background-color 0.15s',
+            }}
+          >
+            ← Kembali ke Layar Utama
+          </button>
+        )}
 
         {/* Advanced Config Fold (API URL) */}
         <div style={{ marginTop: '20px', textAlign: 'center' }}>

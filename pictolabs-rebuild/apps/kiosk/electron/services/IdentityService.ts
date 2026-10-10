@@ -352,7 +352,7 @@ export function loadIdentity(defaultApiUrl: string = 'http://localhost:4000', al
   const allowPilotAutoSeed =
     !isPackaged &&
     allowLegacyAutoSeed &&
-    (process.env.PICTOLABS_PILOT_MIGRATION === 'true' || process.env.NODE_ENV !== 'production');
+    process.env.PICTOLABS_PILOT_MIGRATION === 'true';
 
   if (allowPilotAutoSeed) {
     console.log('[IdentityService] ℹ️ Auto-migrating legacy Pilot Booth #1 (dev-secret-booth-01)');
@@ -404,7 +404,8 @@ export function wipeIdentity(): void {
  * Get current public identity DTO (safe for renderer)
  */
 export function getKioskIdentityDTO(): KioskIdentityDTO {
-  if (!activeIdentity) {
+  const isPaired = Boolean(activeIdentity?.boothId && activeDeviceSecret);
+  if (!activeIdentity || !isPaired) {
     return {
       isPaired: false,
       provisioningVersion: 1,
@@ -413,7 +414,7 @@ export function getKioskIdentityDTO(): KioskIdentityDTO {
       branchId: null,
       branchName: null,
       location: null,
-      apiBaseUrl: 'http://localhost:4000',
+      apiBaseUrl: activeIdentity?.apiBaseUrl || 'http://localhost:4000',
       pairedAt: null,
     };
   }

@@ -189,8 +189,10 @@ async function runIdentityStorageTests() {
   // TEST 6: Legacy Pilot Migration (Backward Compatibility)
   // ─────────────────────────────────────────────────────────
   try {
-    // With no identity on disk, loadIdentity with allowLegacyAutoSeed=true should auto-migrate pilot
+    // With no identity on disk, loadIdentity with allowLegacyAutoSeed=true and PICTOLABS_PILOT_MIGRATION should auto-migrate pilot
+    process.env.PICTOLABS_PILOT_MIGRATION = 'true';
     const migrated = loadIdentity('http://localhost:4000', true);
+    delete process.env.PICTOLABS_PILOT_MIGRATION;
     assert.ok(migrated);
     assert.strictEqual(migrated.boothId, 'pilot-booth-01');
     assert.strictEqual(getActiveDeviceSecret(), 'dev-secret-booth-01');

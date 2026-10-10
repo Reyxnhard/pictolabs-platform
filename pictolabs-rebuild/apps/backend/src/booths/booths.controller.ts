@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Patch, Body, Param, Logger, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Body, Param, Logger, HttpCode, HttpStatus, UseGuards, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody } from '@nestjs/swagger';
 import { BoothsService } from './booths.service';
 import { KioskGateway } from '../gateway/kiosk.gateway';
@@ -8,7 +8,9 @@ import { UpdateBoothStatusDto } from './dto/update-booth-status.dto';
 import { BoothStatusResponseDto } from './dto/booth-status-response.dto';
 import { VerifyPinDto } from './dto/verify-pin.dto';
 import { UpdatePinDto } from './dto/update-pin.dto';
+import { UpdateBoothConfigDto } from './dto/update-booth-config.dto';
 import { Public } from '../auth/decorators/public.decorator';
+import { BoothConfigAuthGuard } from '../auth/guards/booth-config-auth.guard';
 
 @ApiTags('Booths')
 @Controller(['api/booths', 'booths'])
@@ -104,42 +106,55 @@ export class BoothsController {
     return result;
   }
 
+  @Public()
+  @UseGuards(BoothConfigAuthGuard)
+  @Get(':id/config')
+  @ApiOperation({
+    summary: 'Get canonical booth configuration',
+    description: 'Retrieves canonical normalized configuration envelope. Accessible by Kiosk (via X-Device-Secret) or Admin (via Bearer JWT).',
+  })
+  @ApiParam({ name: 'id', description: 'Booth UUID or device identifier' })
+  async getConfig(@Param('id') id: string) {
+    return this.boothsService.getBoothConfig(id);
+  }
+
+  @Public()
+  @UseGuards(BoothConfigAuthGuard)
   @Put(':id/config')
-  @ApiOperation({ summary: 'Update booth configuration' })
+  @ApiOperation({
+    summary: 'Update booth configuration',
+    description: 'Safe non-destructive update. Merges changes, increments configVersion, and emits CONFIG_UPDATE to target booth room.',
+  })
   @ApiParam({ name: 'id', description: 'Booth UUID' })
-  async updateConfig(@Param('id') id: string, @Body() configData: any) {
-    const updated = await this.boothsService.updateConfig(id, configData);
-    await this.kioskGateway.pushConfigUpdate(id, configData);
+  @ApiBody({ type: UpdateBoothConfigDto })
+  async updateConfig(
+    @Param('id') id: string,
+    @Body() configDto: UpdateBoothConfigDto,
+  ) {
+    const updated = await this.boothsService.updateBoothConfig(id, configDto);
+    await this.kioskGateway.pushConfigUpdate(id, updated);
     return updated;
   }
 
   @Post('push-config')
-  @ApiOperation({ summary: 'Push configuration to all or specific booths via WebSocket' })
+  @ApiOperation({ summary: 'Targeted configuration push via WebSocket (per-booth isolation)' })
   async pushConfig(@Body() body: { boothId?: string; config: any }) {
     const { boothId, config } = body;
 
-    // Persist to database
     if (!boothId || boothId === 'all') {
-      const allBooths = await this.prisma.booth.findMany({ select: { id: true } });
-      for (const b of allBooths) {
-        await this.boothsService.updateConfig(b.id, {
-          generalSettings: JSON.stringify(config),
-        });
-      }
-    } else {
-      await this.boothsService.updateConfig(boothId, {
-        generalSettings: JSON.stringify(config),
-      });
+      throw new BadRequestException(
+        'Explicit target boothId is required. Global broadcast is disabled to enforce per-booth isolation.'
+      );
     }
 
-    // Broadcast in real-time to live Kiosks
-    await this.kioskGateway.pushConfigUpdate(boothId, config);
+    const updated = await this.boothsService.updateBoothConfig(boothId, config);
+    await this.kioskGateway.pushConfigUpdate(boothId, updated);
 
     return {
       success: true,
-      message: 'Config pushed to live booths successfully',
-      target: boothId || 'all',
-      config,
+      message: `Config updated and pushed to booth ${boothId} successfully`,
+      target: boothId,
+      config: updated,
     };
   }
 

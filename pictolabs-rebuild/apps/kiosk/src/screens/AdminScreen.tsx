@@ -26,9 +26,10 @@ import SessionHistorySection from './SessionHistorySection';
 
 interface AdminScreenProps {
   onClose: () => void;
+  onNavigate?: (screen: any) => void;
 }
 
-export default function AdminScreen({ onClose }: AdminScreenProps) {
+export default function AdminScreen({ onClose, onNavigate }: AdminScreenProps) {
   const { config, updateLocalConfig } = useKioskConfig();
   // Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -140,8 +141,7 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
     const boothIdentifier =
       activeId?.boothId ||
       (config as any)?.boothId ||
-      (config as any)?.deviceSecret ||
-      (isDev ? 'dev-secret-booth-01' : '');
+      '';
 
     return { backendUrl, boothIdentifier, isDev };
   };
@@ -597,6 +597,25 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
               ⌫
             </button>
           </div>
+
+          {/* Quick link to activation if booth is unconfigured/unpaired */}
+          <div className="mt-6 text-center">
+            <button
+              type="button"
+              id="btn-admin-goto-activation"
+              onClick={() => {
+                onClose();
+                if (onNavigate) {
+                  onNavigate('activation');
+                } else if ((window as any).__kioskNavigate) {
+                  (window as any).__kioskNavigate('activation');
+                }
+              }}
+              className="text-xs text-sky-400 hover:text-sky-300 transition-colors underline cursor-pointer"
+            >
+              Aktivasi / Pasangkan Perangkat Kiosk
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -1028,6 +1047,22 @@ export default function AdminScreen({ onClose }: AdminScreenProps) {
             >
               <LogOut className="w-4 h-4" />
               Keluar ke Windows
+            </button>
+            <button
+              type="button"
+              id="btn-admin-re-activate"
+              onClick={() => {
+                onClose();
+                if (onNavigate) {
+                  onNavigate('activation');
+                } else if ((window as any).__kioskNavigate) {
+                  (window as any).__kioskNavigate('activation');
+                }
+              }}
+              className="col-span-2 py-3 px-4 rounded-xl bg-sky-600/80 hover:bg-sky-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all border border-sky-500/50 cursor-pointer shadow-md shadow-sky-600/20"
+            >
+              <ShieldCheck className="w-4 h-4" />
+              Aktivasi / Pasangkan Ulang Booth
             </button>
           </div>
         </div>

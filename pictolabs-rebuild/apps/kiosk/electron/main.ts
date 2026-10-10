@@ -193,8 +193,8 @@ app.whenReady().then(() => {
 
   // Register Kiosk Identity, DPAPI Storage, & Provisioning Handlers (Phase 3.3)
   registerIdentityHandlers();
-  const identity = loadIdentity(isDev ? 'http://localhost:4000' : 'https://api.pictolabs.id', isDev);
-  const activeSecret = getActiveDeviceSecret() || (isDev ? 'dev-secret-booth-01' : '');
+  const identity = loadIdentity(isDev ? 'http://localhost:4000' : 'https://api.pictolabs.id', false);
+  const activeSecret = getActiveDeviceSecret() || '';
 
   registerSyncHandlers({
     dataDir: DATA_DIR,

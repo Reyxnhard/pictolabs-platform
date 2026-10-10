@@ -2,9 +2,11 @@ import { Injectable, NotFoundException, BadRequestException, Logger } from '@nes
 import { PrismaService } from '../prisma/prisma.service';
 import { BoothHeartbeatDto } from './dto/booth-heartbeat.dto';
 import { UpdateBoothStatusDto } from './dto/update-booth-status.dto';
+import { BoothConfigEnvelope } from './dto/update-booth-config.dto';
 import * as bcrypt from 'bcrypt';
 
 export type ComputedStatus = 'ONLINE' | 'DEGRADED' | 'OFFLINE' | 'MAINTENANCE';
+export type { BoothConfigEnvelope };
 
 @Injectable()
 export class BoothsService {
@@ -72,7 +74,7 @@ export class BoothsService {
     };
   }
 
-  private async findBoothByIdentifier(identifier: string, include?: any) {
+  async findBoothByIdentifier(identifier: string, include?: any) {
     const booth = await this.prisma.booth.findFirst({
       where: {
         OR: [
@@ -340,12 +342,207 @@ export class BoothsService {
     };
   }
 
-  async updateConfig(boothId: string, configData: any) {
-    return this.prisma.boothConfig.upsert({
-      where: { boothId },
-      update: { ...configData },
-      create: { boothId, ...configData },
+  /**
+   * Normalizes raw database configuration or legacy generalSettings into the canonical PR-01 BoothConfigEnvelope.
+   * Ensures production-safe defaults for Booth #1 and populates backward-compatible top-level aliases.
+   */
+  normalizeConfigEnvelope(raw: any, boothId: string, dbUpdatedAt?: Date): BoothConfigEnvelope {
+    const defaultPricing = {
+      basePrice: 35000,
+      currency: 'IDR',
+      enableVoucher: true,
+      enableQRIS: true,
+    };
+    const defaultTiming = {
+      paymentTimeoutSec: 270,
+      poseCountdownSec: 5,
+      qrTimeoutSec: 60,
+      idleResetSec: 120,
+    };
+    const defaultHardware = {
+      cameraProfileId: null,
+      printerProfileId: null,
+      mirrorViewfinder: true,
+      paperSize: '4R',
+    };
+    const defaultFrames = {
+      allowedFrameIds: [],
+    };
+    const defaultSystem = {
+      themeColor: '#3b82f6',
+      eventName: 'PICTOLABS SELF PHOTOBOOTH',
+      subText: 'TOUCH SCREEN TO START',
+    };
+
+    const envelope: BoothConfigEnvelope = {
+      configVersion: typeof raw?.configVersion === 'number' && raw.configVersion > 0 ? raw.configVersion : 1,
+      updatedAt: raw?.updatedAt || (dbUpdatedAt ? dbUpdatedAt.toISOString() : new Date().toISOString()),
+      boothId,
+      pricing: {
+        ...defaultPricing,
+        ...(raw?.pricing || {}),
+        basePrice: typeof raw?.pricing?.basePrice === 'number'
+          ? raw.pricing.basePrice
+          : typeof raw?.price === 'number'
+          ? raw.price
+          : defaultPricing.basePrice,
+      },
+      timing: {
+        ...defaultTiming,
+        ...(raw?.timing || {}),
+        paymentTimeoutSec: typeof raw?.timing?.paymentTimeoutSec === 'number'
+          ? raw.timing.paymentTimeoutSec
+          : typeof raw?.timeout === 'number'
+          ? raw.timeout
+          : defaultTiming.paymentTimeoutSec,
+        poseCountdownSec: typeof raw?.timing?.poseCountdownSec === 'number'
+          ? raw.timing.poseCountdownSec
+          : typeof raw?.countdown === 'number'
+          ? raw.countdown
+          : defaultTiming.poseCountdownSec,
+      },
+      hardware: {
+        ...defaultHardware,
+        ...(raw?.hardware || {}),
+      },
+      frames: {
+        ...defaultFrames,
+        ...(raw?.frames || {}),
+      },
+      system: {
+        ...defaultSystem,
+        ...(raw?.system || {}),
+        themeColor: raw?.system?.themeColor || raw?.themeColor || defaultSystem.themeColor,
+        eventName: raw?.system?.eventName || raw?.eventName || defaultSystem.eventName,
+        subText: raw?.system?.subText || raw?.subText || defaultSystem.subText,
+      },
+    };
+
+    // Populate backward-compatibility top-level aliases
+    envelope.price = envelope.pricing.basePrice;
+    envelope.countdown = envelope.timing.poseCountdownSec;
+    envelope.timeout = envelope.timing.paymentTimeoutSec;
+    envelope.themeColor = envelope.system.themeColor;
+    envelope.eventName = envelope.system.eventName;
+    envelope.subText = envelope.system.subText;
+
+    return envelope;
+  }
+
+  /**
+   * Retrieves canonical normalized configuration for a booth.
+   */
+  async getBoothConfig(identifier: string): Promise<BoothConfigEnvelope> {
+    const booth = await this.findBoothByIdentifier(identifier, { config: true });
+    const boothConfig = (booth as any)?.config;
+    let rawGeneral: any = {};
+    if (boothConfig?.generalSettings) {
+      try {
+        rawGeneral = typeof boothConfig.generalSettings === 'string'
+          ? JSON.parse(boothConfig.generalSettings)
+          : boothConfig.generalSettings;
+      } catch (err: any) {
+        this.logger.warn(`[BoothsService] Failed to parse generalSettings for booth ${booth.id}: ${err?.message}`);
+      }
+    }
+    return this.normalizeConfigEnvelope(rawGeneral, booth.id, boothConfig?.updatedAt);
+  }
+
+  /**
+   * Safe non-destructive configuration update.
+   * Preserves unrelated fields, increments configVersion monotonically, and updates PostgreSQL.
+   */
+  async updateBoothConfig(identifier: string, patch: any): Promise<BoothConfigEnvelope> {
+    const booth = await this.findBoothByIdentifier(identifier, { config: true });
+
+    // 1. Fetch current canonical configuration
+    const current = await this.getBoothConfig(booth.id);
+
+    // 2. Safe Deep Merge
+    const newPricing = {
+      ...current.pricing,
+      ...(patch.pricing || {}),
+      ...(typeof patch.price === 'number' ? { basePrice: patch.price } : {}),
+    };
+
+    if (newPricing.basePrice !== undefined) {
+      if (
+        typeof newPricing.basePrice !== 'number' ||
+        isNaN(newPricing.basePrice) ||
+        newPricing.basePrice <= 0 ||
+        !Number.isInteger(newPricing.basePrice)
+      ) {
+        throw new BadRequestException('Harga dasar (basePrice) harus berupa bilangan bulat positif (> 0).');
+      }
+    }
+
+    const newTiming = {
+      ...current.timing,
+      ...(patch.timing || {}),
+      ...(typeof patch.timeout === 'number' ? { paymentTimeoutSec: patch.timeout } : {}),
+      ...(typeof patch.countdown === 'number' ? { poseCountdownSec: patch.countdown } : {}),
+    };
+
+    const newHardware = {
+      ...current.hardware,
+      ...(patch.hardware || {}),
+    };
+
+    const newFrames = {
+      ...current.frames,
+      ...(patch.frames || {}),
+    };
+
+    const newSystem = {
+      ...current.system,
+      ...(patch.system || {}),
+      ...(patch.themeColor ? { themeColor: patch.themeColor } : {}),
+      ...(patch.eventName ? { eventName: patch.eventName } : {}),
+      ...(patch.subText ? { subText: patch.subText } : {}),
+    };
+
+    // 3. Monotonically increment version and stamp server updatedAt
+    const nextVersion = (current.configVersion || 1) + 1;
+    const nowIso = new Date().toISOString();
+
+    const newEnvelope: BoothConfigEnvelope = {
+      configVersion: nextVersion,
+      updatedAt: nowIso,
+      boothId: booth.id,
+      pricing: newPricing,
+      timing: newTiming,
+      hardware: newHardware,
+      frames: newFrames,
+      system: newSystem,
+      price: newPricing.basePrice,
+      countdown: newTiming.poseCountdownSec,
+      timeout: newTiming.paymentTimeoutSec,
+      themeColor: newSystem.themeColor,
+      eventName: newSystem.eventName,
+      subText: newSystem.subText,
+    };
+
+    // 4. Atomic PostgreSQL upsert
+    await this.prisma.boothConfig.upsert({
+      where: { boothId: booth.id },
+      update: {
+        generalSettings: JSON.stringify(newEnvelope),
+      },
+      create: {
+        boothId: booth.id,
+        generalSettings: JSON.stringify(newEnvelope),
+      },
     });
+
+    this.logger.log(
+      `[BoothsService] ✓ Configuration updated for ${booth.name} (${booth.id}) -> v${nextVersion} (basePrice: ${newPricing.basePrice})`
+    );
+
+    return newEnvelope;
+  }
+
+  async updateConfig(boothId: string, configData: any) {
+    return this.updateBoothConfig(boothId, configData);
   }
 
   async recordHealth(boothId: string, data: any) {

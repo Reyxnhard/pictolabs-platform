@@ -2,11 +2,48 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { kiosk } from '../ipc/bridge';
 
 export interface KioskConfig {
+  configVersion?: number;
+  updatedAt?: string;
+  boothId?: string;
+
+  pricing?: {
+    basePrice: number;
+    currency?: string;
+    enableVoucher?: boolean;
+    enableQRIS?: boolean;
+  };
+
+  timing?: {
+    paymentTimeoutSec: number;
+    poseCountdownSec: number;
+    qrTimeoutSec: number;
+    idleResetSec?: number;
+  };
+
+  hardware?: {
+    cameraProfileId?: string | null;
+    printerProfileId?: string | null;
+    mirrorViewfinder?: boolean;
+    paperSize?: string;
+  };
+
+  frames?: {
+    allowedFrameIds?: string[];
+  };
+
+  system?: {
+    themeColor: string;
+    eventName: string;
+    subText: string;
+  };
+
+  // Flat fields for backward compatibility with existing screen components
   themeColor: string;
   eventName: string;
   subText: string;
   price: number;
   countdown: number;
+  timeout?: number;
   enableVoucher: boolean;
   enableQRIS: boolean;
   activeLayout: string;
@@ -16,18 +53,45 @@ export interface KioskConfig {
 }
 
 export const DEFAULT_KIOSK_CONFIG: KioskConfig = {
+  configVersion: 1,
+  pricing: {
+    basePrice: 35000,
+    currency: 'IDR',
+    enableVoucher: true,
+    enableQRIS: true,
+  },
+  timing: {
+    paymentTimeoutSec: 270,
+    poseCountdownSec: 5,
+    qrTimeoutSec: 60,
+    idleResetSec: 120,
+  },
+  hardware: {
+    cameraProfileId: null,
+    printerProfileId: null,
+    mirrorViewfinder: true,
+    paperSize: '4R',
+  },
+  frames: {
+    allowedFrameIds: [],
+  },
+  system: {
+    themeColor: '#3b82f6',
+    eventName: 'PICTOLABS SELF PHOTOBOOTH',
+    subText: 'TOUCH SCREEN TO START',
+  },
   themeColor: '#3b82f6', // Photolab Blue default
   eventName: 'PICTOLABS SELF PHOTOBOOTH',
   subText: 'TOUCH SCREEN TO START',
   price: 35000,
   countdown: 5,
+  timeout: 270,
   enableVoucher: true,
   enableQRIS: true,
   activeLayout: '4R',
   cameraPreview: 'mirror',
   cameraResult: 'mirror',
 };
-
 
 interface KioskConfigContextType {
   config: KioskConfig;
@@ -43,6 +107,52 @@ const KioskConfigContext = createContext<KioskConfigContextType>({
   updateLocalConfig: () => {},
 });
 
+/**
+ * Normalizes configuration payload ensuring pricing.basePrice and price stay strictly synchronized.
+ * Prevents default hydration values (Rp 35.000) from overriding valid partial price caches (e.g. { price: 1000 }).
+ */
+export const normalizeConfigPayload = (incoming: any, base: KioskConfig): KioskConfig => {
+  if (!incoming || typeof incoming !== 'object') {
+    return base;
+  }
+
+  const merged: KioskConfig = { ...base, ...incoming };
+
+  const hasIncomingBasePrice =
+    typeof incoming?.pricing?.basePrice === 'number' &&
+    !isNaN(incoming.pricing.basePrice) &&
+    incoming.pricing.basePrice > 0;
+  const hasIncomingPrice =
+    typeof incoming?.price === 'number' &&
+    !isNaN(incoming.price) &&
+    incoming.price > 0;
+
+  if (hasIncomingBasePrice) {
+    merged.pricing = {
+      ...(merged.pricing || DEFAULT_KIOSK_CONFIG.pricing),
+      ...(incoming.pricing || {}),
+      basePrice: incoming.pricing.basePrice,
+    };
+    merged.price = incoming.pricing.basePrice;
+  } else if (hasIncomingPrice) {
+    merged.pricing = {
+      ...(merged.pricing || DEFAULT_KIOSK_CONFIG.pricing),
+      basePrice: incoming.price,
+    };
+    merged.price = incoming.price;
+  } else if (merged.pricing?.basePrice) {
+    merged.price = merged.pricing.basePrice;
+  }
+
+  if (merged.timing?.poseCountdownSec) merged.countdown = merged.timing.poseCountdownSec;
+  if (merged.timing?.paymentTimeoutSec) merged.timeout = merged.timing.paymentTimeoutSec;
+  if (merged.system?.themeColor) merged.themeColor = merged.system.themeColor;
+  if (merged.system?.eventName) merged.eventName = merged.system.eventName;
+  if (merged.system?.subText) merged.subText = merged.system.subText;
+
+  return merged;
+};
+
 export const KioskConfigProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [config, setConfig] = useState<KioskConfig>(DEFAULT_KIOSK_CONFIG);
   const [showLiveBanner, setShowLiveBanner] = useState(false);
@@ -55,36 +165,53 @@ export const KioskConfigProvider: React.FC<{ children: React.ReactNode }> = ({ c
   };
 
   useEffect(() => {
-    // 1. Load initial saved config from kiosk storage
-    kiosk.config.get().then((saved) => {
+    // 1. Load initial saved config from local kiosk storage (instant hydration, zero freeze)
+    kiosk.config.get().then((saved: any) => {
       if (saved && Object.keys(saved).length > 0) {
         console.log('[KioskConfig] Loaded initial config from storage:', saved);
         setConfig((prev) => {
-          const merged = { ...prev, ...saved };
-          applyTheme(merged.themeColor);
-          return merged as KioskConfig;
+          const normalized = normalizeConfigPayload(saved, prev);
+          applyTheme(normalized.themeColor);
+          return normalized;
         });
       } else {
         applyTheme(DEFAULT_KIOSK_CONFIG.themeColor);
+      }
+
+      // 2. Trigger asynchronous background remote config reconciliation
+      if (typeof kiosk.config.reconcile === 'function') {
+        kiosk.config.reconcile().then((reconciled: any) => {
+          if (reconciled && Object.keys(reconciled).length > 0) {
+            console.log('[KioskConfig] Applied reconciled remote config on boot:', reconciled);
+            setConfig((prev) => {
+              const normalized = normalizeConfigPayload(reconciled, prev);
+              applyTheme(normalized.themeColor);
+              return normalized;
+            });
+          }
+        }).catch((err: any) => {
+          console.warn('[KioskConfig] Boot reconciliation deferred/offline:', err);
+        });
       }
     }).catch((err) => {
       console.warn('[KioskConfig] Failed to read initial config:', err);
     });
 
-    // 2. Subscribe to real-time CONFIG_UPDATE broadcast from backend / dashboard
-    const unsubscribe = kiosk.config.onConfigUpdated((newConfig) => {
+    // 3. Subscribe to real-time CONFIG_UPDATE broadcast from backend / dashboard
+    const unsubscribe = kiosk.config.onConfigUpdated((newConfig: any) => {
       console.log('⚡ [KioskConfig] Real-time Remote Config received from Cloud:', newConfig);
       
       setConfig((prev) => {
-        const merged = { ...prev, ...newConfig };
-        applyTheme(merged.themeColor);
-        return merged as KioskConfig;
+        const normalized = normalizeConfigPayload(newConfig, prev);
+        applyTheme(normalized.themeColor);
+        return normalized;
       });
 
       // Trigger visual feedback banner
+      const bannerName = newConfig.system?.eventName || newConfig.eventName;
       setBannerText(
-        newConfig.eventName
-          ? `⚡ Config Live Update: ${newConfig.eventName}`
+        bannerName
+          ? `⚡ Config Live Update: ${bannerName}`
           : '⚡ Tema & Konfigurasi Berhasil Diperbarui dari Cloud!'
       );
       setShowLiveBanner(true);
@@ -103,9 +230,9 @@ export const KioskConfigProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   const updateLocalConfig = (partial: Partial<KioskConfig>) => {
     setConfig((prev) => {
-      const merged = { ...prev, ...partial };
-      applyTheme(merged.themeColor);
-      return merged;
+      const normalized = normalizeConfigPayload(partial, prev);
+      applyTheme(normalized.themeColor);
+      return normalized;
     });
     kiosk.config.set(partial);
   };

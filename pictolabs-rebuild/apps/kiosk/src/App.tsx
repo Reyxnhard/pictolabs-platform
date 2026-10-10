@@ -51,6 +51,7 @@ export interface SessionData {
 
 function KioskAppInner() {
   const [screen, setScreen] = useState<KioskScreen>('welcome');
+  const [isIdentityChecked, setIsIdentityChecked] = useState(false);
   const [session, setSession] = useState<SessionData>({ photos: [] });
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const { showLiveBanner, bannerText } = useKioskConfig();
@@ -104,16 +105,37 @@ function KioskAppInner() {
     });
   }, []);
 
-  // Check booth pairing & provisioning status on mount (Phase 3.3)
+  // Check booth pairing & provisioning status on mount (Failure C Fix)
   useEffect(() => {
-    kiosk.identity?.getStatus?.().then((status) => {
-      if (status && !status.isPaired) {
-        console.log('[App] 🔒 Kiosk unit is unpaired. Navigating to ActivationScreen.');
-        setScreen('activation');
+    let isMounted = true;
+    const timeout = setTimeout(() => {
+      if (isMounted && !isIdentityChecked) {
+        console.warn('[App] Identity check timed out, defaulting to ready');
+        setIsIdentityChecked(true);
       }
+    }, 2500);
+
+    kiosk.identity?.getStatus?.().then((status) => {
+      if (!isMounted) return;
+      clearTimeout(timeout);
+      if (status && !status.isPaired) {
+        console.log('[App] 🔒 Kiosk unit is unpaired. Navigating directly to ActivationScreen.');
+        setScreen('activation');
+      } else {
+        setScreen('welcome');
+      }
+      setIsIdentityChecked(true);
     }).catch((err) => {
+      if (!isMounted) return;
+      clearTimeout(timeout);
       console.warn('[App] Identity status check warning:', err);
+      setIsIdentityChecked(true);
     });
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timeout);
+    };
   }, []);
 
   const handleResumeSession = useCallback(async (rec: RecoverableSessionDTO) => {
@@ -258,8 +280,22 @@ function KioskAppInner() {
         </div>
       )}
 
+      {/* Kiosk Identity Bootstrap Screen (Failure C Gate) */}
+      {!isIdentityChecked && (
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-950 text-white select-none">
+          <div className="w-16 h-16 rounded-3xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-3xl mb-4 animate-pulse">
+            📸
+          </div>
+          <h2 className="text-xl font-bold tracking-tight text-white mb-2 font-display">PICTOLABS SELF PHOTOBOOTH</h2>
+          <div className="flex items-center gap-2 text-slate-400 text-xs font-mono">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-400" />
+            <span>Memeriksa status perangkat & otentikasi...</span>
+          </div>
+        </div>
+      )}
+
       {/* Hidden Operator Admin Panel Modal */}
-      {isAdminOpen && <AdminScreen onClose={closeAdmin} />}
+      {isAdminOpen && <AdminScreen onClose={closeAdmin} onNavigate={navigate} />}
 
       {/* ─── Phase 3.2D Crash Recovery Prompt Modal ─── */}
       {recoverableSession && !rescueVoucher && (
@@ -378,6 +414,7 @@ function KioskAppInner() {
             console.log('[App] Booth activated. Moving to welcome screen.');
             navigate('welcome');
           }}
+          onCancel={() => navigate('welcome')}
         />
       )}
     </div>

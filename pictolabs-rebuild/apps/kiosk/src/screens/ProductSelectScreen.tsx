@@ -8,7 +8,8 @@ export default function ProductSelectScreen({ navigate, updateSession }: ScreenP
   const { config } = useKioskConfig();
 
   const themeColor = config.themeColor || '#3b82f6';
-  const priceFormatted = (config.price || 35000).toLocaleString('id-ID');
+  const price = config.pricing?.basePrice ?? config.price ?? 35000;
+  const priceFormatted = price.toLocaleString('id-ID');
 
   const handleContinue = () => {
     updateSession({

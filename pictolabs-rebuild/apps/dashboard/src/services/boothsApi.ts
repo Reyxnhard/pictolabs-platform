@@ -22,16 +22,29 @@ export const boothsApi = {
     return res.data;
   },
 
+  async getBoothConfig(id: string): Promise<any> {
+    const res = await api.get(`/api/booths/${id}/config`);
+    return res.data;
+  },
+
+  async updateBoothConfig(id: string, patch: any): Promise<any> {
+    const res = await api.put(`/api/booths/${id}/config`, patch);
+    return res.data;
+  },
+
   async updateBoothPin(id: string, newPin: string): Promise<{ success: boolean; message: string; boothId: string }> {
     const res = await api.put<{ success: boolean; message: string; boothId: string }>(`/api/booths/${id}/pin`, { newPin });
     return res.data;
   },
 
   async updateBoothPrice(boothId: string, price: number): Promise<{ success: boolean; message: string; config: any }> {
-    const res = await api.post<{ success: boolean; message: string; config: any }>('/api/booths/push-config', {
-      boothId,
-      config: { price },
+    const res = await api.put<any>(`/api/booths/${boothId}/config`, {
+      pricing: { basePrice: price },
     });
-    return res.data;
+    return {
+      success: true,
+      message: 'Tarif berhasil diperbarui',
+      config: res.data,
+    };
   },
 };

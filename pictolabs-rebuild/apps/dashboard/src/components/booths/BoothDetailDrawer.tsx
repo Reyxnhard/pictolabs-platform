@@ -16,15 +16,43 @@ interface BoothDetailDrawerProps {
   onStatusUpdated?: () => void;
 }
 
-const getBoothPrice = (boothObj: Booth | null): number => {
+export const getBoothPrice = (boothObj: Booth | null, configEnvelope?: any): number => {
+  if (configEnvelope) {
+    if (typeof configEnvelope.pricing?.basePrice === 'number') return configEnvelope.pricing.basePrice;
+    if (typeof configEnvelope.price === 'number') return configEnvelope.price;
+  }
   if (!boothObj?.config?.generalSettings) return 35000;
   try {
     const parsed = typeof boothObj.config.generalSettings === 'string'
       ? JSON.parse(boothObj.config.generalSettings)
       : boothObj.config.generalSettings;
+    if (typeof parsed?.pricing?.basePrice === 'number') {
+      return parsed.pricing.basePrice;
+    }
     return typeof parsed?.price === 'number' ? parsed.price : 35000;
   } catch {
     return 35000;
+  }
+};
+
+const getBoothConfigMeta = (boothObj: Booth | null, configEnvelope?: any): { version: number; updatedAt: string | null } => {
+  if (configEnvelope) {
+    return {
+      version: typeof configEnvelope.configVersion === 'number' ? configEnvelope.configVersion : 1,
+      updatedAt: configEnvelope.updatedAt || null,
+    };
+  }
+  if (!boothObj?.config?.generalSettings) return { version: 1, updatedAt: null };
+  try {
+    const parsed = typeof boothObj.config.generalSettings === 'string'
+      ? JSON.parse(boothObj.config.generalSettings)
+      : boothObj.config.generalSettings;
+    return {
+      version: typeof parsed?.configVersion === 'number' ? parsed.configVersion : 1,
+      updatedAt: parsed?.updatedAt || (boothObj.config.updatedAt ? new Date(boothObj.config.updatedAt).toISOString() : null),
+    };
+  } catch {
+    return { version: 1, updatedAt: null };
   }
 };
 
@@ -36,6 +64,7 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
 }) => {
   const [statusDetail, setStatusDetail] = useState<BoothStatusResponse | null>(null);
   const [detailedBooth, setDetailedBooth] = useState<Booth | null>(null);
+  const [boothConfig, setBoothConfig] = useState<any | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
 
@@ -50,21 +79,28 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
   const [isUpdatingPrice, setIsUpdatingPrice] = useState(false);
   const [priceFeedback, setPriceFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  useEffect(() => {
-    const current = getBoothPrice(detailedBooth || booth);
-    setPriceInput(current.toString());
-  }, [detailedBooth?.config?.generalSettings, booth?.id]);
-
   const fetchStatus = async () => {
     if (!booth) return;
     setIsLoading(true);
     try {
-      const [statusData, boothData] = await Promise.all([
+      const [statusData, boothData, configData] = await Promise.all([
         boothsApi.getBoothStatus(booth.id),
         boothsApi.getBoothById(booth.id),
+        boothsApi.getBoothConfig(booth.id).catch((err) => {
+          console.warn('Failed to fetch direct booth config:', err);
+          return null;
+        }),
       ]);
       setStatusDetail(statusData);
       setDetailedBooth(boothData);
+      if (configData) {
+        setBoothConfig(configData);
+        const resolvedPrice = configData.pricing?.basePrice ?? configData.price ?? 35000;
+        setPriceInput(resolvedPrice.toString());
+      } else {
+        const fallbackPrice = getBoothPrice(boothData || booth);
+        setPriceInput(fallbackPrice.toString());
+      }
     } catch (err) {
       console.error('Failed to load booth status detail:', err);
     } finally {
@@ -78,6 +114,7 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
     } else {
       setStatusDetail(null);
       setDetailedBooth(null);
+      setBoothConfig(null);
       setPinFeedback(null);
       setPriceFeedback(null);
       setNewPin('');
@@ -88,49 +125,38 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
     e.preventDefault();
     if (!booth) return;
     const numericPrice = Number(priceInput);
-    if (isNaN(numericPrice) || numericPrice < 0) {
-      setPriceFeedback({ type: 'error', message: 'Nominal harga tidak valid. Masukkan angka positif.' });
+    if (isNaN(numericPrice) || numericPrice <= 0 || !Number.isInteger(numericPrice)) {
+      setPriceFeedback({
+        type: 'error',
+        message: 'Nominal harga dasar tidak valid. Masukkan bilangan bulat positif (> 0, contoh: 30000).',
+      });
       return;
     }
 
     setIsUpdatingPrice(true);
     setPriceFeedback(null);
     try {
+      // 1. Persist new price via existing PR-01 API: PUT /api/booths/:id/config
       await boothsApi.updateBoothPrice(booth.id, numericPrice);
+
+      // 2. Refresh / read back the configured value directly from server to verify persistence
+      const verifiedConfig = await boothsApi.getBoothConfig(booth.id);
+      setBoothConfig(verifiedConfig);
+      const verifiedPrice = verifiedConfig.pricing?.basePrice ?? verifiedConfig.price ?? numericPrice;
+      setPriceInput(verifiedPrice.toString());
+
       setPriceFeedback({
         type: 'success',
-        message: `✓ Tarif sesi berhasil diubah menjadi Rp ${numericPrice.toLocaleString('id-ID')}! Kiosk tersinkron via WebSocket.`,
+        message: `✓ Harga Dasar (Base Price) berhasil disimpan menjadi Rp ${verifiedPrice.toLocaleString('id-ID')} (v${verifiedConfig.configVersion || 1})! Terverifikasi dari database & tersinkron ke Kiosk via WebSocket.`,
       });
 
-      // Optimistically update detailedBooth state
-      setDetailedBooth((prev) => {
-        if (!prev) return prev;
-        let existingGeneral: any = {};
-        try {
-          if (prev.config?.generalSettings) {
-            existingGeneral = typeof prev.config.generalSettings === 'string'
-              ? JSON.parse(prev.config.generalSettings)
-              : prev.config.generalSettings;
-          }
-        } catch {}
-        existingGeneral.price = numericPrice;
-        return {
-          ...prev,
-          config: {
-            id: prev.config?.id || 'cfg-' + booth.id,
-            boothId: booth.id,
-            generalSettings: JSON.stringify(existingGeneral),
-            cameraSettings: prev.config?.cameraSettings || '{}',
-            printerSettings: prev.config?.printerSettings || '{}',
-          },
-        };
-      });
-
+      // 3. Refresh status and notify parent to refresh BoothsTable
+      await fetchStatus();
       if (onStatusUpdated) onStatusUpdated();
     } catch (err: any) {
       setPriceFeedback({
         type: 'error',
-        message: err.response?.data?.message || 'Gagal mengubah tarif harga sesi.',
+        message: err.response?.data?.message || err.message || 'Gagal mengubah harga dasar booth.',
       });
     } finally {
       setIsUpdatingPrice(false);
@@ -196,42 +222,47 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
           isLoading={isUpdating}
         />
 
-        {/* Pricing & Session Tariff Control */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5 space-y-4">
+        {/* Base Price / Harga Dasar Configuration */}
+        <div id="section-booth-base-price" className="rounded-2xl border border-amber-500/30 bg-slate-950/60 p-5 space-y-4 shadow-lg shadow-amber-500/5">
           <div className="flex items-center justify-between">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
               <Banknote className="w-4 h-4 text-amber-400" />
-              Tarif Sesi Foto (QRIS / Payment)
+              Base Price / Harga Dasar (Booth Configuration)
             </h4>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-              Live WebSocket Sync
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                v{boothConfig?.configVersion ?? getBoothConfigMeta(detailedBooth || booth, boothConfig).version}
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                Live WebSocket Sync
+              </span>
+            </div>
           </div>
 
           <p className="text-xs text-slate-400 leading-relaxed">
-            Nominal yang ditagihkan kepada pelanggan saat generate QRIS di layar kios. Perubahan tarif langsung tersinkron ke kios secara real-time tanpa restart.
+            Tarif dasar per sesi photobooth untuk booth ini. Perubahan harga dasar disimpan ke <code className="text-amber-300 font-mono text-[11px]">BoothConfig</code> server dan otomatis disinkronkan ke layar Kiosk secara real-time tanpa restart.
           </p>
 
           <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
             <div>
-              <p className="text-[11px] text-slate-400 font-medium">Harga Sesi Aktif Saat Ini</p>
-              <p className="text-xl font-mono font-black text-amber-300 mt-0.5 tracking-tight">
-                Rp {getBoothPrice(detailedBooth || booth).toLocaleString('id-ID')}
+              <p className="text-[11px] text-slate-400 font-medium">Harga Dasar Aktif (Source of Truth)</p>
+              <p className="text-2xl font-mono font-black text-amber-300 mt-0.5 tracking-tight">
+                Rp {getBoothPrice(detailedBooth || booth, boothConfig).toLocaleString('id-ID')}
               </p>
             </div>
             <div className="text-right">
-              <span className="text-[10px] text-slate-500 block uppercase font-mono font-semibold">Status Tarif</span>
+              <span className="text-[10px] text-slate-500 block uppercase font-mono font-semibold">Status Sync</span>
               <span className="text-xs font-bold text-emerald-400 flex items-center justify-end gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                ONLINE
+                ACTIVE
               </span>
             </div>
           </div>
 
           <form onSubmit={handleSavePrice} className="space-y-3 pt-1">
             <div>
-              <label className="text-[11px] font-semibold text-slate-300 block mb-1.5">
-                Ubah Nominal Tarif (IDR):
+              <label htmlFor="input-booth-base-price" className="text-[11px] font-semibold text-slate-300 block mb-1.5">
+                Ubah Base Price / Harga Dasar (IDR):
               </label>
               <div className="flex gap-2">
                 <div className="relative flex-1">
@@ -239,8 +270,10 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
                     Rp
                   </div>
                   <input
+                    id="input-booth-base-price"
+                    name="basePrice"
                     type="number"
-                    min="0"
+                    min="1"
                     step="500"
                     value={priceInput}
                     onChange={(e) => setPriceInput(e.target.value)}
@@ -249,8 +282,9 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
                   />
                 </div>
                 <button
+                  id="btn-save-base-price"
                   type="submit"
-                  disabled={isUpdatingPrice || !priceInput || Number(priceInput) < 0}
+                  disabled={isUpdatingPrice || !priceInput || Number(priceInput) <= 0}
                   className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-95 disabled:opacity-40 text-slate-950 text-xs font-extrabold transition flex items-center gap-2 shadow-lg shadow-amber-500/20 cursor-pointer"
                 >
                   {isUpdatingPrice ? (
@@ -258,7 +292,7 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
                   ) : (
                     <Banknote className="w-3.5 h-3.5" />
                   )}
-                  Simpan Tarif
+                  Simpan Harga Dasar
                 </button>
               </div>
             </div>
@@ -270,12 +304,13 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
                 { label: 'Rp 1.000 (Test)', value: 1000 },
                 { label: 'Rp 25.000', value: 25000 },
                 { label: 'Rp 30.000', value: 30000 },
-                { label: 'Rp 35.000 (Normal)', value: 35000 },
+                { label: 'Rp 35.000 (Default)', value: 35000 },
                 { label: 'Rp 50.000', value: 50000 },
               ].map((p) => (
                 <button
                   key={p.value}
                   type="button"
+                  id={`btn-preset-price-${p.value}`}
                   onClick={() => setPriceInput(p.value.toString())}
                   className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-medium transition cursor-pointer border ${
                     priceInput === p.value.toString()
@@ -290,6 +325,7 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
 
             {priceFeedback && (
               <div
+                id="feedback-booth-base-price"
                 className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${
                   priceFeedback.type === 'success'
                     ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
@@ -343,7 +379,7 @@ export const BoothDetailDrawer: React.FC<BoothDetailDrawerProps> = ({
               setPinFeedback(null);
               try {
                 await boothsApi.updateBoothPin(booth.id, newPin);
-                setPinFeedback({ type: 'success', message: '✓ PIN Teknisi berhasil diubah! Kiosk langsung tersinkron.' });
+                setPinFeedback({ type: 'success', message: '✓ PIN Teknisi berhasil diperbarui di database. Kiosk akan otomatis memperbarui PIN lokal saat teknisi login pertama kali secara online.' });
                 setNewPin('');
               } catch (err: any) {
                 setPinFeedback({ type: 'error', message: err.response?.data?.message || 'Gagal memperbarui PIN teknisi' });

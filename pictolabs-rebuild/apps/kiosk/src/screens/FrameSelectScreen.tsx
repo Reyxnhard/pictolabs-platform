@@ -61,7 +61,7 @@ export default function FrameSelectScreen({ navigate, updateSession }: ScreenPro
             className="font-black font-mono text-xl"
             style={{ color: themeColor }}
           >
-            Rp {(config.price || 35000).toLocaleString('id-ID')}
+            Rp {(config.pricing?.basePrice ?? config.price ?? 35000).toLocaleString('id-ID')}
           </span>
         </div>
       </div>

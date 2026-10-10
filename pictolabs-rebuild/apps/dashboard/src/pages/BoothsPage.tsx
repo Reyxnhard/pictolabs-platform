@@ -43,15 +43,27 @@ export const BoothsPage: React.FC = () => {
 
   useEffect(() => {
     fetchBooths();
+    const interval = setInterval(fetchBooths, 10000);
+    return () => clearInterval(interval);
   }, [fetchBooths, updatesCount]);
+
+  const getEffectiveBoothStatus = (b: Booth) => {
+    if (b.isMaintenance) return 'MAINTENANCE';
+    if (!b.lastSeen) return 'OFFLINE';
+    const seconds = Math.max(0, Math.floor((Date.now() - new Date(b.lastSeen).getTime()) / 1000));
+    if (seconds < 60) return 'ONLINE';
+    if (seconds < 300) return 'DEGRADED';
+    return 'OFFLINE';
+  };
 
   // Tab Filtering
   const filteredByTab = booths.filter((b) => {
+    const eff = getEffectiveBoothStatus(b);
     if (statusParam === 'ALL') return true;
-    if (statusParam === 'MAINTENANCE') return b.isMaintenance || b.status === 'MAINTENANCE';
-    if (statusParam === 'ONLINE') return b.status === 'ONLINE' && !b.isMaintenance;
-    if (statusParam === 'DEGRADED') return b.status === 'DEGRADED' && !b.isMaintenance;
-    if (statusParam === 'OFFLINE') return b.status === 'OFFLINE' && !b.isMaintenance;
+    if (statusParam === 'MAINTENANCE') return b.isMaintenance || eff === 'MAINTENANCE';
+    if (statusParam === 'ONLINE') return eff === 'ONLINE' && !b.isMaintenance;
+    if (statusParam === 'DEGRADED') return eff === 'DEGRADED' && !b.isMaintenance;
+    if (statusParam === 'OFFLINE') return eff === 'OFFLINE' && !b.isMaintenance;
     return true;
   });
 
@@ -69,10 +81,10 @@ export const BoothsPage: React.FC = () => {
 
   const tabs = [
     { id: 'ALL', label: 'All Booths', count: booths.length },
-    { id: 'ONLINE', label: 'Online', count: booths.filter((b) => b.status === 'ONLINE' && !b.isMaintenance).length },
-    { id: 'DEGRADED', label: 'Degraded', count: booths.filter((b) => b.status === 'DEGRADED' && !b.isMaintenance).length },
-    { id: 'OFFLINE', label: 'Offline', count: booths.filter((b) => b.status === 'OFFLINE' && !b.isMaintenance).length },
-    { id: 'MAINTENANCE', label: 'Maintenance', count: booths.filter((b) => b.isMaintenance || b.status === 'MAINTENANCE').length },
+    { id: 'ONLINE', label: 'Online', count: booths.filter((b) => getEffectiveBoothStatus(b) === 'ONLINE' && !b.isMaintenance).length },
+    { id: 'DEGRADED', label: 'Degraded', count: booths.filter((b) => getEffectiveBoothStatus(b) === 'DEGRADED' && !b.isMaintenance).length },
+    { id: 'OFFLINE', label: 'Offline', count: booths.filter((b) => getEffectiveBoothStatus(b) === 'OFFLINE' && !b.isMaintenance).length },
+    { id: 'MAINTENANCE', label: 'Maintenance', count: booths.filter((b) => b.isMaintenance || getEffectiveBoothStatus(b) === 'MAINTENANCE').length },
   ];
 
   return (

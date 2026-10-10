@@ -213,6 +213,7 @@ export interface KioskSessionAPI {
 
 export interface KioskConfigAPI {
   get(): Promise<Record<string, unknown>>;
+  reconcile?(): Promise<Record<string, unknown>>;
   set(partial: Record<string, unknown>): Promise<void>;
   onConfigUpdated(cb: (config: any) => void): () => void;
 }
@@ -678,6 +679,9 @@ const mockConfig: KioskConfigAPI = {
   async get() {
     const stored = localStorage.getItem('pictolabs-config');
     return stored ? JSON.parse(stored) : {};
+  },
+  async reconcile() {
+    return this.get();
   },
   async set(partial) {
     const existing = await this.get();

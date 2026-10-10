@@ -23,8 +23,11 @@ const FILTER_STYLES: Record<string, string> = {
 };
 
 export default function QRScreen({ navigate, session, resetSession }: ScreenProps) {
-  // Countdown 1 menit (60 detik) sesuai permintaan pengguna
-  const [countdown, setCountdown] = useState(60);
+  const { config } = useKioskConfig();
+  const qrTimeoutSec = config.timing?.qrTimeoutSec ?? 60;
+
+  // Countdown timer (default 60s, configurable via booth config envelope)
+  const [countdown, setCountdown] = useState(qrTimeoutSec);
   const [qrSrc, setQrSrc] = useState<string>('');
   const [activeUrl, setActiveUrl] = useState<string>('');
   const [isUploaded, setIsUploaded] = useState(false);
@@ -40,8 +43,6 @@ export default function QRScreen({ navigate, session, resetSession }: ScreenProp
 
   // Pre-loaded Video Data URLs for ALL poses (0, 1, 2) to play simultaneously without interaction
   const [videoDataUrls, setVideoDataUrls] = useState<Record<number, string>>({});
-
-  const { config } = useKioskConfig();
 
   const themeColor = config.themeColor || '#3b82f6';
   const apiBase = config.apiBaseUrl || 'http://localhost:4000';

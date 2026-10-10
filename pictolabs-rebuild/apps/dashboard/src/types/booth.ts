@@ -54,6 +54,8 @@ export interface BoothConfig {
   cameraSettings?: string;
   printerSettings?: string;
   generalSettings?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Booth {

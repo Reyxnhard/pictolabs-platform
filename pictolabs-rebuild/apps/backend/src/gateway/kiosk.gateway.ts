@@ -141,19 +141,30 @@ export class KioskGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return { status: 'ok', pushed: true };
   }
 
+  @SubscribeMessage('join_room')
+  handleJoinRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { room?: string },
+  ) {
+    if (payload?.room === 'dashboards') {
+      client.join('dashboards');
+      this.logger.log(`[WebSocket] Client joined dashboards room via join_room: ${client.id}`);
+    }
+    return { status: 'ok', joined: payload?.room };
+  }
+
   // --- Push Methods ---
 
   /**
-   * Pushes a config update to all kiosks or a specific booth
+   * Pushes a config update strictly to a specific booth room (per-booth isolation)
    */
   async pushConfigUpdate(boothId: string | undefined, config: any) {
     if (!boothId || boothId === 'all') {
-      this.server.emit('CONFIG_UPDATE', config);
-      this.logger.log(`[WebSocket] Broadcasted CONFIG_UPDATE to all live booths`);
-    } else {
-      this.server.to(`booth:${boothId}`).emit('CONFIG_UPDATE', config);
-      this.logger.log(`[WebSocket] Pushed CONFIG_UPDATE to booth: ${boothId}`);
+      this.logger.warn(`[WebSocket] Global broadcast pushConfigUpdate is disabled to enforce per-booth isolation`);
+      return;
     }
+    this.server.to(`booth:${boothId}`).emit('CONFIG_UPDATE', config);
+    this.logger.log(`[WebSocket] Pushed CONFIG_UPDATE to booth: ${boothId}`);
   }
 
   /**

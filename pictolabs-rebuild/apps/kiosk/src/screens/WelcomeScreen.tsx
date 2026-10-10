@@ -59,6 +59,17 @@ export default function WelcomeScreen({ navigate, resetSession, onOpenAdmin }: S
     return localStorage.getItem('pictolabs-bypass-printer') !== 'false';
   });
 
+  // Identity & Pairing Gate (Failure C Fix)
+  const [isPaired, setIsPaired] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    kiosk.identity?.getStatus?.().then((status) => {
+      setIsPaired(status ? Boolean(status.isPaired) : false);
+    }).catch(() => {
+      setIsPaired(true);
+    });
+  }, []);
+
   const isPaperDepleted = Boolean(paperStatus && paperStatus.isLockedOut);
   const isHardwareError = Boolean(hardwareStatus && !hardwareStatus.ready);
   const isHealthError = Boolean(printerHealth && !printerHealth.ready);
@@ -66,6 +77,11 @@ export default function WelcomeScreen({ navigate, resetSession, onOpenAdmin }: S
   const isPrinterReady = bypassPrinter || (!isPaperDepleted && !isHardwareError && !isHealthError);
 
   const handleStart = () => {
+    if (isPaired === false) {
+      console.warn('[WelcomeScreen] Start blocked: Kiosk is unpaired. Navigating to activation screen.');
+      navigate('activation');
+      return;
+    }
     if (!isPrinterReady) {
       console.warn('[WelcomeScreen] Start blocked: Printer is not ready or paper roll depleted');
       return;
@@ -109,6 +125,34 @@ export default function WelcomeScreen({ navigate, resetSession, onOpenAdmin }: S
           backgroundSize: '8px 8px',
         }}
       />
+
+      {/* Kiosk Activation Warning Banner (Failure C Gate) */}
+      {isPaired === false && (
+        <div className="absolute top-8 left-1/2 -translate-x-1/2 z-40 max-w-xl w-full px-6 animate-slide-up pointer-events-auto">
+          <div className="bg-amber-950/95 text-amber-100 border-2 border-amber-500 p-4 rounded-3xl shadow-2xl backdrop-blur-md flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-amber-800 text-amber-300 flex items-center justify-center flex-shrink-0">
+                <Shield className="w-6 h-6 text-amber-300 animate-pulse" />
+              </div>
+              <div className="text-left">
+                <h4 className="font-bold text-xs text-white uppercase tracking-wider">UNIT KIOSK BELUM DIAKTIVASI</h4>
+                <p className="text-[11px] text-amber-200">Perangkat belum terhubung ke armada booth cloud.</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              id="btn-welcome-activate-kiosk"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate('activation');
+              }}
+              className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-black text-xs transition-all shadow-lg cursor-pointer whitespace-nowrap"
+            >
+              🔑 Aktivasi Booth
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Printer Health Maintenance Banner (Hardware Gate) */}
       {!isPrinterReady && (
