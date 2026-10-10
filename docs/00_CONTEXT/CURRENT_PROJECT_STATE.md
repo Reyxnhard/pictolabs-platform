@@ -10,9 +10,9 @@
 
 ## 1. Executive Summary & Master Timeline Synchronization
 
-### Current Platform Stage: **Pilot Hardening**
-### Current Active Gate: **Formal Printer RCA-7 Release Closure (`RELEASE_CLOSURE_PENDING`)**
-### Next Technical Workstream: **Camera Reliability RCA (`CAMERA-01`)**
+### Current Platform Stage: **Pilot Hardening / Pilot Readiness**
+### Current Active Gate: **Phase B — PR-02 Printer Profiles & Calibration Planning**
+### Next Technical Workstream: **Camera Reliability RCA (`CAMERA-01`) & PR-02 Calibration Audit**
 
 The completion status of the Pictolabs platform reflects strict source-code reality and physical hardware UAT sign-offs across `apps/backend`, `apps/kiosk`, `apps/dashboard`, and `packages/shared`. Outdated documentation claims, planning artifacts, and aspirational roadmaps were reconciled against the authoritative [`docs/00_CONTEXT/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/00_CONTEXT/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md).
 
@@ -23,6 +23,8 @@ The completion status of the Pictolabs platform reflects strict source-code real
 │ Subsystem / Component      │ Current Canonical Status    │ Governance Note        │
 ├────────────────────────────┼─────────────────────────────┼────────────────────────┤
 │ Architecture / Foundation  │ CLOSED                      │ Monorepo & DB verified │
+│ PR-01 Booth Configuration  │ CLOSED (Conditional Ex.)    │ Founder UAT PASS (non-pmt)│
+│ PR-02 Printer Profiles     │ OPEN (PLANNING PHASE)       │ Coordinate & bleed audit│
 │ P0 Admin Panel & Security  │ CLOSED                      │ Offline hash PIN PASS  │
 │ Session History (Kiosk P1-2) CLOSED                      │ Founder UAT PASS       │
 │ Printer Execution (RCA-7)  │ PHYSICAL_REGRESSION_PASS    │ Founder UAT PASS (10/10)│
@@ -32,17 +34,17 @@ The completion status of the Pictolabs platform reflects strict source-code real
 │ Cloudflare R2 Storage Core │ PRODUCTION_VERIFIED         │ S3 presigned PUT active│
 │ Upload Outage Reliability  │ CLOSED                      │ Founder UAT PASS (S1-S6)│
 │ Startup Freeze Fix         │ CLOSED                      │ Founder UAT PASS (<2s) │
-│ Midtrans Dynamic QRIS Core │ AUTOMATED_VERIFIED (Sandbox)│ Webhook & auto-advance │
+│ Midtrans Dynamic QRIS Core │ BLOCKED (Sandbox 402)       │ Awaiting Midtrans Support│
 │ Midtrans Merchant Account  │ NOT_STARTED                 │ Production credentials │
 │ Offline Payment Bypass     │ CLOSED / VERIFIED           │ 6-digit PIN bypass PASS│
 │ Dashboard Session History  │ NOT_STARTED                 │ Phase 3 fleet archive  │
 │ Remote Edge Reprint        │ NOT_STARTED                 │ WebSocket edge command │
 │ Restart Recovery Engine    │ NOT_STARTED                 │ Post-camera hardening  │
 │ Full Customer Regression   │ PENDING                     │ End-to-end journey gate│
-│ Founder Pilot Hardware UAT │ PASS (Upload & Startup)     │ Booth #1 verified      │
+│ Founder Pilot Hardware UAT │ PASS (Upload, Startup, Sync)│ Booth #1 verified      │
 │ Production Installer Build │ PACKAGED                    │ NSIS Setup 1.0.0.exe   │
 │ Production VPS Deployment  │ PENDING (HELD)              │ Docker deploy + smoke  │
-│ Pilot Booth #1 Launch      │ NOT_READY                   │ Hardening in progress  │
+│ Pilot Booth #1 Launch      │ NOT_READY (BLOCKED)         │ PR-02..08 & QRIS held  │
 └────────────────────────────┴─────────────────────────────┴────────────────────────┘
 ```
 
@@ -53,7 +55,7 @@ The completion status of the Pictolabs platform reflects strict source-code real
 4. **Startup Freeze Elimination**: Unconditional `localhost:3030` navigation replaced by direct bundle loading (`loadFile`), asynchronous native printer enumeration via Electron `getPrintersAsync()` (<15ms), and 3s deferred monitor check is **CLOSED** (Cold launch < 2s, zero "Not Responding" freeze, Founder Physical UAT 8/8 PASS).
 5. **Camera Source Synchronization Bug**: When Canon LiveView is delayed, webcam preview engages for countdown framing, but the capture trigger unconditionally actuates the Canon DSLR lens (`CaptureScreen.tsx:450-462`). This is an `OPEN` reliability defect requiring `CAMERA-01 RCA`.
 6. **Session History Center Boundary**: Kiosk Phase 1–2 (local SQLite, gallery, reprint 1x/2x with 4s debounce, double-tap protection, offline history, force-upload) is `CLOSED`. Web Dashboard Phase 3 and Remote Edge Reprint are `NOT_STARTED`.
-7. **Payment Production Boundary**: Sandbox QRIS and offline PIN bypass are verified. Production merchant approval and live banking network verification remain `NOT_STARTED`.
+7. **Payment Production Boundary & QRIS Blocker**: Offline PIN bypass is verified. Live Midtrans Dynamic QRIS Sandbox Settlement is decoupled from PR-01 and blocked on Midtrans error 402 ("Payment channel is not activated"), awaiting Midtrans Support channel provisioning. Production merchant approval and live banking network verification remain `NOT_STARTED`. Pilot Booth #1 remains `NOT_READY / BLOCKED`.
 8. **Multi-Device Identity Transition**: Phase 3.3 implemented `Device` and `ActivationToken` models, but legacy routes (`storage.controller.ts:73`, `sessions.controller.ts:115`, `auth.service.ts:65`, `booth-secret.guard.ts:18`) still query `booth.deviceSecret` directly.
 
 ---

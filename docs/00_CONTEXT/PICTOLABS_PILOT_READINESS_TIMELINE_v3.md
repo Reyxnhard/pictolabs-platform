@@ -2,13 +2,14 @@
 
 **Purpose:** master continuity timeline untuk menjaga roadmap historis, status aktual, execution order, dan release gates Pictolabs tetap konsisten ketika proyek berpindah chat.
 
-**Version:** Master Timeline v3.1  
-**Updated:** 6 October 2026  
+**Version:** Master Timeline v3.2  
+**Updated:** 8 October 2026  
 
-**Current stage:** Pilot Hardening  
-**Current active phase:** Phase 1 — Formal Printer RCA-7 Release Closure (Transition to Phase 2 — Camera Reliability)  
-**Current gate:** Formal Printer RCA-7 Release Closure (Production Build → Commit → Push → VPS Deploy → VPS Smoke Test)  
-**Pilot target:** 1 booth → operational proof → scale 5–10 booths
+**Current stage:** PILOT HARDENING / PILOT READINESS  
+**Current active phase:** Phase B — PR-02 Printer Profiles & Calibration (Planning & Calibration Audit)  
+**Current gate:** PILOT READINESS FEATURE GAP CLOSURE  
+**Pilot target:** 1 booth (Booth #1) → operational proof → scale 5–10 booths  
+**Pilot Booth #1 Status:** NOT READY (Pending Pilot Readiness Gates PR-02 through PR-08, and Payment Gateway Settlement Gate)  
 
 ---
 
@@ -102,8 +103,8 @@ Roadmap ini dipertahankan sebagai baseline historis. Status di bawah adalah stat
 
 | Priority | Original item | Current status | Notes |
 |---|---|---|---|
-| P1 | Printer offline during session handling | **FOUNDER_UAT_PASS → RELEASE_CLOSURE_PENDING** | RCA-7 simplification implemented, 49/49 automated tests passed, Founder Physical UAT passed on Booth #1 hardware with zero duplicate prints. Remaining gate: production build, release commit, push, VPS deploy, and smoke test. |
-| P1 | Upload queue monitoring | **AUTOMATED_VERIFIED / FOUNDER_UAT_PASS (Targeted) → PRODUCTION_REGRESSION_PENDING** | Automatic upload, Force Upload, SQLite queue recovery, and Session History correlation verified PASS by Founder. Dedicated internet-outage reliability scenario remains to be run. |
+| P1 | Printer offline during session handling | **CLOSED** | RCA-7 simplification implemented, 49/49 automated tests passed, Founder Physical UAT passed on Booth #1 hardware (10/10 PASS) with zero duplicate prints, Physical Regression PASS during startup UAT, committed (`353f79bd8b1f71213ca8302726976d199ba8270e`), pushed to `origin/main`, deployed to VPS (`43.156.39.26`), and verified by production smoke test. |
+| P1 | Upload queue monitoring & outage reliability | **CLOSED** | Two-tier store-and-forward SQLite WAL upload engine with automatic re-arm, background GIF enqueueing, idempotent backend Photo ledger deduplication, Founder Physical UAT passed (S1–S6 PASS), committed (`353f79bd8b1f71213ca8302726976d199ba8270e`), pushed, deployed to VPS, and verified by production smoke test. |
 | P1 | Session history + reprint center | **CLOSED** | Kiosk Phase 1–2: History, detail, reprint 1x/2x with debounce, double-tap protection, offline history, offline HOT reprint, automatic upload, and Force Upload verified PASS by Founder. Web Dashboard Phase 3 remains `NOT_STARTED`. |
 | P1 | Real Midtrans Sandbox | **AUTOMATED_VERIFIED (Sandbox) / NOT_STARTED (Production Merchant)** | Functional payment flow & sandbox webhook verified; production merchant approval and live banking E2E settlement remain open. |
 
@@ -111,7 +112,8 @@ Roadmap ini dipertahankan sebagai baseline historis. Status di bawah adalah stat
 
 | Priority | Original item | Current status | Notes |
 |---|---|---|---|
-| P2 | Camera Device Selector | **NOT_STARTED** | Multi-camera selection per booth planned for operator UI. |
+| P2 | Startup Freeze Elimination | **CLOSED** | Direct `loadFile` bundle loading, asynchronous native `EnumPrinters` (<15ms), and 3s deferred printer hardware monitoring eliminate "Not Responding" freeze (<2s cold launch). Founder Physical UAT passed (8/8 PASS), committed (`353f79bd8b1f71213ca8302726976d199ba8270e`), pushed, deployed to VPS, and smoke tested. |
+| P2 | Camera Device Selector | **NOT_STARTED** | Multi-camera selection per booth planned for operator UI (PR-03). |
 | P2 | Webcam Live Preview | **AUTOMATED_VERIFIED (Fallback Core) / DEFERRED (Consistency Fix)** | WebRTC fallback functions, but preview/countdown source ↔ capture source consistency requires RCA-01 fix. |
 | P2 | Camera Settings | **NOT_STARTED** | ISO, shutter, aperture, WB, exposure compensation capability model planned. |
 | P2 | DSLR / Mirrorless / Webcam Support | **NOT_STARTED (Device Abstraction Model)** | Architecture & capability model planned; no code changes until RCA-01. |
@@ -390,9 +392,9 @@ This is invalid for the DNP DS-RX1.
 
 ---
 
-# 10. Printer Execution Simplification / RCA-7 — IMPLEMENTED & FOUNDER_UAT_PASS
+# 10. Printer Execution Simplification / RCA-7 — CLOSED
 
-RCA-7 simplification is fully **IMPLEMENTED**, **AUTOMATED_VERIFIED** (49/49 PASS across test suites), and has achieved **FOUNDER_UAT_PASS** on physical Booth #1 hardware. Current status is **RELEASE_CLOSURE_PENDING**.
+RCA-7 simplification is fully **IMPLEMENTED**, **AUTOMATED_VERIFIED** (49/49 PASS across test suites), **FOUNDER_UAT_PASS** on physical Booth #1 hardware, committed (`353f79bd8b1f71213ca8302726976d199ba8270e`), pushed to `origin/main`, deployed to VPS (`43.156.39.26`), and verified by production smoke test. Current status is **CLOSED**.
 
 ### Confirmed V2 root cause discovered during UAT
 
@@ -442,21 +444,22 @@ RCA-7 Founder Physical UAT is **FOUNDER_UAT_PASS**. Confirmed on physical hardwa
 - **Admin Reprint (1x / 2x with 4,000ms debounce):** PASS.
 - **Watchdog / Delayed Previous-Session Scenario:** PASS (no phantom duplicates).
 - **Duplicate Physical Print Protection:** PASS (duplicate reprint bug completely eradicated).
+- **Physical Regression Verification:** PASS (during Startup UAT on Booth #1).
 
 Important semantic decision:
 - `COMPLETED` in the simplified execution boundary means **Print Dispatch / Windows Spooler Accepted**, not guaranteed physical mechanical completion.
 - A pending queue that prints once after the printer returns is expected behavior.
 - A physical print followed by application retry that creates a second physical print remains a critical bug.
 
-### Current Release State: FOUNDER_UAT_PASS → RELEASE_CLOSURE_PENDING
+### Current Release State: CLOSED
 
-Formal closure requirements:
-- Production installer packaging
-- Clean commit
-- Push GitHub
-- Production VPS deploy
-- VPS smoke test
-- Formal sign-off → **CLOSED**
+Formal closure completed on 8 October 2026:
+- Production installer packaging: PASS (`Pictolabs Setup 1.0.0.exe`)
+- Clean release commit: PASS (`353f79bd8b1f71213ca8302726976d199ba8270e`)
+- Push to origin/main: PASS
+- Production VPS deploy: PASS (`43.156.39.26`, Docker fleet healthy)
+- VPS smoke test: PASS (`/api/health`, `/api/storage/health`, R2 storage)
+- Formal sign-off: **CLOSED**
 
 ---
 
@@ -520,31 +523,27 @@ When multi-printer support is implemented, printer adapters/profiles should defi
 
 This feature belongs to the **future fleet/configuration roadmap**, not the current Printer Failure Handling V2 closure gate.
 
-# 11. P1 Printer Closure Gate
+# 11. P1 Printer Closure Gate — CLOSED
 
-RCA-7 is now **FOUNDER_UAT_PASS**, but the workstream is not formally closed until the release closure gate is completed:
+RCA-7 formal release closure protocol completed and verified:
 
 ```text
 RCA / design audit        PASS
 Implementation            PASS
-Automated regression      PASS
-Production build          PASS
-Founder Physical UAT      PASS
-        ↓ (CURRENT POSITION: RELEASE_CLOSURE_PENDING)
-Production packaging
-        ↓
-Clean commit
-        ↓
-Push GitHub
-        ↓
-Deploy VPS
-        ↓
-VPS smoke test
+Automated regression      PASS (49/49)
+Production build          PASS (TypeScript, Vite, NSIS Setup 1.0.0.exe)
+Founder Physical UAT      PASS (10/10 scenarios on Booth #1)
+Physical Regression       PASS (Verified during Startup UAT on Booth #1)
+Production packaging      PASS
+Clean commit              PASS (353f79bd8b1f71213ca8302726976d199ba8270e)
+Push GitHub               PASS (origin/main)
+Deploy VPS                PASS (43.156.39.26)
+VPS smoke test            PASS (API health, R2 storage, Admin dashboard)
         ↓
 CLOSED
 ```
 
-The future Admin Printer Selection / Multi-Printer feature is **not required** to close the current printer failure-handling phase.
+The future Admin Printer Selection / Multi-Printer feature (PR-02) belongs to the newly opened Pilot Readiness scope and is decoupled from this closed reliability fix.
 
 # 12. Camera Management & Reliability — ACTIVE HARDENING WORKSTREAM (NEXT)
 
@@ -680,20 +679,20 @@ Correctness takes priority over latency optimization.
 
 # 14. Current / Upcoming Pilot Hardening Timeline
 
-## Phase 1 — Formal Printer RCA-7 Release Closure
-**CURRENT RELEASE GATE (`RELEASE_CLOSURE_PENDING`)**
+## Phase 1 — Formal Printer RCA-7 Release Closure — CLOSED
+**RELEASED & VERIFIED (`CLOSED`)**
 
 ```text
-Founder UAT PASS
-→ production packaging
-→ clean commit
-→ push GitHub
-→ deploy VPS
-→ VPS smoke
+Founder UAT PASS (10/10 on Booth #1)
+→ production packaging (PASS)
+→ clean commit (353f79bd8b1f71213ca8302726976d199ba8270e)
+→ push GitHub (PASS)
+→ deploy VPS (PASS)
+→ VPS smoke (PASS)
 → CLOSED
 ```
 
-No new printer redesign unless new evidence appears.
+Physical regression verified during Startup UAT on Booth #1 hardware.
 
 ## Phase 2 — Camera Reliability RCA & Hardening
 **NEXT MAJOR TECHNICAL WORKSTREAM (`OPEN`)**
@@ -722,26 +721,30 @@ After RCA approval:
 
 Each feature must pass automated/build/runtime/Founder UAT gates.
 
-## Phase 4 — Upload / Internet Production Reliability (`OPEN`)
-Targeted upload UAT passed, but the complete internet-outage reliability scenario remains open:
+## Phase 4 — Upload / Internet Outage Reliability — CLOSED
+**RELEASED & VERIFIED (`CLOSED`)**
 
-```text
-Internet OFF
-→ local capture
-→ pending upload
-→ Internet returns
-→ automatic retry
-→ R2
-→ completed
-```
+Two-tier store-and-forward SQLite WAL upload engine, automatic network restoration re-arm, background GIF enqueueing, and idempotent backend Photo ledger deduplication are fully verified:
+- Automated test suite: 47/47 PASS
+- Founder Physical UAT: 6/6 scenarios PASS (S1 offline capture, S2 re-connect auto-drain, S3 force upload, S4 session correlation, S5 photo integrity, S6 GIF delivery)
+- Release commit: `353f79bd8b1f71213ca8302726976d199ba8270e`
+- Push to origin/main: PASS
+- VPS deploy: PASS (`43.156.39.26`)
+- Production smoke test: PASS (`/api/storage/health`, R2 storage)
+- Status: **CLOSED**
 
-Also validate:
-- Force Upload
-- duplicate prevention
-- upload failure recovery
-- Session History correlation
-- retention rules
-- production R2 lifecycle/configuration
+## Phase 4A — Startup Freeze Elimination — CLOSED
+**RELEASED & VERIFIED (`CLOSED`)**
+
+Direct `loadFile` bundle loading, asynchronous native `EnumPrinters` (<15ms), and 3s deferred printer hardware monitoring eliminate "Not Responding" freeze (<2s cold launch):
+- Primary root cause (unconditional localhost:3030 navigation stall ~5.27s): RESOLVED
+- Secondary root cause (synchronous PowerShell Get-Printer blocking main thread ~547-566ms): RESOLVED
+- Tertiary contention (PowerShell/WMI concurrent hardware query contention): RESOLVED
+- Founder Physical UAT: 8/8 checks PASS (Cold launch <2s, zero freeze, DS-RX1 detection, Hardware Gate, customer print, admin reprint, post-startup monitor)
+- Release commit: `353f79bd8b1f71213ca8302726976d199ba8270e`
+- Push to origin/main: PASS
+- VPS deploy: PASS (`43.156.39.26`)
+- Status: **CLOSED**
 
 ## Phase 5 — Real Midtrans Verification (`OPEN`)
 Separate functional implementation from production readiness:
@@ -852,31 +855,200 @@ GitHub
 → smoke test
 ```
 
-## Phase 13 — Physical Pilot Booth #1
+## Phase 13 — Physical Pilot Booth #1 Gate — NOT READY
 
-Only after all Pilot Critical gates pass:
+The reliability release batch has successfully concluded:
 
 ```text
-P0 blockers CLOSED
-Session History Phase 1–2 CLOSED
-Printer RCA-7 CLOSED
-Camera Reliability CLOSED
-Upload Reliability CLOSED
-Payment Production Gate CLOSED
-Restart Recovery CLOSED
-Full Regression PASS
-Founder Pilot UAT PASS
-Production Build PASS
-GitHub Release PASS
-VPS Deploy PASS
-VPS Smoke PASS
+P0 blockers:                     CLOSED
+Session History Phase 1–2:       CLOSED
+Printer RCA-7:                   CLOSED (Founder UAT PASS 10/10)
+Upload Outage Reliability:       CLOSED (Founder UAT PASS S1–S6)
+Startup Freeze Elimination:      CLOSED (Founder UAT PASS 8/8)
+Production Build:                PASS (NSIS Setup 1.0.0.exe, Docker prod)
+Git Release:                     PASS (Commit 353f79bd8b1f71213ca8302726976d199ba8270e)
+VPS Deploy:                      PASS (43.156.39.26)
+VPS Smoke Test:                  PASS (/api/health, /api/storage/health, R2)
+        ↓
+Reliability Release Batch:       CLOSED
 ```
 
-Then:
+**Critical Operational Reality:**  
+Deployment of the reliability batch does **NOT** mean Pictolabs is field/event ready. Booth #1 remains **NOT READY** until all newly authorized Pilot Readiness feature gates (PR-01 through PR-08) are designed, implemented, tested, and validated by Founder Physical UAT.
 
-> PILOT BOOTH #1 READY
+---
 
-# 15. Post-Pilot Scaling
+# 15. PILOT READINESS — NEW REQUIREMENTS
+
+**Current stage:** PILOT HARDENING / PILOT READINESS  
+**Current gate:** PILOT READINESS FEATURE GAP CLOSURE  
+**Pilot Booth #1 Status:** NOT READY  
+
+Founder directives have established mandatory feature requirements for Booth #1 field and event operations. The preceding reliability batch is closed, but field deployment is held pending completion of these gates.
+
+## Pilot Readiness Gates
+
+### PR-01 — Booth Configuration Foundation
+- **Objective:** Establish a robust device/booth-specific configuration foundation supporting diverse hardware per booth (camera, printer, peripherals, timers) without monolithic global assumptions that all booths are identical.
+- **Current status:** CLOSED (Conditional on Live QRIS Exception)
+- **Existing foundation:** Database `booths` model, `ActivationToken`, `Device` schema, local `identity.json` in kiosk (`IdentityService.ts`), WebSocket gateway, and canonical `BoothConfig.generalSettings` envelope.
+- **Delivered scope:** Canonical `BoothConfigEnvelope` schema (`pricing`, `timing`, `hardware`, `frames`, `system`), version monotonicity, atomic local cache hydration (`kiosk-config.json`), dual auth guard (`BoothConfigAuthGuard`), Admin Dashboard pricing controls, and financial integrity validation.
+- **Dependencies:** Core backend database and device identity handshake.
+- **Acceptance criteria:** Each booth loads its unique hardware profile; modifying configuration on Booth A does not mutate Booth B; kiosk bootstraps successfully with device-specific parameters.
+- **Founder UAT required:** YES
+- **Implementation status:** CLOSED
+- **Test status:** 22/22 AUTOMATED TESTS PASSED (`scripts/test_pr01_booth_config_foundation.mjs`)
+- **UAT status:** FOUNDER UAT PASSED (Non-Payment Configuration & Hydration)
+- **Release status:** CLOSED_WITH_EXCEPTION (Formally closed on 2026-10-10 with documented exception: Live Midtrans Dynamic QRIS Sandbox Settlement is decoupled and tracked as an external blocker under Payment Workstream / Pilot-Wide Release Gate due to Midtrans 402 Channel Activation restriction)
+
+### PR-02 — Printer Profiles & Calibration
+- **Objective:** Support printer/media profiles (2R photostrips and 4R postcards), bleed calibration, X/Y offset, scale/crop, and a test print calibration workflow to eliminate white edge defects and misaligned cuts after paper/media roll changes.
+- **Current status:** OPEN (PLANNING PHASE / AUDIT ONLY — ZERO PREMATURE CODING)
+- **Existing foundation:** DNP DS-RX1 GDI execution via native `print.exe`, `PhotolabDNP.exe` telemetry, `PrintService.ts`, GDI rendering pipeline, and PR-01 `hardware.printerProfileId` schema.
+- **Missing scope:** Codebase investigation of render/print pipeline coordinate parameters; media profile data model (2R photostrip vs 4R postcard); configurable X/Y offset and bleed parameters; test print calibration pattern generator in Admin Panel; persistent storage of calibration values per booth.
+- **Dependencies:** PR-01 (Booth Configuration Foundation — CLOSED), Printer RCA-7 engine (`PrintService.ts` — CLOSED).
+- **Acceptance criteria:** Operator can select 2R or 4R profile; calibration test print prints reference alignment grid; X/Y offset and bleed adjustments eliminate white edges on physical prints; calibration persists across reboots.
+- **Founder UAT required:** YES
+- **Implementation status:** NOT_STARTED (Planning & Audit opened; implementation on hold)
+- **Test status:** NOT_STARTED
+- **UAT status:** NOT_STARTED
+- **Release status:** NOT_STARTED
+
+### PR-03 — Camera Selection & Configuration
+- **Objective:** Provide camera device selection (DSLR vs webcam) and camera configuration through Admin Panel per booth, ensuring preview camera and capture camera are strictly synchronized to eradicate the historical mismatch bug.
+- **Current status:** NEW / CAMERA WORKSTREAM TO OPEN
+- **Existing foundation:** Canon EDSDK v13.x native integration, WebRTC webcam fallback, `CameraService.ts`, and `CaptureScreen.tsx`.
+- **Missing scope:** Codebase investigation of current CameraService capabilities and IPC; camera device selector in Admin Panel; capability detection and configuration for supported settings (ISO, shutter speed, aperture, white balance, exposure compensation); preview ↔ capture sensor consistency enforcement so live preview, countdown framing, and capture trigger use the exact same sensor.
+- **Dependencies:** PR-01 (Booth Configuration Foundation), CAMERA-01 Reliability RCA.
+- **Acceptance criteria:** Operator selects active camera; countdown preview and final capture use the identical camera sensor; supported exposure settings persist per booth; zero camera source desynchronization.
+- **Founder UAT required:** YES
+- **Implementation status:** NOT_STARTED
+- **Test status:** NOT_STARTED
+- **UAT status:** NOT_STARTED
+- **Release status:** NOT_STARTED
+
+### PR-04 — Frame / Design Asset Management
+- **Objective:** Enable uploading, metadata configuration, activation/deactivation, and targeted per-booth assignment of photo frames via Dashboard, replacing hardcoded frame lists.
+- **Current status:** NEW / NOT STARTED
+- **Existing foundation:** `FrameDesignScreen.tsx` with preset design themes, local SVG/PNG rendering, R2 media storage pipeline.
+- **Missing scope:** Backend Frame model and CRUD API (`/api/frames`); Dashboard frame asset upload and assignment drawer; metadata schema for renderer; kiosk frame synchronization and local caching; dynamic rendering of assigned frames on kiosk.
+- **Dependencies:** PR-01 (Booth Configuration Foundation), Cloudflare R2 storage gateway.
+- **Acceptance criteria:** Admin uploads frame asset with metadata in Dashboard; frame is assigned specifically to Booth #1; Booth #1 automatically downloads and presents the frame; other booths without assignment do not display it.
+- **Founder UAT required:** YES
+- **Implementation status:** NOT_STARTED
+- **Test status:** NOT_STARTED
+- **UAT status:** NOT_STARTED
+- **Release status:** NOT_STARTED
+
+### PR-05 — Pricing & Print Quantity
+- **Objective:** Extend existing pricing functionality to support configurable per-booth tariff and multi-tier print quantity selection (e.g. 1 print = Rp X, 2 prints = Rp Y, 3 prints = Rp Z) impacting dynamic payment generation.
+- **Current status:** PARTIALLY EXISTING / NEEDS EXTENSION
+- **Existing foundation:** Dashboard `BoothDetailDrawer.tsx` single-session tariff configuration with live WebSocket sync to kiosk; `ProductSelectScreen.tsx` pricing badge.
+- **Missing scope:** Data model extension from scalar price to multi-tier quantity pricing model (`printQuantityPricing`); customer print quantity selector screen/component in kiosk flow before payment; dynamic QRIS nominal calculation matching selected quantity; print queue dispatching matching copy count.
+- **Dependencies:** PR-01 (Booth Configuration Foundation), existing `PaymentService` & `BoothDetailDrawer`.
+- **Acceptance criteria:** Dashboard manages quantity-based pricing per booth; customer selects desired print count (1, 2, or N); generated QRIS exactly matches tier price; printer produces requested quantity without duplicate charges.
+- **Founder UAT required:** YES
+- **Implementation status:** PARTIALLY_IMPLEMENTED (Scalar price exists; quantity tiers NOT_STARTED)
+- **Test status:** NOT_STARTED
+- **UAT status:** NOT_STARTED
+- **Release status:** NOT_STARTED
+
+### PR-06 — Session Timing Configuration
+- **Objective:** Provide configurable per-booth session timers for frame selection, session start countdown, and QR display page, editable via Dashboard without hardcoded timeouts.
+- **Current status:** NEW / NOT STARTED
+- **Existing foundation:** Hardcoded timer constants in kiosk screens (`PAYMENT_TIMEOUT`, capture countdown, QR screen auto-advance).
+- **Missing scope:** Timer configuration schema in booth model (frame selection timeout, session start countdown, QR page timeout); Dashboard input controls; kiosk dynamic timer hydration from booth configuration.
+- **Dependencies:** PR-01 (Booth Configuration Foundation).
+- **Acceptance criteria:** Dashboard sets custom timer durations per booth; kiosk honors configured timings across frame selection, countdown, and QR page; kiosk recovers cleanly to welcome screen upon expiration.
+- **Founder UAT required:** YES
+- **Implementation status:** NOT_STARTED
+- **Test status:** NOT_STARTED
+- **UAT status:** NOT_STARTED
+- **Release status:** NOT_STARTED
+
+### PR-07 — Upload Progress Visibility
+- **Objective:** Provide clear customer-facing upload progress on kiosk ("Foto sedang di-upload") to prevent false perception of QR/download failure, and Dashboard-side aggregate upload telemetry per booth.
+- **Current status:** NEW / OBSERVABILITY LAYER (Upload Reliability Engine is CLOSED)
+- **Existing foundation:** Two-tier SQLite WAL store-and-forward engine (`SyncEngine.ts`), `upload_queue` table, WebSocket gateway telemetry events.
+- **Missing scope:** Customer UI indicator/progress state on QRScreen while upload queue is draining; Dashboard real-time upload progress drawer showing percentage, status breakdown (completed / uploading / pending / failed), and session completion state.
+- **Dependencies:** SQLite WAL upload queue engine (`SyncEngine.ts`), WebSocket telemetry.
+- **Acceptance criteria:** Customer QRScreen visibly communicates upload in progress; customer does not assume download failed; Dashboard displays real-time per-booth upload progress and queue drain status.
+- **Founder UAT required:** YES
+- **Implementation status:** NOT_STARTED
+- **Test status:** NOT_STARTED
+- **UAT status:** NOT_STARTED
+- **Release status:** NOT_STARTED
+
+### PR-08 — Fullscreen Kiosk
+- **Objective:** Ensure kiosk application renders as a genuine responsive fullscreen experience matching actual kiosk display viewport and aspect ratio, removing square/boxed viewport letterboxing while preserving photo capture aspect ratios.
+- **Current status:** NEW / NOT STARTED
+- **Existing foundation:** Electron `main.ts` `BrowserWindow` creation, Tailwind layout classes.
+- **Missing scope:** Viewport and resolution audit on physical booth display; removal of fixed-width square wrappers (`w-[640px]`, etc.) across kiosk screens; fluid vertical/portrait layout refactoring that decouples screen aspect ratio from photo output aspect ratio.
+- **Dependencies:** Physical booth display resolution specification.
+- **Acceptance criteria:** Kiosk UI spans 100% of display viewport without artificial square boxes; typography and touch targets scale naturally; photo and frame aspect ratios remain undistorted.
+- **Founder UAT required:** YES
+- **Implementation status:** NOT_STARTED
+- **Test status:** NOT_STARTED
+- **UAT status:** NOT_STARTED
+- **Release status:** NOT_STARTED
+
+---
+
+# 16. LEAST / POST-CORE REQUIREMENTS
+
+### EXT-01 — Photolab Retro Filter Research
+- **Scope:** Research and investigative benchmarking:
+  - Is retro/vintage filter simply a color matrix or multi-stage image processing?
+  - Grain/noise simulation pipeline?
+  - Tone curve transformations?
+  - White balance and color grading presets?
+  - Vignette, bloom/glow, optical and texture effects?
+  - Preset renderer parameter architecture?
+- **Governance:** Founder specifically wants to understand why Photolab separates this as a distinct feature/filter category. Use available Photolab workspace/screen-recording/source material if present. Do not claim implementation details without evidence.
+- **Status:** `RESEARCH ONLY / NOT IMPLEMENTATION` (Strictly no premature coding).
+
+### EXT-02 — Event / Operator Mode
+- **Scope:** Future operator-controlled photobooth mode for attended events (start session, retake control, manual confirm).
+- **Conceptual Model:** Unified application with configurable Booth Mode (`SELF_SERVICE` vs `OPERATOR`), avoiding fork or separate application.
+- **Status:** `POST-CORE / NOT STARTED` (Deferred).
+
+### EXT-03 — Subdomain Migration
+- **Scope:** Domain routing re-architecture and subdomain renaming.
+- **Status:** `INFRASTRUCTURE / LOW PRIORITY / NOT BLOCKING PILOT CORE` (Deferred).
+
+---
+
+# 17. RECOMMENDED EXECUTION SEQUENCE
+
+The Pilot Readiness feature gap closure must proceed in strict phased order to respect architectural dependencies:
+
+```text
+Phase A: PR-01 Booth Configuration Foundation
+  ↓
+Phase B: PR-02 Printer Profiles & Calibration
+         PR-03 Camera Selection & Configuration
+  ↓
+Phase C: PR-04 Frame / Design Asset Management
+         PR-05 Pricing & Print Quantity
+         PR-06 Session Timing Configuration
+  ↓
+Phase D: PR-07 Upload Visibility
+         PR-08 Fullscreen Kiosk
+  ↓
+Phase E: Full Pilot Readiness Regression
+  ↓
+Founder Physical Pilot UAT (Booth #1)
+  ↓
+Production Build → Git Release → VPS Deploy → VPS Smoke Test
+  ↓
+PILOT BOOTH #1 READY
+```
+
+Only after all required Pilot Readiness gates (PR-01 through PR-08) pass Founder Physical UAT will Booth #1 be declared ready for event field operations.
+
+---
+
+# 18. Post-Pilot Scaling
 
 Only after Booth #1 has operational proof:
 
@@ -901,7 +1073,7 @@ Install kiosk
 
 ---
 
-# 16. Non-Blocking / Deferred Backlog
+# 19. Non-Blocking / Deferred Backlog
 
 - PRN-03 final classification
 - ~5s print-start latency investigation (observation, not a blocker)
@@ -913,54 +1085,60 @@ Install kiosk
 
 ---
 
-# 17. Current Snapshot
+# 20. Current Snapshot
 
 ```text
-Architecture / Foundation        CLOSED
-P0 Admin Panel & Security        CLOSED
-Session History Phase 1–2 (Kiosk) CLOSED
-
-Printer RCA-7 Implementation     AUTOMATED_VERIFIED
-Printer RCA-7 Physical UAT       FOUNDER_UAT_PASS
-Printer Subsystem Release        RELEASE_CLOSURE_PENDING
-
-Camera Core Architecture         AUTOMATED_VERIFIED
-Camera Reliability               OPEN (BLOCKED ON RCA)
-Camera Preview ↔ Capture Sync    OPEN (KNOWN BUG)
-Camera Device Selector           NOT_STARTED
-Camera Settings (ISO/Shutter)    NOT_STARTED
-DSLR/Mirrorless/Webcam Abstraction NOT_STARTED
-
-Upload Core Pipeline             PRODUCTION_VERIFIED (Cloudflare R2 Bucket)
-Upload Kiosk Direct Pipeline     AUTOMATED_VERIFIED
-Upload Production Outage Gate    OPEN (RELIABILITY SCENARIO PENDING)
-
-Midtrans Sandbox API             AUTOMATED_VERIFIED
-Midtrans Production Account      NOT_STARTED (MERCHANT ONBOARDING OPEN)
-Offline Payment Bypass           CLOSED / VERIFIED
-
-Dashboard Session History P3     NOT_STARTED
-Remote Edge Reprint Dispatch     NOT_STARTED
-Restart Recovery Engine          NOT_STARTED / NEXT AFTER CAMERA
-
-Full Customer Flow Regression    PENDING
-Founder Pilot UAT                PENDING
-Production Installer Packaging   PENDING
-VPS Deployment & Smoke Test      PENDING
-Pilot Booth #1 Status            NOT_READY (HARDENING IN PROGRESS)
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│                      PICTOLABS MASTER EXECUTION SNAPSHOT                          │
+├────────────────────────────────────────┬──────────────────────────────────────────┤
+│ Subsystem / Component                  │ Current Canonical Status                 │
+├────────────────────────────────────────┼──────────────────────────────────────────┤
+│ RELIABILITY RELEASE (BATCH CLOSED)     │                                          │
+│ - Architecture / Foundation            │ CLOSED                                   │
+│ - P0 Admin Panel & Security (Offline)  │ CLOSED                                   │
+│ - Session History Phase 1–2 (Kiosk)    │ CLOSED                                   │
+│ - Printer Reliability (RCA-7)          │ CLOSED                                   │
+│ - Upload Outage Reliability            │ CLOSED                                   │
+│ - Startup Freeze Elimination           │ CLOSED                                   │
+│ - Production Installer Packaging       │ CLOSED (NSIS Setup 1.0.0.exe)            │
+│ - Git Release Commit                   │ CLOSED (353f79bd8b1f71213ca8302726976d1) │
+│ - VPS Production Deployment            │ CLOSED (43.156.39.26)                    │
+│ - VPS Production Smoke Test            │ CLOSED (PASS)                            │
+├────────────────────────────────────────┼──────────────────────────────────────────┤
+│ PILOT READINESS (NEW GATES)            │                                          │
+│ - PR-01 Booth Configuration Foundation │ CLOSED (Conditional Exception)           │
+│ - PR-02 Printer Profiles & Calibration │ OPEN (PLANNING PHASE)                    │
+│ - PR-03 Camera Selection & Config      │ NOT_STARTED / CAMERA WORKSTREAM          │
+│ - PR-04 Frame / Design Asset Mgmt      │ NOT_STARTED                              │
+│ - PR-05 Pricing & Print Quantity       │ PARTIALLY EXISTING / EXTENSION REQUIRED  │
+│ - PR-06 Session Timing Configuration   │ NOT_STARTED                              │
+│ - PR-07 Upload Progress Visibility     │ NOT_STARTED (OBSERVABILITY LAYER)        │
+│ - PR-08 Fullscreen Kiosk               │ NOT_STARTED                              │
+├────────────────────────────────────────┼──────────────────────────────────────────┤
+│ LEAST / POST-CORE                      │                                          │
+│ - EXT-01 Retro Filter Research         │ RESEARCH ONLY / NOT IMPLEMENTATION       │
+│ - EXT-02 Event / Operator Mode         │ DEFERRED / POST-CORE                     │
+│ - EXT-03 Subdomain Migration           │ DEFERRED / INFRASTRUCTURE                │
+├────────────────────────────────────────┼──────────────────────────────────────────┤
+│ OVERALL BOOTH #1 FIELD READINESS       │                                          │
+│ - Pilot Booth #1 Launch Status         │ NOT READY                                │
+└────────────────────────────────────────┴──────────────────────────────────────────┘
 ```
 
 ## Pilot Critical vs Post-Pilot
 
 ### Pilot Critical
-- printer formal closure
-- camera reliability
-- required camera/device configuration for Booth #1
-- upload production verification
-- payment production readiness
+- PR-01 Booth Configuration Foundation
+- PR-02 Printer Profiles & Calibration
+- PR-03 Camera Selection & Configuration
+- PR-04 Frame / Design Asset Management
+- PR-05 Pricing & Print Quantity
+- PR-06 Session Timing Configuration
+- PR-07 Upload Progress Visibility
+- PR-08 Fullscreen Kiosk
 - restart/session recovery
 - full customer regression
-- Founder Pilot UAT
+- Founder Physical Pilot UAT (Booth #1)
 - production build
 - GitHub release
 - VPS deploy
@@ -978,7 +1156,9 @@ Pilot Booth #1 Status            NOT_READY (HARDENING IN PROGRESS)
 - advanced media/design tooling
 - Zustand migration
 
-# 18. Continuity Rule for New Chats
+---
+
+# 21. Continuity Rule for New Chats
 
 When moving the project to a new chat, follow the canonical documentation hierarchy established by the project architecture:
 
@@ -1007,10 +1187,12 @@ When moving the project to a new chat, follow the canonical documentation hierar
 > - Do NOT tell AG to blindly read all Markdown files.
 > - Files in `docs/99_ARCHIVE/` are historical reference only and MUST NOT be used as current-state authority.
 > - Do not declare a phase closed from an implementation report alone. A Founder Physical UAT PASS does not equal release CLOSED until the release closure gate is completed.
-> - Do not reopen closed Session History work without new evidence.
+> - Do not reopen closed Session History, Printer RCA-7, Upload Outage Reliability, or Startup Freeze work without new evidence.
 > - Do not start Camera implementation before the Camera RCA is audited.
 > - Do not modify `CameraService.ts` during unrelated work.
+> - Do NOT claim any new Pilot Readiness feature (PR-01 through PR-08) is complete without code implementation, automated tests, and Founder Physical UAT sign-off.
 
 **Current active gate:**
 
-> Formal release closure of Printer RCA-7 (`RELEASE_CLOSURE_PENDING`), then Camera Reliability RCA (`CAMERA-01`).
+> PILOT READINESS FEATURE GAP CLOSURE (Phase B: PR-02 Printer Profiles & Calibration Planning).
+
