@@ -1,4 +1,4 @@
-import { IsOptional, IsNumber, IsString, IsBoolean, IsArray, ValidateNested, IsPositive, IsInt } from 'class-validator';
+import { IsOptional, IsNumber, IsString, IsBoolean, IsArray, ValidateNested, IsPositive, IsInt, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class PricingConfigDto {
@@ -38,6 +38,40 @@ export class TimingConfigDto {
   idleResetSec?: number;
 }
 
+export class PrinterCalibrationDto {
+  @IsOptional()
+  @IsNumber()
+  @Min(85, { message: 'Skala kalibrasi minimal 85%.' })
+  @Max(105, { message: 'Skala kalibrasi maksimal 105%.' })
+  scale?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(-25, { message: 'Offset X kalibrasi minimal -25mm.' })
+  @Max(25, { message: 'Offset X kalibrasi maksimal 25mm.' })
+  offsetX?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(-25, { message: 'Offset Y kalibrasi minimal -25mm.' })
+  @Max(25, { message: 'Offset Y kalibrasi maksimal 25mm.' })
+  offsetY?: number;
+}
+
+export class PrinterNamesDto {
+  @IsOptional()
+  @IsString()
+  strip2x6?: string | null;
+
+  @IsOptional()
+  @IsString()
+  photo4x6?: string | null;
+
+  @IsOptional()
+  @IsString()
+  photo6x8?: string | null;
+}
+
 export class HardwareConfigDto {
   @IsOptional()
   @IsString()
@@ -54,6 +88,16 @@ export class HardwareConfigDto {
   @IsOptional()
   @IsString()
   paperSize?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PrinterCalibrationDto)
+  printerCalibration?: PrinterCalibrationDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PrinterNamesDto)
+  printerNames?: PrinterNamesDto;
 }
 
 export class FramesConfigDto {
@@ -154,6 +198,17 @@ export interface BoothConfigEnvelope {
     printerProfileId: string | null;
     mirrorViewfinder: boolean;
     paperSize: string;
+    printerCalibration?: {
+      scale: number;
+      offsetX: number;
+      offsetY: number;
+    };
+    printerNames?: {
+      strip2x6?: string | null;
+      photo4x6?: string | null;
+      photo6x8?: string | null;
+      [key: string]: string | null | undefined;
+    };
   };
 
   frames: {

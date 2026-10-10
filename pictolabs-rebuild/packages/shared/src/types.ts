@@ -59,3 +59,15 @@ export interface PaymentSettledEvent {
   settledAt: string;
 }
 
+export interface PrinterCalibration {
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+}
+
+export interface PrinterNames {
+  strip2x6?: string | null;
+  photo4x6?: string | null;
+  photo6x8?: string | null;
+  [key: string]: string | null | undefined;
+}

@@ -21,3 +21,15 @@ export const GeneralSettingsSchema = z.object({
   voucherOnly: z.boolean().default(false)
 });
 
+export const PrinterCalibrationSchema = z.object({
+  scale: z.number().min(85).max(105).default(99),
+  offsetX: z.number().min(-25).max(25).default(0),
+  offsetY: z.number().min(-25).max(25).default(3)
+});
+
+export const PrinterNamesSchema = z.object({
+  strip2x6: z.string().nullable().optional(),
+  photo4x6: z.string().nullable().optional(),
+  photo6x8: z.string().nullable().optional()
+}).passthrough();
+
