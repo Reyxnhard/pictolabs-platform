@@ -25,6 +25,17 @@ export interface KioskConfig {
     printerProfileId?: string | null;
     mirrorViewfinder?: boolean;
     paperSize?: string;
+    printerCalibration?: {
+      scale: number;
+      offsetX: number;
+      offsetY: number;
+    };
+    printerNames?: {
+      strip2x6?: string | null;
+      photo4x6?: string | null;
+      photo6x8?: string | null;
+      [key: string]: string | null | undefined;
+    };
   };
 
   frames?: {
@@ -71,6 +82,16 @@ export const DEFAULT_KIOSK_CONFIG: KioskConfig = {
     printerProfileId: null,
     mirrorViewfinder: true,
     paperSize: '4R',
+    printerCalibration: {
+      scale: 99,
+      offsetX: 0,
+      offsetY: 3,
+    },
+    printerNames: {
+      strip2x6: null,
+      photo4x6: null,
+      photo6x8: null,
+    },
   },
   frames: {
     allowedFrameIds: [],
@@ -149,6 +170,34 @@ export const normalizeConfigPayload = (incoming: any, base: KioskConfig): KioskC
   if (merged.system?.themeColor) merged.themeColor = merged.system.themeColor;
   if (merged.system?.eventName) merged.eventName = merged.system.eventName;
   if (merged.system?.subText) merged.subText = merged.system.subText;
+
+  // Defensive hardware calibration normalization
+  const rawCal = incoming.hardware?.printerCalibration || merged.hardware?.printerCalibration;
+  const rawScale = typeof rawCal?.scale === 'number' && !isNaN(rawCal.scale) ? rawCal.scale : 99;
+  const rawOffX = typeof rawCal?.offsetX === 'number' && !isNaN(rawCal.offsetX) ? rawCal.offsetX : 0;
+  const rawOffY = typeof rawCal?.offsetY === 'number' && !isNaN(rawCal.offsetY) ? rawCal.offsetY : 3;
+
+  const rawNames = incoming.hardware?.printerNames || merged.hardware?.printerNames;
+  const defaultNames = DEFAULT_KIOSK_CONFIG.hardware?.printerNames || {
+    strip2x6: null,
+    photo4x6: null,
+    photo6x8: null,
+  };
+
+  merged.hardware = {
+    ...(DEFAULT_KIOSK_CONFIG.hardware || {}),
+    ...(merged.hardware || {}),
+    ...(incoming.hardware || {}),
+    printerCalibration: {
+      scale: Math.max(85, Math.min(105, rawScale)),
+      offsetX: Math.max(-25, Math.min(25, rawOffX)),
+      offsetY: Math.max(-25, Math.min(25, rawOffY)),
+    },
+    printerNames: {
+      ...defaultNames,
+      ...(rawNames || {}),
+    },
+  };
 
   return merged;
 };

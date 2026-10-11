@@ -1726,7 +1726,22 @@ export function readLocalKioskConfig(): Record<string, any> {
     configVersion: 1,
     pricing: { basePrice: 35000, currency: 'IDR', enableVoucher: true, enableQRIS: true },
     timing: { paymentTimeoutSec: 270, poseCountdownSec: 5, qrTimeoutSec: 60, idleResetSec: 120 },
-    hardware: { cameraProfileId: null, printerProfileId: null, mirrorViewfinder: true, paperSize: '4R' },
+    hardware: {
+      cameraProfileId: null,
+      printerProfileId: null,
+      mirrorViewfinder: true,
+      paperSize: '4R',
+      printerCalibration: {
+        scale: 99,
+        offsetX: 0,
+        offsetY: 3,
+      },
+      printerNames: {
+        strip2x6: null,
+        photo4x6: null,
+        photo6x8: null,
+      },
+    },
     frames: { allowedFrameIds: [] },
     system: { themeColor: '#3b82f6', eventName: 'PICTOLABS SELF PHOTOBOOTH', subText: 'TOUCH SCREEN TO START' },
     price: 35000,
@@ -1777,6 +1792,45 @@ export function readLocalKioskConfig(): Record<string, any> {
           merged.price = defaultFallback.price;
         }
 
+        // Defensive normalization: resolve hardware.printerCalibration and printerNames
+        const rawCal = parsed?.hardware?.printerCalibration;
+        const rawScale =
+          typeof rawCal?.scale === 'number' && !isNaN(rawCal.scale)
+            ? rawCal.scale
+            : defaultFallback.hardware.printerCalibration.scale;
+        const rawOffX =
+          typeof rawCal?.offsetX === 'number' && !isNaN(rawCal.offsetX)
+            ? rawCal.offsetX
+            : defaultFallback.hardware.printerCalibration.offsetX;
+        const rawOffY =
+          typeof rawCal?.offsetY === 'number' && !isNaN(rawCal.offsetY)
+            ? rawCal.offsetY
+            : defaultFallback.hardware.printerCalibration.offsetY;
+
+        const normalizedCalibration = {
+          scale: Math.max(85, Math.min(105, rawScale)),
+          offsetX: Math.max(-25, Math.min(25, rawOffX)),
+          offsetY: Math.max(-25, Math.min(25, rawOffY)),
+        };
+
+        const rawNames = parsed?.hardware?.printerNames;
+        const normalizedPrinterNames = {
+          strip2x6: typeof rawNames?.strip2x6 === 'string' ? rawNames.strip2x6 : (rawNames?.strip2x6 === null ? null : defaultFallback.hardware.printerNames.strip2x6),
+          photo4x6: typeof rawNames?.photo4x6 === 'string' ? rawNames.photo4x6 : (rawNames?.photo4x6 === null ? null : defaultFallback.hardware.printerNames.photo4x6),
+          photo6x8: typeof rawNames?.photo6x8 === 'string' ? rawNames.photo6x8 : (rawNames?.photo6x8 === null ? null : defaultFallback.hardware.printerNames.photo6x8),
+        };
+
+        merged.hardware = {
+          ...defaultFallback.hardware,
+          ...(parsed.hardware || {}),
+          printerCalibration: normalizedCalibration,
+          printerNames: {
+            ...defaultFallback.hardware.printerNames,
+            ...(parsed.hardware?.printerNames || {}),
+            ...normalizedPrinterNames,
+          },
+        };
+
         return merged;
       }
     }
@@ -1817,6 +1871,19 @@ export function writeLocalKioskConfig(newConfig: Record<string, any>): Record<st
     normalized.pricing = {
       ...(normalized.pricing || { currency: 'IDR', enableVoucher: true, enableQRIS: true }),
       basePrice: normalized.price,
+    };
+  }
+
+  // Defensively normalize printer calibration bounds before saving
+  if (normalized.hardware?.printerCalibration) {
+    const rawCal = normalized.hardware.printerCalibration;
+    const rawScale = typeof rawCal?.scale === 'number' && !isNaN(rawCal.scale) ? rawCal.scale : 99;
+    const rawOffX = typeof rawCal?.offsetX === 'number' && !isNaN(rawCal.offsetX) ? rawCal.offsetX : 0;
+    const rawOffY = typeof rawCal?.offsetY === 'number' && !isNaN(rawCal.offsetY) ? rawCal.offsetY : 3;
+    normalized.hardware.printerCalibration = {
+      scale: Math.max(85, Math.min(105, rawScale)),
+      offsetX: Math.max(-25, Math.min(25, rawOffX)),
+      offsetY: Math.max(-25, Math.min(25, rawOffY)),
     };
   }
 

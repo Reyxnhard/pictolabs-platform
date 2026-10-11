@@ -47,14 +47,14 @@ export class PrinterCalibrationDto {
 
   @IsOptional()
   @IsNumber()
-  @Min(-25, { message: 'Offset X kalibrasi minimal -25mm.' })
-  @Max(25, { message: 'Offset X kalibrasi maksimal 25mm.' })
+  @Min(-25, { message: 'Offset X kalibrasi minimal -25 unit (1/100 inci / -6.35 mm).' })
+  @Max(25, { message: 'Offset X kalibrasi maksimal 25 unit (1/100 inci / +6.35 mm).' })
   offsetX?: number;
 
   @IsOptional()
   @IsNumber()
-  @Min(-25, { message: 'Offset Y kalibrasi minimal -25mm.' })
-  @Max(25, { message: 'Offset Y kalibrasi maksimal 25mm.' })
+  @Min(-25, { message: 'Offset Y kalibrasi minimal -25 unit (1/100 inci / -6.35 mm).' })
+  @Max(25, { message: 'Offset Y kalibrasi maksimal 25 unit (1/100 inci / +6.35 mm).' })
   offsetY?: number;
 }
 

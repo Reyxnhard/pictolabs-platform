@@ -412,7 +412,7 @@ export function enqueuePrintJob(
 
   const cleanPath = filePath.replace(/^file:\/\/\/?/, '');
   const now = new Date().toISOString();
-  const targetPrinter = printerName || getDefaultPrinterName() || 'Default Printer';
+  const targetPrinter = printerName || getDefaultPrinterName() || 'AUTO';
 
   // 1. Idempotency Protection: Check if an active job already exists for (session_id, file_path)
   try {
@@ -619,7 +619,9 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
 
   // 1. Authoritative Pre-flight Hardware Verification (while job is in PENDING)
   let printResult: { success: boolean; error?: string };
-  const targetPrinter = item.printer_name || getDefaultPrinterName() || 'DS-RX1';
+  const targetPrinter = (item.printer_name && item.printer_name !== 'Default Printer' && item.printer_name !== 'AUTO')
+    ? item.printer_name
+    : (getDefaultPrinterName() || null);
 
   if (getIsBypassMode()) {
     console.log(`[PrintQueueService] [BYPASS] Simulated print job: ${cleanPath} (x${item.copies})`);

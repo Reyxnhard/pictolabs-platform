@@ -58,10 +58,10 @@ async function run() {
     'Missing hardware config normalizes to factory defaults (99, 0, 3)'
   );
   assert(
-    env1.hardware.printerNames.strip2x6 === 'CITIZEN CY-02' &&
-    env1.hardware.printerNames.photo4x6 === 'CITIZEN CY-02' &&
-    env1.hardware.printerNames.photo6x8 === 'CITIZEN CY-02',
-    'Missing printerNames normalizes to default CITIZEN CY-02 queues'
+    env1.hardware.printerNames.strip2x6 === null &&
+    env1.hardware.printerNames.photo4x6 === null &&
+    env1.hardware.printerNames.photo6x8 === null,
+    'Missing printerNames normalizes to safe null defaults'
   );
 
   const env2 = service.normalizeConfigEnvelope({
@@ -95,7 +95,7 @@ async function run() {
   }, 'booth-test-01');
   assert(
     env4.hardware.printerNames.strip2x6 === 'DNP DS-RX1HS' &&
-    env4.hardware.printerNames.photo4x6 === 'CITIZEN CY-02',
+    env4.hardware.printerNames.photo4x6 === null,
     'Custom media queue merged without erasing other defaults'
   );
 

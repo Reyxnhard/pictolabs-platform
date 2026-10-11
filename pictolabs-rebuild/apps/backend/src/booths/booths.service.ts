@@ -370,9 +370,9 @@ export class BoothsService {
         offsetY: 3,
       },
       printerNames: {
-        strip2x6: 'CITIZEN CY-02',
-        photo4x6: 'CITIZEN CY-02',
-        photo6x8: 'CITIZEN CY-02',
+        strip2x6: null,
+        photo4x6: null,
+        photo6x8: null,
       },
     };
     const defaultFrames = {
@@ -397,9 +397,9 @@ export class BoothsService {
 
     const rawNames = raw?.hardware?.printerNames;
     const normalizedPrinterNames = {
-      strip2x6: typeof rawNames?.strip2x6 === 'string' ? rawNames.strip2x6 : defaultHardware.printerNames.strip2x6,
-      photo4x6: typeof rawNames?.photo4x6 === 'string' ? rawNames.photo4x6 : defaultHardware.printerNames.photo4x6,
-      photo6x8: typeof rawNames?.photo6x8 === 'string' ? rawNames.photo6x8 : defaultHardware.printerNames.photo6x8,
+      strip2x6: typeof rawNames?.strip2x6 === 'string' ? rawNames.strip2x6 : (rawNames?.strip2x6 === null ? null : defaultHardware.printerNames.strip2x6),
+      photo4x6: typeof rawNames?.photo4x6 === 'string' ? rawNames.photo4x6 : (rawNames?.photo4x6 === null ? null : defaultHardware.printerNames.photo4x6),
+      photo6x8: typeof rawNames?.photo6x8 === 'string' ? rawNames.photo6x8 : (rawNames?.photo6x8 === null ? null : defaultHardware.printerNames.photo6x8),
     };
 
     const envelope: BoothConfigEnvelope = {

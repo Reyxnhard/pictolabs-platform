@@ -207,6 +207,93 @@ async function runConfigHydrationTests() {
       }
     }
 
+    // ─── TEST 7: Missing hardware configuration falls back to safe defaults ───
+    try {
+      fs.writeFileSync(configPath, JSON.stringify({ configVersion: 1 }, null, 2), 'utf-8');
+      const loaded = readLocalKioskConfig();
+
+      assert.strictEqual(loaded.hardware?.printerCalibration?.scale, 99, 'Default scale must be 99');
+      assert.strictEqual(loaded.hardware?.printerCalibration?.offsetX, 0, 'Default offsetX must be 0');
+      assert.strictEqual(loaded.hardware?.printerCalibration?.offsetY, 3, 'Default offsetY must be 3');
+      assert.strictEqual(loaded.hardware?.printerNames?.strip2x6, null, 'Default strip2x6 queue must be null');
+      assert.strictEqual(loaded.hardware?.printerNames?.photo4x6, null, 'Default photo4x6 queue must be null');
+
+      console.log('✓ TEST 7 PASS: Missing hardware configuration falls back to safe defaults (99, 0, 3, null)');
+      passed++;
+    } catch (err: any) {
+      console.error('✗ TEST 7 FAIL:', err.message);
+      failed++;
+    }
+
+    // ─── TEST 8: Cache with custom printerCalibration is preserved ──────────
+    try {
+      const customConfig = {
+        configVersion: 2,
+        hardware: {
+          printerCalibration: { scale: 98, offsetX: 2, offsetY: -1 },
+          printerNames: { strip2x6: 'DNP DS-RX1HS', photo4x6: 'DS-RX1 (Copy 2)' },
+        },
+      };
+      fs.writeFileSync(configPath, JSON.stringify(customConfig, null, 2), 'utf-8');
+      const loaded = readLocalKioskConfig();
+
+      assert.strictEqual(loaded.hardware?.printerCalibration?.scale, 98, 'Custom scale 98 preserved');
+      assert.strictEqual(loaded.hardware?.printerCalibration?.offsetX, 2, 'Custom offsetX 2 preserved');
+      assert.strictEqual(loaded.hardware?.printerCalibration?.offsetY, -1, 'Custom offsetY -1 preserved');
+      assert.strictEqual(loaded.hardware?.printerNames?.strip2x6, 'DNP DS-RX1HS', 'Custom strip2x6 queue preserved');
+      assert.strictEqual(loaded.hardware?.printerNames?.photo4x6, 'DS-RX1 (Copy 2)', 'Custom photo4x6 queue preserved');
+
+      console.log('✓ TEST 8 PASS: Cache with custom printerCalibration and printerNames is preserved');
+      passed++;
+    } catch (err: any) {
+      console.error('✗ TEST 8 FAIL:', err.message);
+      failed++;
+    }
+
+    // ─── TEST 9: Out-of-bounds calibration safely clamped ─────────────────────
+    try {
+      const oobConfig = {
+        configVersion: 3,
+        hardware: {
+          printerCalibration: { scale: 120, offsetX: -50, offsetY: 40 },
+        },
+      };
+      fs.writeFileSync(configPath, JSON.stringify(oobConfig, null, 2), 'utf-8');
+      const loaded = readLocalKioskConfig();
+
+      assert.strictEqual(loaded.hardware?.printerCalibration?.scale, 105, 'OOB scale 120 clamped to 105');
+      assert.strictEqual(loaded.hardware?.printerCalibration?.offsetX, -25, 'OOB offsetX -50 clamped to -25');
+      assert.strictEqual(loaded.hardware?.printerCalibration?.offsetY, 25, 'OOB offsetY 40 clamped to 25');
+
+      console.log('✓ TEST 9 PASS: Out-of-bounds calibration safely clamped to [85..105] and [-25..25]');
+      passed++;
+    } catch (err: any) {
+      console.error('✗ TEST 9 FAIL:', err.message);
+      failed++;
+    }
+
+    // ─── TEST 10: writeLocalKioskConfig persists calibration to disk ─────────
+    try {
+      writeLocalKioskConfig({
+        hardware: {
+          printerCalibration: { scale: 97, offsetX: -2, offsetY: 4 },
+          printerNames: { photo4x6: 'EPSON L805' },
+        },
+      });
+      const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+
+      assert.strictEqual(raw.hardware?.printerCalibration?.scale, 97, 'Disk scale must be 97');
+      assert.strictEqual(raw.hardware?.printerCalibration?.offsetX, -2, 'Disk offsetX must be -2');
+      assert.strictEqual(raw.hardware?.printerCalibration?.offsetY, 4, 'Disk offsetY must be 4');
+      assert.strictEqual(raw.hardware?.printerNames?.photo4x6, 'EPSON L805', 'Disk printer name preserved');
+
+      console.log('✓ TEST 10 PASS: writeLocalKioskConfig atomically persists calibration and queue names to disk');
+      passed++;
+    } catch (err: any) {
+      console.error('✗ TEST 10 FAIL:', err.message);
+      failed++;
+    }
+
   } finally {
     stopSyncEngine();
     try {

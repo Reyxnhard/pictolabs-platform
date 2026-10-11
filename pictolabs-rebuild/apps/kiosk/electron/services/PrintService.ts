@@ -3,7 +3,8 @@ import { exec, execFile } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { getLastSession } from './SyncEngine';
+import { getLastSession, readLocalKioskConfig } from './SyncEngine';
+import { setPrintDispatchActive } from './PrinterMonitorService';
 import { findPrintExePath, getHardwareStatus, PrinterHardwareStatus } from './PrinterHardwareAdapter';
 
 /**
@@ -138,14 +139,14 @@ export function listPrintersSync(): string[] {
  * Prioritizes: DNP > Citizen > any "Photo" printer > first available.
  */
 export function autoDetectPrinter(printers: string[]): string | null {
-  const priorities = ['DNP', 'Citizen', 'Photo', 'Mitsubishi', 'HiTi', 'RX1', 'DS620', 'CX-02'];
+  const priorities = ['DNP', 'Citizen', 'Photo', 'Mitsubishi', 'HiTi', 'RX1', 'DS620', 'CX-02', 'P525L', 'CY-02', 'DS-RX1'];
   for (const keyword of priorities) {
     const match = printers.find((p) =>
       p.toLowerCase().includes(keyword.toLowerCase())
     );
     if (match) return match;
   }
-  return printers[0] || null;
+  return null;
 }
 
 /**
@@ -674,12 +675,92 @@ export function isPrinterHandoffValid(
   return preValidatedHealth.name === targetPrinterName;
 }
 
+/**
+ * Resolves the target Windows printer queue according to fail-safe PR-02 rules:
+ * 1. If an explicit queue is requested or configured for the media format:
+ *    - Verify that it exists in installed Windows printers.
+ *    - If missing: fail fast with an actionable error (no silent redirection).
+ * 2. If no explicit queue is configured (null):
+ *    - Use detected default printer ONLY if it is installed and valid.
+ * 3. If neither exists or is installed:
+ *    - Return an error rejecting the print request safely.
+ */
+export async function resolvePrinterQueue(
+  requestedPrinter?: string | null,
+  mediaFormat?: string | null,
+  installedPrintersOverride?: string[]
+): Promise<{ success: boolean; printerName?: string; error?: string }> {
+  const localConfig = readLocalKioskConfig();
+  const queueMap = localConfig?.hardware?.printerNames;
+
+  // Determine candidate queue
+  let candidateQueue: string | null = requestedPrinter || null;
+  if (candidateQueue === 'Default Printer' || candidateQueue === 'AUTO' || candidateQueue === 'DEFAULT') {
+    candidateQueue = null;
+  }
+  if (!candidateQueue && mediaFormat) {
+    if (mediaFormat === '2R' || mediaFormat === 'strip2x6') {
+      candidateQueue = queueMap?.strip2x6 || null;
+    } else if (mediaFormat === '4R' || mediaFormat === 'photo4x6') {
+      candidateQueue = queueMap?.photo4x6 || null;
+    } else if (mediaFormat === '6R' || mediaFormat === 'photo6x8') {
+      candidateQueue = queueMap?.photo6x8 || null;
+    }
+  }
+
+  // Get available printers
+  const installedPrinters = installedPrintersOverride || (await listPrinters());
+
+  if (candidateQueue) {
+    // Explicit queue requested or configured
+    const isInstalled = installedPrinters.some(
+      (p) => p.toLowerCase() === candidateQueue!.toLowerCase()
+    );
+    if (!isInstalled && installedPrinters.length > 0) {
+      return {
+        success: false,
+        error: `Antrean printer terkonfigurasi '${candidateQueue}' tidak ditemukan di sistem Windows. Pastikan nama antrean printer sesuai di Admin Panel.`,
+      };
+    }
+    const exactMatch = installedPrinters.find(
+      (p) => p.toLowerCase() === candidateQueue!.toLowerCase()
+    );
+    return { success: true, printerName: exactMatch || candidateQueue };
+  }
+
+  // Fallback: candidateQueue is null, use detected default printer
+  const defaultPrinter = getDefaultPrinterName();
+  if (defaultPrinter) {
+    const isInstalled = installedPrinters.length === 0 || installedPrinters.some(
+      (p) => p.toLowerCase() === defaultPrinter.toLowerCase()
+    );
+    if (isInstalled) {
+      const exactMatch = installedPrinters.find(
+        (p) => p.toLowerCase() === defaultPrinter.toLowerCase()
+      );
+      return { success: true, printerName: exactMatch || defaultPrinter };
+    }
+  }
+
+  // If installedPrinters has photo printers detected via autoDetectPrinter:
+  const autoDetected = autoDetectPrinter(installedPrinters);
+  if (autoDetected) {
+    return { success: true, printerName: autoDetected };
+  }
+
+  return {
+    success: false,
+    error: 'Tidak ada printer foto yang terdeteksi atau terkonfigurasi di sistem Windows.',
+  };
+}
+
 export async function printImage(
   imagePath: string,
-  printerName: string,
-  copies: number,
+  printerName?: string | null,
+  copies: number = 1,
   preValidatedHealth?: PrinterHealth,
-  onPhaseChange?: (phase: 'PRINTING' | 'VERIFYING') => void
+  onPhaseChange?: (phase: 'PRINTING' | 'VERIFYING') => void,
+  mediaFormat?: string | null
 ): Promise<{ success: boolean; error?: string }> {
   // 1. Bypass Mode check
   if (isBypassMode) {
@@ -706,8 +787,13 @@ export async function printImage(
     return { success: false, error: `File not found: ${targetPath}` };
   }
 
-  // 2. Resolve Active Printer Identity with Strict Exact Matching
-  const activePrinter = printerName || defaultPrinterName || 'DS-RX1';
+  // 2. Resolve Active Printer Identity with Strict Fail-Safe Matching
+  const resolution = await resolvePrinterQueue(printerName, mediaFormat);
+  if (!resolution.success || !resolution.printerName) {
+    console.error(`[PrintService] Queue resolution failed: ${resolution.error}`);
+    return { success: false, error: resolution.error || 'Antrean printer tidak valid' };
+  }
+  const activePrinter = resolution.printerName;
 
   // 3. Dispatch print command via native print.exe CLI
   const printExe = findPrintExePath();
@@ -716,18 +802,30 @@ export async function printImage(
     return { success: false, error: 'Utilitas cetak (print.exe) tidak ditemukan' };
   }
 
+  // Dynamic calibration parameter injection from hydrated local config
+  // Contract: scale in %, offsets in hundredths of an inch (1/100 inch = 0.254 mm)
+  const localConfig = readLocalKioskConfig();
+  const calib = localConfig?.hardware?.printerCalibration;
+  const rawScale = typeof calib?.scale === 'number' && !isNaN(calib.scale) ? calib.scale : 99;
+  const rawOffX = typeof calib?.offsetX === 'number' && !isNaN(calib.offsetX) ? calib.offsetX : 0;
+  const rawOffY = typeof calib?.offsetY === 'number' && !isNaN(calib.offsetY) ? calib.offsetY : 3;
+
+  const scaleArg = String(Math.max(85, Math.min(105, rawScale)));
+  const offXArg = String(Math.max(-25, Math.min(25, rawOffX)));
+  const offYArg = String(Math.max(-25, Math.min(25, rawOffY)));
+
   // Native CLI argument vector:
   // print.exe <imagePath> [copies] [scale%] [offsetX] [offsetY] [printerName]
   const printArgs = [
     targetPath,
     String(copies),
-    '99',
-    '0',
-    '3',
+    scaleArg,
+    offXArg,
+    offYArg,
     activePrinter,
   ];
 
-  console.log(`[PrintService] Dispatching print via print.exe to '${activePrinter}' (x${copies})`);
+  console.log(`[PrintService] Dispatching print via print.exe to '${activePrinter}' (x${copies}) [scale: ${scaleArg}%, offX: ${offXArg}, offY: ${offYArg}]`);
 
   if (onPhaseChange) {
     onPhaseChange('PRINTING');
