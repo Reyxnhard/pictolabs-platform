@@ -1012,7 +1012,12 @@ export function registerPrintHandlers(config: PrintServiceConfig): void {
         .jpeg({ quality: 90 })
         .toFile(testPath);
 
-      return printImage(testPath, defaultPrinterName, 1);
+      setPrintDispatchActive(true);
+      try {
+        return await printImage(testPath, defaultPrinterName, 1);
+      } finally {
+        setPrintDispatchActive(false);
+      }
     } catch (err: any) {
       return { success: false, error: err.message };
     }
