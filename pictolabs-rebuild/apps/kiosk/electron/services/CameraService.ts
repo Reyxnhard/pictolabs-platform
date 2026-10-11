@@ -120,27 +120,32 @@ async function configureSaveToWithRetry(camera: any, maxTries = 8): Promise<bool
   return false;
 }
 
-function fetchLatestPhotoFromCard(camera: any, outputPath: string): boolean {
+export function getCardFileIndex(camera: any): Set<string> {
+  const index = new Set<string>();
+  if (!camera || typeof camera.getVolumes !== 'function') return index;
   try {
     const volumes = camera.getVolumes();
-    if (!volumes || volumes.length === 0) return false;
+    if (!volumes || volumes.length === 0) return index;
 
-    let targetFile: any = null;
-
-    for (const vol of volumes) {
+    for (let v = 0; v < volumes.length; v++) {
+      const vol = volumes[v];
       try {
+        if (!vol || typeof vol.getEntries !== 'function') continue;
         const rootEntries = vol.getEntries();
+        if (!rootEntries) continue;
+
         for (const entry of rootEntries) {
-          if (entry.name && entry.name.toUpperCase() === 'DCIM' && typeof entry.getEntries === 'function') {
+          if (entry && entry.name && entry.name.toUpperCase() === 'DCIM' && typeof entry.getEntries === 'function') {
             const dcimFolders = entry.getEntries();
+            if (!dcimFolders) continue;
             for (const folder of dcimFolders) {
-              if (typeof folder.getEntries === 'function') {
+              if (folder && typeof folder.getEntries === 'function') {
                 const files = folder.getEntries();
                 if (files && files.length > 0) {
-                  // The newest photo is the last item in the DCIM folder
-                  const last = files[files.length - 1];
-                  if (last && typeof last.downloadToFile === 'function') {
-                    targetFile = last;
+                  for (const f of files) {
+                    if (f && f.name) {
+                      index.add(`${v}/${folder.name}/${f.name}`);
+                    }
                   }
                 }
               }
@@ -148,15 +153,92 @@ function fetchLatestPhotoFromCard(camera: any, outputPath: string): boolean {
           }
         }
       } catch (volErr) {
+        console.warn('[CameraService] Error indexing volume entries:', volErr);
+      }
+    }
+  } catch (err) {
+    console.warn('[CameraService] SD card indexing error:', err);
+  }
+  return index;
+}
+
+export function fetchLatestPhotoFromCard(
+  camera: any,
+  outputPath: string,
+  baselineFiles?: Set<string>
+): boolean {
+  try {
+    if (!camera || typeof camera.getVolumes !== 'function') return false;
+    const volumes = camera.getVolumes();
+    if (!volumes || volumes.length === 0) return false;
+
+    let targetFile: any = null;
+    let targetKey: string | null = null;
+
+    for (let v = 0; v < volumes.length; v++) {
+      const vol = volumes[v];
+      try {
+        if (!vol || typeof vol.getEntries !== 'function') continue;
+        const rootEntries = vol.getEntries();
+        if (!rootEntries) continue;
+
+        for (const entry of rootEntries) {
+          if (entry && entry.name && entry.name.toUpperCase() === 'DCIM' && typeof entry.getEntries === 'function') {
+            const dcimFolders = entry.getEntries();
+            if (!dcimFolders) continue;
+
+            for (const folder of dcimFolders) {
+              if (folder && typeof folder.getEntries === 'function') {
+                const files = folder.getEntries();
+                if (files && files.length > 0) {
+                  // Inspect files from newest to oldest
+                  for (let i = files.length - 1; i >= 0; i--) {
+                    const candidate = files[i];
+                    if (!candidate || !candidate.name || typeof candidate.downloadToFile !== 'function') continue;
+
+                    // 1. Accept only JPEG candidates (.jpg or .jpeg, case-insensitive)
+                    if (!/\.(jpe?g)$/i.test(candidate.name)) {
+                      continue;
+                    }
+
+                    // 2. Require candidate.size to be a known, positive number before selecting
+                    if (typeof candidate.size !== 'number' || candidate.size <= 0) {
+                      continue;
+                    }
+
+                    const fileKey = `${v}/${folder.name}/${candidate.name}`;
+                    // 3. Keep the existing pre-shutter baseline check
+                    if (baselineFiles && baselineFiles.has(fileKey)) {
+                      // Stale file that existed prior to shutter! Skip it!
+                      continue;
+                    }
+
+                    targetFile = candidate;
+                    targetKey = fileKey;
+                    break;
+                  }
+                }
+              }
+              if (targetFile) break;
+            }
+          }
+          if (targetFile) break;
+        }
+      } catch (volErr) {
         console.warn('[CameraService] Error reading volume entries:', volErr);
       }
+      if (targetFile) break;
     }
 
     if (targetFile) {
-      console.log(`[CameraService] ✓ Found latest photo on SD card (${targetFile.name}), downloading...`);
+      console.log(`[CameraService] ✓ Found verified new photo on SD card (${targetFile.name}, key: ${targetKey}), downloading...`);
       targetFile.downloadToFile(outputPath);
       console.log(`[CameraService] ✓ Downloaded SD card photo to ${outputPath}`);
       return true;
+    } else {
+      if (baselineFiles && baselineFiles.size > 0) {
+        console.warn('[CameraService] SD Card scan: No new photo found beyond pre-shutter baseline (stale files rejected)');
+      }
     }
   } catch (err) {
     console.warn('[CameraService] SD Card scan error:', err);
@@ -387,7 +469,28 @@ function startLiveViewInterval(): void {
   }, 33); // ~30 fps
 }
 
-async function generateTestImage(outputPath: string): Promise<void> {
+export function setWebcamReadyInternal(ready: boolean, errorCode?: string): void {
+  if (ready) {
+    // Only mark webcam as active sensor if Canon is not actively connected & usable
+    if (!activeCamera || !cameraStatus.isCanonConnected) {
+      cameraStatus.activeSensor = 'webcam';
+      cameraStatus.errorCode = null;
+      cameraStatus.errorMessage = null;
+      broadcastCameraStatus();
+    }
+  } else {
+    if (cameraStatus.activeSensor === 'webcam') {
+      cameraStatus.activeSensor = 'none';
+      if (errorCode) {
+        cameraStatus.errorCode = errorCode;
+        cameraStatus.errorMessage = `Webcam unavailable: ${errorCode}`;
+      }
+      broadcastCameraStatus();
+    }
+  }
+}
+
+export async function generateTestImageForDiagnostics(outputPath: string): Promise<void> {
   const sharp = require('sharp');
   await sharp({
     create: {
@@ -401,6 +504,189 @@ async function generateTestImage(outputPath: string): Promise<void> {
     .toFile(outputPath);
 }
 
+export function readKioskConfig(dataDir?: string): any {
+  if (!dataDir) return {};
+  try {
+    const configPath = path.join(dataDir, 'kiosk-config.json');
+    if (fs.existsSync(configPath)) {
+      return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    }
+  } catch {}
+  return {};
+}
+
+export interface CapturePhotoInternalOptions {
+  mirrorResult?: boolean;
+  sensor?: 'canon' | 'webcam';
+}
+
+export type CaptureInternalResult =
+  | { success: true; dataUrl: string; sensor: 'canon' | 'webcam' }
+  | { success: false; errorCode: string; errorMessage: string };
+
+export async function capturePhotoInternal(
+  options?: CapturePhotoInternalOptions,
+  config?: CameraServiceConfig
+): Promise<CaptureInternalResult> {
+  const cfg = config || { outputDir: path.join(os.tmpdir(), 'pictolabs-captures'), preferCanon: true };
+  const outputDir = getOutputDir(cfg);
+  const filename = `capture_${Date.now()}.jpg`;
+  const outputPath = path.join(outputDir, filename);
+
+  const savedConfig = readKioskConfig(cfg.dataDir);
+  const shouldMirror = options?.mirrorResult ?? (savedConfig?.cameraResult !== 'original');
+  const requestedSensor = options?.sensor;
+
+  // SENSOR PARITY: If caller explicitly specifies webcam, main process refuses Canon shutter.
+  // Webcam captures must be acquired directly from renderer video stream for preview/still parity.
+  if (requestedSensor === 'webcam') {
+    return {
+      success: false,
+      errorCode: 'ERR_WEBCAM_CAPTURE_RENDERER_MANAGED',
+      errorMessage: 'Webcam captures must be acquired directly from renderer video stream for sensor parity',
+    };
+  }
+
+  const hasCanon = cfg.preferCanon;
+
+  // Refresh camera connection if needed
+  if (hasCanon && !activeCamera) {
+    await onCameraPluggedIn();
+  }
+
+  if (hasCanon && activeCamera && cameraStatus.isCanonConnected) {
+    try {
+      console.log(`[CameraService] Preparing shutter for ${activeCamera.description} (mirror: ${shouldMirror})...`);
+
+      // STEP 0: Establish SD-card file baseline BEFORE shutter to prevent stale photo ingestion
+      const baselineFiles = getCardFileIndex(activeCamera);
+
+      // STEP 1: Pause LiveView interval so USB bus is dedicated to image transfer
+      if (liveViewInterval) {
+        clearInterval(liveViewInterval);
+        liveViewInterval = null;
+      }
+
+      let downloadedSuccessfully = false;
+
+      // STEP 2: Mode A — Wait for DownloadRequest from camera
+      try {
+        const fileFromEvent = await new Promise<any>((resolve) => {
+          const timeout = setTimeout(() => {
+            pendingCaptureResolver = null;
+            resolve(null); // Advance to Mode B (SD Card Volume)
+          }, 2000);
+
+          pendingCaptureResolver = (file: any) => {
+            clearTimeout(timeout);
+            resolve(file);
+          };
+
+          // Actuate Shutter using activeCamera.takePicture()
+          console.log('[CameraService] Triggering activeCamera.takePicture()...');
+          activeCamera.takePicture();
+        });
+
+        if (fileFromEvent && typeof fileFromEvent.downloadToFile === 'function') {
+          console.log(`[CameraService] Downloading via DownloadRequest to: ${outputPath}...`);
+          fileFromEvent.downloadToFile(outputPath);
+          downloadedSuccessfully = true;
+        }
+      } catch (shutterErr) {
+        console.warn('[CameraService] Shutter takePicture error:', shutterErr);
+      }
+
+      // STEP 3: Mode B fallback — If DownloadRequest didn't arrive in 2s, scan SD Card volume with baseline freshness check
+      if (!downloadedSuccessfully) {
+        console.log('[CameraService] DownloadRequest did not arrive in 2s, scanning SD card volume against baseline...');
+        for (let attempt = 1; attempt <= 4; attempt++) {
+          await new Promise((r) => setTimeout(r, attempt === 1 ? 400 : 300));
+          downloadedSuccessfully = fetchLatestPhotoFromCard(activeCamera, outputPath, baselineFiles);
+          if (downloadedSuccessfully) break;
+        }
+      }
+
+      // STEP 4: Resume LiveView for the next pose
+      if (isLiveViewActive) {
+        startLiveViewInterval();
+      }
+
+      // STEP 5: Return resulting image if download succeeded and file exists
+      if (downloadedSuccessfully && fs.existsSync(outputPath)) {
+        let fileBuffer = fs.readFileSync(outputPath);
+
+        if (shouldMirror) {
+          try {
+            const sharp = require('sharp');
+            fileBuffer = await sharp(fileBuffer).flop().jpeg({ quality: 95 }).toBuffer();
+            fs.writeFileSync(outputPath, fileBuffer);
+            console.log(`[CameraService] ✓ Mirrored (flop) photo saved to: ${outputPath}`);
+          } catch (mirrorErr: any) {
+            console.warn('[CameraService] Photo mirror error:', mirrorErr.message);
+          }
+        }
+
+        const base64Data = fileBuffer.toString('base64');
+        return {
+          success: true,
+          dataUrl: `data:image/jpeg;base64,${base64Data}`,
+          sensor: 'canon',
+        };
+      }
+
+      // Mode C fallback: If file download failed, use last LiveView sensor frame ONLY from active camera
+      if (lastLiveViewDataUrl && activeCamera) {
+        console.log('[CameraService] Using last LiveView sensor frame as photo fallback');
+        let finalData = lastLiveViewDataUrl;
+        if (shouldMirror) {
+          try {
+            const sharp = require('sharp');
+            const base64 = lastLiveViewDataUrl.replace(/^data:image\/\w+;base64,/, '');
+            const buf = Buffer.from(base64, 'base64');
+            const mirrored = await sharp(buf).flop().jpeg({ quality: 95 }).toBuffer();
+            fs.writeFileSync(outputPath, mirrored);
+            finalData = `data:image/jpeg;base64,${mirrored.toString('base64')}`;
+          } catch (_) {}
+        } else {
+          const base64 = lastLiveViewDataUrl.replace(/^data:image\/\w+;base64,/, '');
+          fs.writeFileSync(outputPath, Buffer.from(base64, 'base64'));
+        }
+        lastLiveViewDataUrl = null;
+        return {
+          success: true,
+          dataUrl: finalData,
+          sensor: 'canon',
+        };
+      }
+
+    } catch (err) {
+      console.error('[CameraService] Canon capture process error:', err);
+      if (isLiveViewActive) {
+        startLiveViewInterval();
+      }
+      if (lastLiveViewDataUrl && activeCamera) {
+        const fallback = lastLiveViewDataUrl;
+        lastLiveViewDataUrl = null;
+        return {
+          success: true,
+          dataUrl: fallback,
+          sensor: 'canon',
+        };
+      }
+    }
+  }
+
+  // NO VALID SENSOR CAPTURE:
+  // DO NOT generate synthetic test image! Explicit structured failure:
+  return {
+    success: false,
+    errorCode: activeCamera ? 'ERR_CANON_CAPTURE_FAILED' : 'ERR_NO_SENSOR_AVAILABLE',
+    errorMessage: activeCamera
+      ? 'Canon physical capture failed and no live view frame was available'
+      : 'No operational camera sensor is connected for capture',
+  };
+}
+
 export function registerCameraHandlers(config: CameraServiceConfig): void {
   const hasCanon = config.preferCanon && tryLoadCanonAddon();
 
@@ -410,6 +696,11 @@ export function registerCameraHandlers(config: CameraServiceConfig): void {
       await onCameraPluggedIn();
     }
     return getEffectiveCameraStatus();
+  });
+
+  // ─── Notify Webcam Ready (Renderer Synchronization) ────
+  ipcMain.handle('camera:notify-webcam-ready', async (_event, ready: boolean, errorCode?: string) => {
+    setWebcamReadyInternal(ready, errorCode);
   });
 
   // ─── Start Live View ───────────────────────────────────
@@ -463,154 +754,13 @@ export function registerCameraHandlers(config: CameraServiceConfig): void {
     stopLiveViewInternal();
   });
 
-function readKioskConfig(dataDir?: string): any {
-  if (!dataDir) return {};
-  try {
-    const configPath = path.join(dataDir, 'kiosk-config.json');
-    if (fs.existsSync(configPath)) {
-      return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    }
-  } catch {}
-  return {};
-}
-
   // ─── Capture Photo ─────────────────────────────────────
-  ipcMain.handle('camera:capture', async (_event, options?: { mirrorResult?: boolean }) => {
-    const outputDir = getOutputDir(config);
-    const filename = `capture_${Date.now()}.jpg`;
-    const outputPath = path.join(outputDir, filename);
-
-    const savedConfig = readKioskConfig(config.dataDir);
-    const shouldMirror = options?.mirrorResult ?? (savedConfig?.cameraResult !== 'original');
-
-    // Refresh camera connection if needed
-    if (hasCanon && !activeCamera) {
-      await onCameraPluggedIn();
+  ipcMain.handle('camera:capture', async (_event, options?: CapturePhotoInternalOptions) => {
+    const result = await capturePhotoInternal(options, config);
+    if (result.success) {
+      return result.dataUrl;
     }
-
-    if (hasCanon && activeCamera) {
-      try {
-        console.log(`[CameraService] Preparing shutter for ${activeCamera.description} (mirror: ${shouldMirror})...`);
-
-        // STEP 1: Pause LiveView interval so USB bus is 100% dedicated to image transfer
-        if (liveViewInterval) {
-          clearInterval(liveViewInterval);
-          liveViewInterval = null;
-        }
-
-        let downloadedSuccessfully = false;
-
-        // STEP 2: Setup Promise waiting for DownloadRequest from camera (Mode A)
-        try {
-          const fileFromEvent = await new Promise<any>((resolve) => {
-            const timeout = setTimeout(() => {
-              pendingCaptureResolver = null;
-              resolve(null); // Don't reject, advance to Mode B (SD Card Volume)
-            }, 2000); // 2.0s is plenty for instant DownloadRequest
-
-            pendingCaptureResolver = (file: any) => {
-              clearTimeout(timeout);
-              resolve(file);
-            };
-
-            // Actuate Shutter using activeCamera.takePicture()
-            console.log('[CameraService] Triggering activeCamera.takePicture()...');
-            activeCamera.takePicture();
-          });
-
-          if (fileFromEvent && typeof fileFromEvent.downloadToFile === 'function') {
-            console.log(`[CameraService] Downloading via DownloadRequest to: ${outputPath}...`);
-            fileFromEvent.downloadToFile(outputPath);
-            downloadedSuccessfully = true;
-          }
-        } catch (shutterErr) {
-          console.warn('[CameraService] Shutter takePicture error:', shutterErr);
-        }
-
-        // STEP 3: Mode B fallback — If DownloadRequest didn't fire, scan SD Card volume!
-        if (!downloadedSuccessfully) {
-          console.log('[CameraService] DownloadRequest did not arrive in 2s, scanning SD card volume...');
-          for (let attempt = 1; attempt <= 4; attempt++) {
-            await new Promise((r) => setTimeout(r, attempt === 1 ? 400 : 300));
-            downloadedSuccessfully = fetchLatestPhotoFromCard(activeCamera, outputPath);
-            if (downloadedSuccessfully) break;
-          }
-        }
-
-        // STEP 4: Resume LiveView for the next pose
-        if (isLiveViewActive) {
-          startLiveViewInterval();
-        }
-
-        // STEP 5: Return resulting image (with horizontal mirror flop if enabled)
-        if (downloadedSuccessfully && fs.existsSync(outputPath)) {
-          let fileBuffer = fs.readFileSync(outputPath);
-
-          if (shouldMirror) {
-            try {
-              const sharp = require('sharp');
-              fileBuffer = await sharp(fileBuffer).flop().jpeg({ quality: 95 }).toBuffer();
-              fs.writeFileSync(outputPath, fileBuffer);
-              console.log(`[CameraService] ✓ Mirrored (flop) photo saved to: ${outputPath}`);
-            } catch (mirrorErr: any) {
-              console.warn('[CameraService] Photo mirror error:', mirrorErr.message);
-            }
-          }
-
-          const base64Data = fileBuffer.toString('base64');
-          return `data:image/jpeg;base64,${base64Data}`;
-        }
-
-        // Mode C fallback: If file download failed, use last LiveView sensor frame (only if camera is active)
-        if (lastLiveViewDataUrl && activeCamera) {
-          console.log('[CameraService] Using last LiveView sensor frame as photo fallback');
-          let finalData = lastLiveViewDataUrl;
-          if (shouldMirror) {
-            try {
-              const sharp = require('sharp');
-              const base64 = lastLiveViewDataUrl.replace(/^data:image\/\w+;base64,/, '');
-              const buf = Buffer.from(base64, 'base64');
-              const mirrored = await sharp(buf).flop().jpeg({ quality: 95 }).toBuffer();
-              fs.writeFileSync(outputPath, mirrored);
-              finalData = `data:image/jpeg;base64,${mirrored.toString('base64')}`;
-            } catch (_) {}
-          } else {
-            const base64 = lastLiveViewDataUrl.replace(/^data:image\/\w+;base64,/, '');
-            fs.writeFileSync(outputPath, Buffer.from(base64, 'base64'));
-          }
-          // Consume once to prevent repeating identical stale frame across subsequent poses
-          lastLiveViewDataUrl = null;
-          return finalData;
-        }
-
-      } catch (err) {
-        console.error('[CameraService] Canon capture process error:', err);
-
-        // Resume LiveView even if error occurred
-        if (isLiveViewActive) {
-          startLiveViewInterval();
-        }
-
-        if (lastLiveViewDataUrl && activeCamera) {
-          const fallback = lastLiveViewDataUrl;
-          lastLiveViewDataUrl = null;
-          return fallback;
-        }
-      }
-    }
-
-    // Absolute fallback if no Canon DSLR is connected
-    console.log('[CameraService] Generating simulated fallback capture');
-    await generateTestImage(outputPath);
-    let fileBuffer = fs.readFileSync(outputPath);
-    if (shouldMirror) {
-      try {
-        const sharp = require('sharp');
-        fileBuffer = await sharp(fileBuffer).flop().jpeg({ quality: 95 }).toBuffer();
-        fs.writeFileSync(outputPath, fileBuffer);
-      } catch (_) {}
-    }
-    return `data:image/jpeg;base64,${fileBuffer.toString('base64')}`;
+    return result;
   });
 
   // ─── Discard Capture (Retake cleanup) ──────────────────

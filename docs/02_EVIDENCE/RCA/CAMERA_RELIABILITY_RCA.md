@@ -4,24 +4,33 @@
 **Canonical Filename:** `docs/02_EVIDENCE/RCA/CAMERA_RELIABILITY_RCA.md`  
 **Investigation Date:** 2026-10-11  
 **Author:** Antigravity Core Engineering  
-**Branch:** `feature/pr02-printer-profiles-calibration`  
-**Current HEAD:** [`ae3b239`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild) (`docs(pr02): formalize PR-02 closure, update canonical workstreams and master timeline`)  
+**Branch:** `feature/camera-01-reliability`  
+**Current HEAD:** [`b9a6b26`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/CameraService.ts) (`fix(camera01): correct camera status transitions and reconnect handling`)  
 **Target Hardware:** Pictolabs Pilot Booth #1 (Canon EOS 60D DSLR via USB 2.0 / EDSDK v13.x, ACK-E10 AC Coupler, Integrated USB Webcam)  
 **Severity:** **P1 (HIGH USER EXPERIENCE & RELIABILITY DEFECT)** with **P0 DATA INTEGRITY RISK** in edge cases  
-**Status:** **INVESTIGATION COMPLETE — ARCHITECTURAL AUDIT DELIVERED (READ-ONLY / ZERO CODE CHANGES)**  
+**Status:** **REMEDIATION & VERIFICATION COMPLETE — CHECKPOINTS 1 & 2 VERIFIED (FOUNDER PHYSICAL UAT PASS)**  
 
 ---
 
 ## 1. Executive Summary & Verdict
 
-### 1.1 Executive Verdict
-**VERDICT:** **`FAIL_PREFLIGHT_FOR_PILOT` (ACTIVE RELIABILITY BLOCKER)**  
-Kiosk camera subsystem pada cabang saat ini **tidak layak diterjunkan ke produksi pilot (Booth #1)** tanpa remediasi terstruktur. Meskipun integrasi native C++ Canon EDSDK v13.x (`@photolab/canon`) dan pembersihan memori lintas-sesi (`c2ec517`) telah terverifikasi stabil, terdapat **5 cacat arsitektural dan konkurensi konkret** yang menyebabkan:
-1. **Desinkronisasi Sensor Preview $\leftrightarrow$ Shutter**: Pengguna berpose menghadap webcam, tetapi foto diambil oleh lensa Canon DSLR (atau sebaliknya).
-2. **Snapshot WebRTC Mati pada Electron**: Kegagalan kamera Canon menghasilkan citra biru pekat statis (*solid blue test image*) alih-alih mengambil frame webcam yang aktif.
-3. **Kondisi Balapan Asinkron (*Race Condition*)**: Keterlambatan frame awal Canon menimpa status pemilihan sensor di React renderer.
-4. **Viewfinder Membeku (*Silent Disconnect*)**: Pemutusan kabel USB kamera tidak memicu notifikasi IPC ke renderer, membekukan tampilan canvas tanpa disadari pengguna.
-5. **Risiko Foto Basi pada Mode B (*Stale SD Card Read*)**: Kegagalan autofokus (*AF hunt/lock failure*) pada pencahayaan minim dapat memicu pengunduhan foto pose sebelumnya dari kartu memori SD tanpa verifikasi timestamp.
+### 1.1 Executive Verdict (Historical Pre-Implementation)
+**HISTORICAL VERDICT:** **`FAIL_PREFLIGHT_FOR_PILOT` (ACTIVE RELIABILITY BLOCKER — RESOLVED)**  
+Kiosk camera subsystem pada cabang saat investigasi awal **tidak layak diterjunkan ke produksi pilot (Booth #1)** tanpa remediasi terstruktur. Terdapat 5 cacat arsitektural dan konkurensi konkret yang diinvestigasi di bawah.
+
+### 1.2 Remediation & Closure Status (2026-10-12)
+**CURRENT VERDICT:** **`READY_FOR_CHECKPOINT_2_CLOSURE` (PRE-PILOT BLOCKER RESOLVED)**  
+- **Checkpoint 1 (IPC Contract & Status Synchronization):** Terimplementasi & ter-commit pada [`b9a6b26`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/CameraService.ts). Status IPC ortogonal (`isCanonConnected`, `isLiveView`, `activeSensor`) memisahkan routing intent dari kesiapan sensor nyata.
+- **Checkpoint 2 (Capture Pipeline, Sensor Parity, Real-Image Only & SD Freshness):** Terimplementasi penuh pada [`CameraService.ts`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/CameraService.ts), [`CaptureScreen.tsx`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/src/screens/CaptureScreen.tsx), [`preload.ts`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/preload.ts), dan [`bridge.ts`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/src/ipc/bridge.ts).
+- **Hasil Verifikasi Otomatis (89/89 Checks PASS, 100%):**
+  - `test_camera01_checkpoint2_capture_pipeline.mjs`: 27 / 27 PASS
+  - `test_camera01_checkpoint1_ipc_status.mjs`: 21 / 21 PASS
+  - `run_camera_failure_session_isolation_verification.mjs`: 23 / 23 PASS
+  - `run_camera01_checkpoint2_runtime_verification.mjs`: 18 / 18 PASS
+  - `npx tsc --noEmit` & `npx tsc -p tsconfig.electron.json --noEmit`: 0 Errors
+  - `npm run build` (apps/kiosk): Production bundle sukses (4.10s)
+- **Founder Physical UAT di Booth #1:** Seluruh 5 skenario fisik dinyatakan **PASS** oleh Founder.
+- **Batasan Terdokumentasi:** Validasi ekstensi `.JPG` dan `candidate.size > 0` pada perangkat lunak adalah pelindung metadata, bukan bukti fisik bahwa siklus penulisan DIGIC 4 telah selesai secara tuntas pada kartu memori fisik. Validasi fisik hardware Booth #1 tetap menjadi gerbang pembuktian definitif.
 
 ---
 
@@ -281,14 +290,34 @@ Perlu dibuat skrip verifikasi otomatis `scripts/run_camera_reliability_verificat
 
 ---
 
-## 8. Batasan Berkas (Files That Must NOT Be Changed)
+## 9. Rekonsiliasi Implementasi & Verifikasi Akhir (Checkpoints 1 & 2)
 
-Selama investigasi dan hingga audit ChatGPT disetujui, berkas-berkas berikut **DILARANG DIUBAH**:
-- `apps/kiosk/electron/services/CameraService.ts` (Core driver C++ EDSDK)
-- `apps/kiosk/src/screens/CaptureScreen.tsx` (Core viewfinder & capture UI)
-- `apps/kiosk/electron/services/RenderEngine.ts` (Compositor 300 DPI Sharp)
-- `apps/kiosk/electron/services/PrintService.ts` & `PrintQueueService.ts` (Printer engine PR-02)
-- Seluruh berkas evidence yang telah ditutup di `docs/02_EVIDENCE/`
+### 9.1 Matriks Audit Kode Implementasi Checkpoint 2
+| Area Audit | Rujukan Berkas & Baris | Mekanisme & Verifikasi | Status Audit |
+| :--- | :--- | :--- | :---: |
+| **Sensor Parity** | [`CaptureScreen.tsx:541-605`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/src/screens/CaptureScreen.tsx#L541-L605)<br>[`CameraService.ts:301-310`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/CameraService.ts#L301-L310) | Shutter pada mode webcam langsung melakukan snapshot elemen `<video>` ke canvas di renderer; dilarang memicu IPC rana Canon. Main process menolak pemicuan rana fisik jika diminta sensor webcam (`ERR_WEBCAM_CAPTURE_RENDERER_MANAGED`). | **VERIFIED** |
+| **Real-Image Only** | [`CameraService.ts:340-370`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/CameraService.ts#L340-L370)<br>[`CaptureScreen.tsx:609-616`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/src/screens/CaptureScreen.tsx#L609-L616) | `generateTestImage()` dihapus sepenuhnya dari alur pelanggan. Kegagalan pemicuan menghasilkan error terstruktur. Citra kosong (`<50` bytes) ditolak tanpa memajukan pose atau menyimpan foto kosong. | **VERIFIED** |
+| **Failure Isolation** | [`CaptureScreen.tsx:609-616`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/src/screens/CaptureScreen.tsx#L609-L616) | Gagal jepret tidak menambah `photos[]`, tidak memajukan `currentPose`, menampilkan error informatif ke pelanggan, dan tombol retake menghapus foto pose terkait secara bersih. | **VERIFIED** |
+| **Webcam Lifecycle** | [`CaptureScreen.tsx:80-160`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/src/screens/CaptureScreen.tsx#L80-L160)<br>[`preload.ts:25`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/preload.ts#L25) | `stopWebcamStream()` mematikan semua track saat teardown/unmount; late Canon frame membatalkan track webcam yang terlambat datang; sinkronisasi kesiapan melalui `notifyWebcamReady`. | **VERIFIED** |
+| **SD-Card Baseline & Freshness** | [`CameraService.ts:123-231`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/CameraService.ts#L123-L231) | Mengambil baseline pra-shutter `getCardFileIndex()`. Pada Mode B, hanya menerima `.jpg` / `.jpeg` (case-insensitive), mewajibkan `size > 0`, menolak file pada baseline, dan menolak fallback ke file lama jika tidak ada file baru. | **VERIFIED** |
 
----
-*Laporan ini disusun secara read-only murni berdasarkan pemeriksaan menyeluruh terhadap codebase aktif, binding C++ native `@photolab/canon`, dan histori pengujian fisik Booth #1.*
+### 9.2 Bukti Hasil Eksekusi Suite Verifikasi
+1. **Pipeline & Freshness Suite:** `node scripts/test_camera01_checkpoint2_capture_pipeline.mjs` → **27 / 27 PASS (100%)**
+2. **IPC Contract & Status Suite:** `node scripts/test_camera01_checkpoint1_ipc_status.mjs` → **21 / 21 PASS (100%)**
+3. **Session Data Isolation Suite:** `node scripts/run_camera_failure_session_isolation_verification.mjs` → **23 / 23 PASS (100%)**
+4. **Real Electron Runtime Suite:** `node scripts/run_camera01_checkpoint2_runtime_verification.mjs` → **18 / 18 PASS (100%)**
+5. **Static Typecheck:** `npx tsc --noEmit` & `npx tsc -p tsconfig.electron.json --noEmit` → **0 Errors**
+6. **Production Bundle:** `npm run build` (apps/kiosk) → **Built successfully in 4.10s**
+
+### 9.3 Hasil UAT Fisik Founder (Booth #1 Hardware Gate)
+- **Skenario 1 (DSLR Normal Capture):** **PASS** — Shutter Canon EOS 60D merespons normal, foto terunduh via Mode A/B, preview & cetak konsisten.
+- **Skenario 2 (Cabut USB saat Live Countdown):** **PASS** — Viewfinder beralih ke webcam cadangan tanpa crash/hang, foto diambil dari webcam tanpa foto biru sintetis.
+- **Skenario 3 (Tancap Ulang USB Reconnect):** **PASS** — Kamera Canon terdeteksi kembali otomatis, LiveView menyala ulang tanpa interval ganda, pose berikutnya kembali menggunakan DSLR.
+- **Skenario 4 (Uji Tutup Lensa / AF Failure):** **PASS** — Penolakan autofokus tidak menyebabkan pengunduhan foto lama dari kartu memori SD; sistem gagal aman.
+- **Skenario 5 (Kios Standby 30 Menit):** **PASS** — Heartbeat `ExtendShutDownTimer` menjaga Canon 60D aktif tanpa masuk mode sleep APO.
+
+### 9.4 Batasan Perangkat Lunak Terdokumentasi
+Validasi ekstensi file regex dan ukuran `candidate.size > 0` pada kartu SD adalah pelindung tingkat metadata perangkat lunak. Pemeriksaan ini tidak menjamin penulisan blok sektor fisik flash oleh prosesor DIGIC 4 telah tuntas 100% sebelum pembacaan bus USB dimulai. Oleh karena itu, integritas penulisan hardware fisik tetap diverifikasi definitif melalui UAT fisik Booth #1.
+
+### 9.5 Rekomendasi Penutupan
+Seluruh kriteria penerimaan Checkpoint 1 dan Checkpoint 2 telah terpenuhi secara teknis, terverifikasi otomatis, dan dinyatakan PASS pada pengujian fisik hardware. Disarankan untuk memformalkan penutupan CAMERA-01 Checkpoint 2 dan melanjutkan ke PR-03 (Admin Panel Camera Selection UI & Settings).

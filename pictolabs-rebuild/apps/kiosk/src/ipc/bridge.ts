@@ -17,10 +17,30 @@ export interface CameraStatus {
   errorMessage?: string | null;
 }
 
+export interface CapturePhotoOptions {
+  mirrorResult?: boolean;
+  sensor?: 'canon' | 'webcam';
+}
+
+export interface CaptureFailure {
+  success: false;
+  errorCode: string;
+  errorMessage: string;
+}
+
+export interface CaptureSuccessResult {
+  success: true;
+  dataUrl: string;
+  sensor?: 'canon' | 'webcam';
+}
+
+export type CapturePhotoResult = string | CaptureSuccessResult | CaptureFailure;
+
 export interface KioskCameraAPI {
   startLiveView(): Promise<void>;
   stopLiveView(): Promise<void>;
-  capturePhoto(options?: { mirrorResult?: boolean }): Promise<string>;
+  capturePhoto(options?: CapturePhotoOptions): Promise<CapturePhotoResult>;
+  notifyWebcamReady?(ready: boolean, errorCode?: string): Promise<void>;
   discardCapture(filePath: string): Promise<{ success: boolean }>;
   resetSession(): Promise<{ success: boolean }>;
   getStatus(): Promise<CameraStatus>;
@@ -440,7 +460,7 @@ const mockCamera: KioskCameraAPI = {
   async stopLiveView() {
     console.log('[MockKiosk] Camera: stopLiveView');
   },
-  async capturePhoto(_options?: { mirrorResult?: boolean }) {
+  async capturePhoto(_options?: CapturePhotoOptions) {
     console.log('[MockKiosk] Camera: capturePhoto (simulated)', _options);
     const canvas = document.createElement('canvas');
     canvas.width = 640;
@@ -454,6 +474,9 @@ const mockCamera: KioskCameraAPI = {
     ctx.fillText('Simulated Photo', 320, 240);
     ctx.fillText(new Date().toLocaleTimeString(), 320, 270);
     return canvas.toDataURL('image/jpeg', 0.9);
+  },
+  async notifyWebcamReady(ready: boolean, errorCode?: string) {
+    console.log(`[MockKiosk] Camera: notifyWebcamReady ${ready} (code: ${errorCode || 'none'})`);
   },
   async discardCapture(filePath: string) {
     console.log('[MockKiosk] Camera: discardCapture (simulated)', filePath);

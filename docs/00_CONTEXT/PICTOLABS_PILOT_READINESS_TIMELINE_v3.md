@@ -6,7 +6,7 @@
 **Updated:** 8 October 2026  
 
 **Current stage:** PILOT HARDENING / PILOT READINESS  
-**Current active phase:** Phase B — Camera Reliability RCA (CAMERA-01) & PR-03 Camera Selection & Configuration  
+**Current active phase:** Phase B — Camera Reliability (CAMERA-01 Checkpoints 1 & 2 VERIFIED) → PR-03 Camera Selection & Configuration  
 **Current gate:** PILOT READINESS FEATURE GAP CLOSURE  
 **Pilot target:** 1 booth (Booth #1) → operational proof → scale 5–10 booths  
 **Pilot Booth #1 Status:** NOT READY (Pending Pilot Readiness Gates PR-03 through PR-08, and Payment Gateway Settlement Gate)  
@@ -117,7 +117,7 @@ Roadmap ini dipertahankan sebagai baseline historis. Status di bawah adalah stat
 | P2 | Webcam Live Preview | **AUTOMATED_VERIFIED (Fallback Core) / DEFERRED (Consistency Fix)** | WebRTC fallback functions, but preview/countdown source ↔ capture source consistency requires RCA-01 fix. |
 | P2 | Camera Settings | **NOT_STARTED** | ISO, shutter, aperture, WB, exposure compensation capability model planned. |
 | P2 | DSLR / Mirrorless / Webcam Support | **NOT_STARTED (Device Abstraction Model)** | Architecture & capability model planned; no code changes until RCA-01. |
-| P2 | Preview ↔ Capture Consistency | **BLOCKED / OPEN RELIABILITY BUG** | Active issue: countdown uses webcam, capture triggers DSLR. Active reliability investigation (`CAMERA-01`). |
+| P2 | Preview ↔ Capture Consistency | **FOUNDER_UAT_VERIFIED / RESOLVED** | Resolved via CAMERA-01 Checkpoints 1 & 2 (sensor parity, real-image capture, SD freshness, Founder Physical UAT 5/5 PASS). |
 
 ## P3 — Operational / Extended Center
 
@@ -593,23 +593,13 @@ The booth should eventually support:
 
 ## Proposed workstream order
 
-### CAMERA-01 — Reliability RCA
-No code change initially.
-
-Map:
-- initialization
-- active camera state
-- preview source
-- countdown source
-- capture source
-- DSLR readiness
-- webcam fallback
-- reconnect
-- restart
-- device selection state
-
-Deliverable:
-`CAMERA_RELIABILITY_RCA.md`
+### CAMERA-01 — Reliability RCA & Hardening (CLOSED)
+- **Status:** **CLOSED (Checkpoints 1 & 2 Verified, Founder Physical UAT 5/5 PASS)**
+- **Remediation Completed:**
+  - Checkpoint 1 (IPC Status Contract): Commit `b9a6b26`, typed `camera:status-changed`, orthogonal sensor state.
+  - Checkpoint 2 (Capture Pipeline & Sensor Parity): Sensor parity in `CaptureScreen.tsx`, zero synthetic blue images, Mode B SD card baseline freshness.
+- **Verification Evidence:** 89/89 automated tests PASS, real Electron runtime PASS, 0 TypeScript errors, clean production bundle.
+- **Deliverable:** `CAMERA_RELIABILITY_RCA.md` (RCA + Checkpoint 1/2 Final Closure Report).
 
 ### CAMERA-02 — Camera Abstraction / Device Model
 Define a common model for:

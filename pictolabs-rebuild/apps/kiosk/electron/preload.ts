@@ -14,8 +14,10 @@ const kioskApi = {
       ipcRenderer.invoke('camera:start-live-view'),
     stopLiveView: (): Promise<void> =>
       ipcRenderer.invoke('camera:stop-live-view'),
-    capturePhoto: (options?: { mirrorResult?: boolean }): Promise<string> =>
+    capturePhoto: (options?: { mirrorResult?: boolean; sensor?: 'canon' | 'webcam' }): Promise<string | { success: boolean; dataUrl?: string; errorCode?: string; errorMessage?: string }> =>
       ipcRenderer.invoke('camera:capture', options),
+    notifyWebcamReady: (ready: boolean, errorCode?: string): Promise<void> =>
+      ipcRenderer.invoke('camera:notify-webcam-ready', ready, errorCode),
     discardCapture: (filePath: string): Promise<{ success: boolean }> =>
       ipcRenderer.invoke('camera:discard-capture', filePath),
     resetSession: (): Promise<{ success: boolean }> =>
