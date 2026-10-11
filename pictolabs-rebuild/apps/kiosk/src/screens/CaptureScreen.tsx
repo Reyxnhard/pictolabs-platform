@@ -28,6 +28,7 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
   const [isCapturing, setIsCapturing] = useState(false);
   const [webcamReady, setWebcamReady] = useState(false);
   const [cameraSource, setCameraSource] = useState<'canon' | 'webcam' | 'connecting'>('connecting');
+  const [cameraError, setCameraError] = useState<string | null>(null);
   const [isGeneratingLivePhoto, setIsGeneratingLivePhoto] = useState(false);
 
   // Post-Capture Photo Preview (manual advance/retake)
@@ -71,20 +72,110 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
 
   // Initialize Camera via IPC Bridge
   useEffect(() => {
-    let unsubscribe: (() => void) | null = null;
+    let unsubscribeFrames: (() => void) | null = null;
+    let unsubscribeStatus: (() => void) | null = null;
     let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    let isMounted = true;
+
+    function stopWebcamStream() {
+      if (videoRef.current && videoRef.current.srcObject) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream.getTracks().forEach((track) => track.stop());
+        videoRef.current.srcObject = null;
+      }
+      kiosk.camera.notifyWebcamReady?.(false).catch(() => {});
+    }
+
+    function handleWebcamFailure(code: string, message: string) {
+      if (!isMounted) return;
+      console.warn(`[CaptureScreen] Webcam failure [${code}]:`, message);
+      stopWebcamStream();
+      setWebcamReady(false);
+      setCameraSource('connecting');
+      setCameraError(
+        code === 'ERR_WEBCAM_PERMISSION_DENIED'
+          ? 'Izin akses webcam ditolak'
+          : code === 'ERR_WEBCAM_NO_DEVICE'
+          ? 'Perangkat webcam tidak ditemukan'
+          : 'Kamera tidak dapat diakses'
+      );
+      kiosk.camera.notifyWebcamReady?.(false, code).catch(() => {});
+    }
+
+    function startWebRTCFallback() {
+      if (!isMounted) return;
+      if (hasCanonFrameRef.current) return;
+      if (videoRef.current && videoRef.current.srcObject) return;
+
+      console.log('[CaptureScreen] Engaging webcam stream fallback...');
+      navigator.mediaDevices
+        .getUserMedia({
+          video: { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode: 'user' },
+          audio: false,
+        })
+        .then((stream) => {
+          if (!isMounted || hasCanonFrameRef.current || cameraSourceRef.current === 'canon') {
+            console.log('[CaptureScreen] Canon arrived or unmounted during getUserMedia; discarding webcam tracks');
+            stream.getTracks().forEach((track) => track.stop());
+            return;
+          }
+
+          const video = videoRef.current;
+          if (!video) {
+            stream.getTracks().forEach((track) => track.stop());
+            return;
+          }
+
+          video.srcObject = stream;
+          video.onloadedmetadata = () => {
+            if (!isMounted || hasCanonFrameRef.current || cameraSourceRef.current === 'canon') {
+              stream.getTracks().forEach((track) => track.stop());
+              video.srcObject = null;
+              return;
+            }
+
+            video.play()
+              .then(() => {
+                if (!isMounted) return;
+                setCameraSource('webcam');
+                setWebcamReady(true);
+                setCameraError(null);
+                kiosk.camera.notifyWebcamReady?.(true).catch(() => {});
+                console.log('[CaptureScreen] ✓ Webcam stream confirmed active and ready');
+              })
+              .catch((playErr) => {
+                handleWebcamFailure('ERR_WEBCAM_PLAYBACK', playErr.message);
+              });
+          };
+        })
+        .catch((err) => {
+          const code =
+            err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError'
+              ? 'ERR_WEBCAM_PERMISSION_DENIED'
+              : err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError'
+              ? 'ERR_WEBCAM_NO_DEVICE'
+              : 'ERR_WEBCAM_FAILED';
+          handleWebcamFailure(code, err.message);
+        });
+    }
 
     async function initCamera() {
       try {
         const res = await kiosk.camera.startLiveView();
-        
-        // Listen for Canon EDSDK live view frames: Direct Canvas Rendering (Zero React Re-render!)
-        unsubscribe = kiosk.camera.onLiveViewFrame((frameData) => {
+
+        // Listen for Canon EDSDK live view frames: Direct Canvas Rendering
+        unsubscribeFrames = kiosk.camera.onLiveViewFrame((frameData) => {
+          if (!isMounted) return;
           liveViewSrcRef.current = frameData;
+
           if (!hasCanonFrameRef.current) {
             hasCanonFrameRef.current = true;
+            // Canon is active: cleanly stop any running webcam stream!
+            stopWebcamStream();
             setCameraSource('canon');
             setWebcamReady(true);
+            setCameraError(null);
+            console.log('[CaptureScreen] ✓ Canon LiveView stream active');
           }
 
           const img = internalImageRef.current;
@@ -105,13 +196,37 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
           img.src = frameData;
         });
 
+        // Subscribe to Camera Status changes to detect disconnect/reconnect in real time!
+        if (typeof kiosk.camera.onCameraStatusChanged === 'function') {
+          unsubscribeStatus = kiosk.camera.onCameraStatusChanged((status) => {
+            if (!isMounted) return;
+            console.log('[CaptureScreen] Camera status update:', status);
+
+            if (!status.isCanonConnected || status.activeSensor !== 'canon') {
+              if (hasCanonFrameRef.current) {
+                console.warn('[CaptureScreen] Canon disconnected while active! Switching to webcam fallback...');
+                hasCanonFrameRef.current = false;
+                liveViewSrcRef.current = null;
+                const canvas = liveCanvasRef.current;
+                if (canvas) {
+                  const ctx = canvas.getContext('2d');
+                  ctx?.clearRect(0, 0, canvas.width, canvas.height);
+                }
+                setWebcamReady(false);
+                setCameraSource('connecting');
+                startWebRTCFallback();
+              }
+            }
+          });
+        }
+
         // If Electron reports WebRTC mode, or running in browser, start WebRTC immediately
         if ((res as any)?.mode === 'webrtc' || !isElectron()) {
           startWebRTCFallback();
         } else {
           // Safety timeout: If Canon was requested but no frame arrives within 2 seconds, start fallback
           fallbackTimer = setTimeout(() => {
-            if (!hasCanonFrameRef.current) {
+            if (!hasCanonFrameRef.current && isMounted) {
               console.warn('[CaptureScreen] No Canon frame received within 2s, engaging fallback camera');
               startWebRTCFallback();
             }
@@ -119,44 +234,21 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
         }
 
       } catch (err) {
-        console.warn('IPC Camera failed, starting fallback:', err);
+        console.warn('[CaptureScreen] IPC Camera startLiveView failed, engaging fallback:', err);
         startWebRTCFallback();
       }
-    }
-
-    function startWebRTCFallback() {
-      if (hasCanonFrameRef.current) return;
-      if (videoRef.current && videoRef.current.srcObject) return;
-      navigator.mediaDevices
-        .getUserMedia({
-          video: { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode: 'user' },
-          audio: false,
-        })
-        .then((s) => {
-          if (videoRef.current) {
-            videoRef.current.srcObject = s;
-            setCameraSource('webcam');
-            setWebcamReady(true);
-          }
-        })
-        .catch((err) => {
-          console.warn('Webcam fallback failed:', err);
-          setCameraSource('webcam');
-          setWebcamReady(true); // Allow user to still see UI instead of loading forever
-        });
     }
 
     initCamera();
 
     return () => {
-      if (unsubscribe) unsubscribe();
+      isMounted = false;
+      if (unsubscribeFrames) unsubscribeFrames();
+      if (unsubscribeStatus) unsubscribeStatus();
       if (fallbackTimer) clearTimeout(fallbackTimer);
       liveViewSrcRef.current = null;
       kiosk.camera.stopLiveView();
-      if (videoRef.current && videoRef.current.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach((track) => track.stop());
-      }
+      stopWebcamStream();
     };
   }, []);
 
@@ -446,66 +538,84 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
 
     let photoData = '';
     const shouldMirror = configRef.current?.cameraResult !== 'original';
-    
-    // In Electron: ALWAYS trigger native Canon shutter via IPC!
-    if (isElectron()) {
-      try {
-        const result = await kiosk.camera.capturePhoto({
-          mirrorResult: shouldMirror,
-        });
-        if (result && typeof result === 'string' && result.length > 50) {
-          photoData = result;
-        }
-      } catch (err) {
-        console.error('Capture failed via IPC:', err);
-      }
-    }
+    const activeSensor = cameraSourceRef.current;
 
-    // WebRTC Fallback Mode (only if outside Electron or IPC had no result): Capture from video element
-    if (!photoData && videoRef.current && canvasRef.current) {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      canvas.width = video.videoWidth || 1280;
-      canvas.height = video.videoHeight || 720;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        if (shouldMirror) {
-          ctx.translate(canvas.width, 0);
-          ctx.scale(-1, 1);
-        }
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        photoData = canvas.toDataURL('image/jpeg', 0.95);
-      }
-    }
+    console.log(`[CaptureScreen] Executing shutter for activeSensor: ${activeSensor}`);
 
-    // Safety fallback: Use latest LiveView sensor frame from Canon sensor so user always gets their photo
-    if (!photoData && liveViewSrcRef.current) {
-      console.log('[CaptureScreen] Using active LiveView sensor frame as photo fallback');
-      if (shouldMirror && canvasRef.current && internalImageRef.current.complete) {
-        const img = internalImageRef.current;
+    if (activeSensor === 'canon') {
+      // ── SENSOR PARITY: Canon Preview -> Canon Final Still ──
+      if (isElectron()) {
+        try {
+          const result = await kiosk.camera.capturePhoto({
+            mirrorResult: shouldMirror,
+            sensor: 'canon',
+          });
+          if (typeof result === 'string' && result.length > 50) {
+            photoData = result;
+          } else if (result && typeof result === 'object' && (result as any).success && (result as any).dataUrl) {
+            photoData = (result as any).dataUrl;
+          }
+        } catch (err) {
+          console.error('[CaptureScreen] Canon capture failed via IPC:', err);
+        }
+      }
+
+      // Mode C in-renderer fallback ONLY if Canon was active sensor and has valid LiveView frame
+      if (!photoData && liveViewSrcRef.current && hasCanonFrameRef.current) {
+        console.log('[CaptureScreen] Using active Canon LiveView sensor frame as photo fallback');
+        if (shouldMirror && canvasRef.current && internalImageRef.current.complete) {
+          const img = internalImageRef.current;
+          const canvas = canvasRef.current;
+          canvas.width = img.naturalWidth || 1280;
+          canvas.height = img.naturalHeight || 720;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(img, 0, 0);
+            photoData = canvas.toDataURL('image/jpeg', 0.95);
+          }
+        }
+        if (!photoData) {
+          photoData = liveViewSrcRef.current;
+        }
+      }
+    } else if (activeSensor === 'webcam') {
+      // ── SENSOR PARITY: Webcam Preview -> Webcam Final Still ──
+      // NEVER trigger Canon shutter release or SD card download!
+      if (videoRef.current && canvasRef.current) {
+        const video = videoRef.current;
         const canvas = canvasRef.current;
-        canvas.width = img.naturalWidth || 1280;
-        canvas.height = img.naturalHeight || 720;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.translate(canvas.width, 0);
-          ctx.scale(-1, 1);
-          ctx.drawImage(img, 0, 0);
-          photoData = canvas.toDataURL('image/jpeg', 0.95);
+        if (video.videoWidth > 0 && video.videoHeight > 0) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            if (shouldMirror) {
+              ctx.translate(canvas.width, 0);
+              ctx.scale(-1, 1);
+            }
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            photoData = canvas.toDataURL('image/jpeg', 0.95);
+          }
+        } else {
+          console.warn('[CaptureScreen] Webcam video element has 0 dimensions during shutter');
         }
       }
-      if (!photoData) {
-        photoData = liveViewSrcRef.current;
-      }
+    } else {
+      console.warn('[CaptureScreen] Shutter invoked but no camera sensor is active');
     }
 
-    // Safety guard: If photo is still empty, do NOT record a blank slot or advance pose
+    // STRICT VALIDATION: If photoData is missing or invalid, FAIL EXPLICITLY.
+    // Do NOT advance pose, do NOT push empty/synthetic photo to session.
     if (!photoData || photoData.length < 50) {
-      console.warn('[CaptureScreen] Shutter result empty, will not record blank pose');
+      console.warn('[CaptureScreen] Shutter result empty or failed. Will not record fake photo or advance pose.');
       setIsCapturing(false);
+      setCameraError('Gagal mengambil foto. Silakan tekan CEKREK untuk mencoba lagi.');
       return;
     }
 
+    setCameraError(null);
     const nextPhotos = [...photosRef.current, photoData];
     setPhotos(nextPhotos);
     photosRef.current = nextPhotos;
@@ -630,9 +740,28 @@ export default function CaptureScreen({ navigate, updateSession, session }: Scre
           />
 
           {!webcamReady && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-800">
-              <div className="w-12 h-12 border-4 border-primary-400 border-t-transparent rounded-full animate-spin mb-4" />
-              <p className="font-medium text-sm">Menghubungkan ke kamera...</p>
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-800 p-6 text-center">
+              {cameraError ? (
+                <>
+                  <div className="w-12 h-12 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center mb-3 text-2xl font-bold">
+                    ⚠️
+                  </div>
+                  <p className="font-bold text-sm text-rose-300">{cameraError}</p>
+                  <p className="text-xs text-slate-400 mt-1">Periksa kabel USB kamera Canon atau izin webcam</p>
+                </>
+              ) : (
+                <>
+                  <div className="w-12 h-12 border-4 border-primary-400 border-t-transparent rounded-full animate-spin mb-4" />
+                  <p className="font-medium text-sm">Menghubungkan ke kamera...</p>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Capture Error Banner when camera is ready but last shutter failed */}
+          {webcamReady && cameraError && !previewPhoto && (
+            <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 px-4 py-2 rounded-xl bg-rose-600/90 text-white text-xs font-bold shadow-lg animate-bounce">
+              {cameraError}
             </div>
           )}
 

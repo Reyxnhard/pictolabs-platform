@@ -11,8 +11,8 @@
 ## 1. Executive Summary & Master Timeline Synchronization
 
 ### Current Platform Stage: **Pilot Hardening / Pilot Readiness**
-### Current Active Gate: **Phase B — PR-02 Printer Profiles & Calibration (Founder Physical UAT PASS — Ready for Closure)**
-### Next Technical Workstream: **Camera Reliability RCA (`CAMERA-01`) & PR-02 Closure**
+### Current Active Gate: **Phase B — CAMERA-01 Camera Reliability RCA & PR-03 Camera Selection**
+### Next Technical Workstream: **Camera Reliability RCA (`CAMERA-01`) & Midtrans QRIS Setup**
 
 The completion status of the Pictolabs platform reflects strict source-code reality and physical hardware UAT sign-offs across `apps/backend`, `apps/kiosk`, `apps/dashboard`, and `packages/shared`. Outdated documentation claims, planning artifacts, and aspirational roadmaps were reconciled against the authoritative [`docs/00_CONTEXT/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/00_CONTEXT/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md).
 
@@ -24,7 +24,7 @@ The completion status of the Pictolabs platform reflects strict source-code real
 ├────────────────────────────┼─────────────────────────────┼────────────────────────┤
 │ Architecture / Foundation  │ CLOSED                      │ Monorepo & DB verified │
 │ PR-01 Booth Configuration  │ CLOSED (Conditional Ex.)    │ Founder UAT PASS (non-pmt)│
-│ PR-02 Printer Profiles     │ FOUNDER_UAT_PASS            │ Ready for Closure      │
+│ PR-02 Printer Profiles     │ CLOSED                      │ Formally Closed 2026-10-11│
 │ P0 Admin Panel & Security  │ CLOSED                      │ Offline hash PIN PASS  │
 │ Session History (Kiosk P1-2) CLOSED                      │ Founder UAT PASS       │
 │ Printer Execution (RCA-7)  │ PHYSICAL_REGRESSION_PASS    │ Founder UAT PASS (10/10)│
@@ -302,11 +302,11 @@ c:\Users\ezarh\.gemini\antigravity-ide\scratch\Pictolabs
 ### Printer & Hardware Output
 - **Current Timeline Status:**
   - **RCA-7 Execution Simplification:** `CLOSED / VERIFIED` (Founder Physical UAT PASS on Booth #1; 6/6 spec test blocks, 10/10 architectural invariants audited)
-  - **PR-02 Printer Profiles & Calibration:** `FOUNDER_UAT_PASS` — Ready for formal closure (`READY_TO_CLOSE_PR02`)
+  - **PR-02 Printer Profiles & Calibration:** `CLOSED` (Formally closed on 2026-10-11 based on Founder Physical UAT PASS on Booth #1 across all 8 physical scenarios, 41/41 UAT suite, 17/17 blocker, 25/25 checkpoints, 36/36 RCA-6, 6/6 RCA-7 [10 invariants audited], clean monorepo build, and remote push `aec7780`)
   - **Automated Verification:** `AUTOMATED_VERIFIED` (100% PASS: 41/41 PR-02 UAT suite across Tasks A-D, 17/17 PR-02 blocker suite, 25/25 checkpoint suites [9 Checkpoint 1 + 5 Checkpoint 2 + 11 Checkpoint 3], 36/36 RCA-6, 6/6 RCA-7 [10 invariants audited], 10/10 config hydration, 22/22 PR-01 suite)
   - **Packaging & Runtime Verification:** `PACKAGED_VERIFIED` (Asset `calibration_target.png` verified 123,101 bytes in `win-unpacked/resources/assets/`; monorepo `turbo run build` clean across 4 packages)
   - **Physical UAT Gate:** `FOUNDER_PHYSICAL_UAT_PASS` (Founder confirmed PASS across all 8 scenarios on Booth #1: persistence, 2R strip cut, Admin reprint queue routing, original format stability, explicit 2R/4R selection, custom copies, unknown-format guard, zero duplicate prints)
-  - **Release State:** `READY_FOR_CLOSURE` (Pending ChatGPT review & Founder final sign-off; Pilot Booth #1 Launch remains HELD pending independent camera/payment gates)
+  - **Release State:** `CLOSED` (PR-02 formally closed; Pilot Booth #1 Launch remains HELD pending independent camera/payment gates)
 
 - **Technical Reality & Operational Evidence (PR-02 Calibration & Profiles):**
   - **Customer Catalog Scope:** Customer catalog currently offers only 2R Photostrip (`photo-strip-2x6`) with `frameId: '2R'`. Customer-facing 4R product does not exist in catalog; 4R format routing is physically proven via Admin reprint format override and calibration target prints.
@@ -678,7 +678,7 @@ The following risks are derived exclusively from actual code patterns:
 ## 11. Recommended Next Milestones & Execution Roadmap
 
 ### Current Stage: **Pilot Hardening / Pilot Readiness**
-### Current Active Gate: **Phase B — PR-02 Printer Profiles & Calibration (Founder Physical UAT PASS — Ready for Closure)**
+### Current Active Gate: **Phase B — CAMERA-01 Camera Reliability RCA & PR-03 Camera Selection**
 ### Next Technical Workstream: **Camera Reliability RCA (`CAMERA-01`) & Midtrans QRIS Setup**
 
 In strict accordance with the approved [`docs/00_CONTEXT/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/00_CONTEXT/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md), the technical roadmap is governed by physical reliability gates rather than speculative commercial feature development.

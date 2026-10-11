@@ -6,19 +6,45 @@
  * so the React app can still function for UI development.
  */
 
+export type CameraSensorType = 'canon' | 'webcam' | 'none';
+
 export interface CameraStatus {
   isCanonConnected: boolean;
   cameraModel: string | null;
   isLiveView: boolean;
+  activeSensor: CameraSensorType;
+  errorCode?: string | null;
+  errorMessage?: string | null;
 }
+
+export interface CapturePhotoOptions {
+  mirrorResult?: boolean;
+  sensor?: 'canon' | 'webcam';
+}
+
+export interface CaptureFailure {
+  success: false;
+  errorCode: string;
+  errorMessage: string;
+}
+
+export interface CaptureSuccessResult {
+  success: true;
+  dataUrl: string;
+  sensor?: 'canon' | 'webcam';
+}
+
+export type CapturePhotoResult = string | CaptureSuccessResult | CaptureFailure;
 
 export interface KioskCameraAPI {
   startLiveView(): Promise<void>;
   stopLiveView(): Promise<void>;
-  capturePhoto(options?: { mirrorResult?: boolean }): Promise<string>;
+  capturePhoto(options?: CapturePhotoOptions): Promise<CapturePhotoResult>;
+  notifyWebcamReady?(ready: boolean, errorCode?: string): Promise<void>;
   discardCapture(filePath: string): Promise<{ success: boolean }>;
   resetSession(): Promise<{ success: boolean }>;
   getStatus(): Promise<CameraStatus>;
+  onCameraStatusChanged(cb: (status: CameraStatus) => void): () => void;
   onLiveViewFrame(cb: (frame: string) => void): () => void;
 }
 
@@ -434,7 +460,7 @@ const mockCamera: KioskCameraAPI = {
   async stopLiveView() {
     console.log('[MockKiosk] Camera: stopLiveView');
   },
-  async capturePhoto(_options?: { mirrorResult?: boolean }) {
+  async capturePhoto(_options?: CapturePhotoOptions) {
     console.log('[MockKiosk] Camera: capturePhoto (simulated)', _options);
     const canvas = document.createElement('canvas');
     canvas.width = 640;
@@ -449,6 +475,9 @@ const mockCamera: KioskCameraAPI = {
     ctx.fillText(new Date().toLocaleTimeString(), 320, 270);
     return canvas.toDataURL('image/jpeg', 0.9);
   },
+  async notifyWebcamReady(ready: boolean, errorCode?: string) {
+    console.log(`[MockKiosk] Camera: notifyWebcamReady ${ready} (code: ${errorCode || 'none'})`);
+  },
   async discardCapture(filePath: string) {
     console.log('[MockKiosk] Camera: discardCapture (simulated)', filePath);
     return { success: true };
@@ -457,12 +486,29 @@ const mockCamera: KioskCameraAPI = {
     console.log('[MockKiosk] Camera: resetSession (simulated)');
     return { success: true };
   },
-  async getStatus() {
+  async getStatus(): Promise<CameraStatus> {
     return {
       isCanonConnected: false,
       cameraModel: 'Webcam Fallback (Browser Dev)',
       isLiveView: false,
+      activeSensor: 'webcam',
+      errorCode: null,
+      errorMessage: null,
     };
+  },
+  onCameraStatusChanged(cb) {
+    console.log('[MockKiosk] Camera: onCameraStatusChanged (registered)');
+    const timer = setTimeout(() => {
+      cb({
+        isCanonConnected: false,
+        cameraModel: 'Webcam Fallback (Browser Dev)',
+        isLiveView: false,
+        activeSensor: 'webcam',
+        errorCode: null,
+        errorMessage: null,
+      });
+    }, 50);
+    return () => clearTimeout(timer);
   },
   onLiveViewFrame(_cb) {
     console.log('[MockKiosk] Camera: onLiveViewFrame (no-op in browser)');
