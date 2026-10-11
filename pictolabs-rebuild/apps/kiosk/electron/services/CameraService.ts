@@ -32,11 +32,45 @@ let stopWatchCameras: (() => void) | null = null;
 let pendingCaptureResolver: ((file: any) => void) | null = null;
 let lastLiveViewDataUrl: string | null = null;
 
-const cameraStatus = {
+export type CameraSensorType = 'canon' | 'webcam' | 'none';
+
+export interface CameraStatus {
+  isCanonConnected: boolean;
+  cameraModel: string | null;
+  isLiveView: boolean;
+  activeSensor: CameraSensorType;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+}
+
+const cameraStatus: CameraStatus = {
   isCanonConnected: false,
-  cameraModel: null as string | null,
+  cameraModel: null,
   isLiveView: false,
+  activeSensor: 'none',
+  errorCode: null,
+  errorMessage: null,
 };
+
+export function getEffectiveCameraStatus(): CameraStatus {
+  return {
+    ...cameraStatus,
+    isLiveView: isLiveViewActive,
+    activeSensor: activeCamera
+      ? 'canon'
+      : (isLiveViewActive ? 'webcam' : 'none'),
+  };
+}
+
+export function broadcastCameraStatus(): void {
+  const status = getEffectiveCameraStatus();
+  const windows = BrowserWindow.getAllWindows();
+  for (const win of windows) {
+    if (!win.isDestroyed()) {
+      win.webContents.send('camera:status-changed', status);
+    }
+  }
+}
 
 function handleCanonEvent(eventName: string, event: any, source: string): void {
   console.log(`[CameraService] [${source}] Event: ${eventName}`);
@@ -181,10 +215,15 @@ async function onCameraPluggedIn(): Promise<void> {
         await configureSaveToWithRetry(activeCamera);
       } catch (connErr) {
         console.warn('[CameraService] Note on camera connect:', (connErr as Error).message);
+        cameraStatus.errorCode = 'ERR_CANON_CONNECT';
+        cameraStatus.errorMessage = (connErr as Error).message;
       }
 
       cameraStatus.isCanonConnected = true;
       cameraStatus.cameraModel = model;
+      cameraStatus.activeSensor = 'canon';
+      cameraStatus.errorCode = null;
+      cameraStatus.errorMessage = null;
 
       // Start keep-alive heartbeat loop immediately upon connection
       startKeepAliveHeartbeat();
@@ -198,8 +237,12 @@ async function onCameraPluggedIn(): Promise<void> {
           startLiveViewInterval();
         } catch (lvErr) {
           console.error('[CameraService] LiveView auto-start error:', lvErr);
+          cameraStatus.errorCode = 'ERR_CANON_LIVEVIEW_AUTOSTART';
+          cameraStatus.errorMessage = (lvErr as Error).message;
         }
       }
+
+      broadcastCameraStatus();
     }
   } catch (err) {
     console.error('[CameraService] Error checking cameras:', err);
@@ -212,11 +255,15 @@ function onCameraDisconnected(): void {
   activeCamera = null;
   cameraStatus.isCanonConnected = false;
   cameraStatus.cameraModel = null;
+  cameraStatus.activeSensor = isLiveViewActive ? 'webcam' : 'none';
+  cameraStatus.errorCode = 'ERR_CANON_DISCONNECTED';
+  cameraStatus.errorMessage = 'Canon camera disconnected';
   lastLiveViewDataUrl = null; // Clear stale live view frame buffer immediately on disconnect
   if (liveViewInterval) {
     clearInterval(liveViewInterval);
     liveViewInterval = null;
   }
+  broadcastCameraStatus();
 }
 
 export function cleanupCamera(): void {
@@ -224,6 +271,11 @@ export function cleanupCamera(): void {
   stopKeepAliveHeartbeat();
   isLiveViewActive = false;
   cameraStatus.isLiveView = false;
+  cameraStatus.isCanonConnected = false;
+  cameraStatus.cameraModel = null;
+  cameraStatus.activeSensor = 'none';
+  cameraStatus.errorCode = null;
+  cameraStatus.errorMessage = null;
   lastLiveViewDataUrl = null;
   pendingCaptureResolver = null;
   if (liveViewInterval) {
@@ -274,6 +326,11 @@ function tryLoadCanonAddon(): boolean {
   } catch (err) {
     console.warn('[CameraService] Canon EDSDK addon not available, using WebRTC fallback:', (err as Error).message);
     canonAddon = null;
+    cameraStatus.errorCode = 'ERR_CANON_SDK_UNAVAILABLE';
+    cameraStatus.errorMessage = (err as Error).message;
+    cameraStatus.isCanonConnected = false;
+    cameraStatus.cameraModel = null;
+    broadcastCameraStatus();
     return false;
   }
 }
@@ -329,10 +386,7 @@ export function registerCameraHandlers(config: CameraServiceConfig): void {
     if (hasCanon && !activeCamera) {
       await onCameraPluggedIn();
     }
-    return {
-      ...cameraStatus,
-      isLiveView: isLiveViewActive,
-    };
+    return getEffectiveCameraStatus();
   });
 
   // ─── Start Live View ───────────────────────────────────
@@ -358,15 +412,23 @@ export function registerCameraHandlers(config: CameraServiceConfig): void {
         console.log(`[CameraService] Starting Canon LiveView for ${activeCamera.description}...`);
         activeCamera.startLiveView();
         cameraStatus.isLiveView = true;
+        cameraStatus.activeSensor = 'canon';
+        cameraStatus.errorCode = null;
+        cameraStatus.errorMessage = null;
         startLiveViewInterval();
+        broadcastCameraStatus();
         return { success: true, mode: 'canon' };
       } catch (err) {
         console.error('[CameraService] Canon LiveView start failed:', err);
+        cameraStatus.errorCode = 'ERR_CANON_LIVEVIEW_START';
+        cameraStatus.errorMessage = (err as Error).message;
       }
     }
 
     // WebRTC mode fallback
     console.log('[CameraService] WebRTC fallback mode active for LiveView');
+    cameraStatus.activeSensor = 'webcam';
+    broadcastCameraStatus();
     return { success: true, mode: 'webrtc' };
   });
 
@@ -560,6 +622,7 @@ export function discardCaptureFile(filePath: string): { success: boolean } {
 export function stopLiveViewInternal(): void {
   isLiveViewActive = false;
   cameraStatus.isLiveView = false;
+  cameraStatus.activeSensor = cameraStatus.isCanonConnected ? 'canon' : 'none';
 
   if (liveViewInterval) {
     clearInterval(liveViewInterval);
@@ -573,6 +636,11 @@ export function stopLiveViewInternal(): void {
       console.warn('[CameraService] Canon LiveView stop error:', err);
     }
   }
+
+  broadcastCameraStatus();
 }
+
+export { onCameraPluggedIn as onCameraPluggedInForTesting, onCameraDisconnected as onCameraDisconnectedForTesting };
+
 
 

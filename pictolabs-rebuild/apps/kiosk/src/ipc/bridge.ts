@@ -6,10 +6,15 @@
  * so the React app can still function for UI development.
  */
 
+export type CameraSensorType = 'canon' | 'webcam' | 'none';
+
 export interface CameraStatus {
   isCanonConnected: boolean;
   cameraModel: string | null;
   isLiveView: boolean;
+  activeSensor: CameraSensorType;
+  errorCode?: string | null;
+  errorMessage?: string | null;
 }
 
 export interface KioskCameraAPI {
@@ -19,6 +24,7 @@ export interface KioskCameraAPI {
   discardCapture(filePath: string): Promise<{ success: boolean }>;
   resetSession(): Promise<{ success: boolean }>;
   getStatus(): Promise<CameraStatus>;
+  onCameraStatusChanged(cb: (status: CameraStatus) => void): () => void;
   onLiveViewFrame(cb: (frame: string) => void): () => void;
 }
 
@@ -457,12 +463,29 @@ const mockCamera: KioskCameraAPI = {
     console.log('[MockKiosk] Camera: resetSession (simulated)');
     return { success: true };
   },
-  async getStatus() {
+  async getStatus(): Promise<CameraStatus> {
     return {
       isCanonConnected: false,
       cameraModel: 'Webcam Fallback (Browser Dev)',
       isLiveView: false,
+      activeSensor: 'webcam',
+      errorCode: null,
+      errorMessage: null,
     };
+  },
+  onCameraStatusChanged(cb) {
+    console.log('[MockKiosk] Camera: onCameraStatusChanged (registered)');
+    const timer = setTimeout(() => {
+      cb({
+        isCanonConnected: false,
+        cameraModel: 'Webcam Fallback (Browser Dev)',
+        isLiveView: false,
+        activeSensor: 'webcam',
+        errorCode: null,
+        errorMessage: null,
+      });
+    }, 50);
+    return () => clearTimeout(timer);
   },
   onLiveViewFrame(_cb) {
     console.log('[MockKiosk] Camera: onLiveViewFrame (no-op in browser)');

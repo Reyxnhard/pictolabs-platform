@@ -21,8 +21,31 @@ const kioskApi = {
     resetSession: (): Promise<{ success: boolean }> =>
       ipcRenderer.invoke('camera:reset-session'),
 
-    getStatus: (): Promise<{ isCanonConnected: boolean; cameraModel: string | null; isLiveView: boolean }> =>
+    getStatus: (): Promise<{
+      isCanonConnected: boolean;
+      cameraModel: string | null;
+      isLiveView: boolean;
+      activeSensor: 'canon' | 'webcam' | 'none';
+      errorCode?: string | null;
+      errorMessage?: string | null;
+    }> =>
       ipcRenderer.invoke('camera:status'),
+    /** Subscribe to camera status changes (connect, disconnect, sensor transition). Returns unsubscribe fn. */
+    onCameraStatusChanged: (
+      cb: (status: {
+        isCanonConnected: boolean;
+        cameraModel: string | null;
+        isLiveView: boolean;
+        activeSensor: 'canon' | 'webcam' | 'none';
+        errorCode?: string | null;
+        errorMessage?: string | null;
+      }) => void
+    ): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: any) =>
+        cb(status);
+      ipcRenderer.on('camera:status-changed', handler);
+      return () => ipcRenderer.removeListener('camera:status-changed', handler);
+    },
     /** Subscribe to live-view frame stream. Returns unsubscribe fn. */
     onLiveViewFrame: (cb: (frame: string) => void): (() => void) => {
       const handler = (_event: Electron.IpcRendererEvent, frame: string) =>
