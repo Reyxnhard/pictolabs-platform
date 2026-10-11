@@ -570,6 +570,7 @@ export interface KioskSessionHistoryItem {
   compositeExists: boolean;
   printStatus: 'pending' | 'printed' | 'failed' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'PENDING' | 'NOT_QUEUED';
   printAttempts: number;
+  printFormat?: '2R' | '4R' | '6R' | null;
   lastPrintError?: string | null;
   uploaded: boolean;
   uploadStatus: 'PENDING' | 'UPLOADING' | 'COMPLETED' | 'FAILED';
@@ -596,7 +597,7 @@ export function getSessionHistory(query?: KioskSessionHistoryQuery): KioskSessio
   `).all(limit, offset) as any[];
 
   const stmtPrint = db.prepare(`
-    SELECT status, attempts, last_error 
+    SELECT status, attempts, last_error, format 
     FROM print_queue 
     WHERE session_id = ? 
     ORDER BY created_at DESC 
@@ -630,22 +631,40 @@ export function getSessionHistory(query?: KioskSessionHistoryQuery): KioskSessio
       localStorageState = 'EVICTED';
     }
 
-    // Print status resolution
+    // Print status & format resolution
     const printRow = stmtPrint.get(row.id) as any;
     let printStatus: any = row.print_status || 'pending';
     let printAttempts = 0;
     let lastPrintError: string | null = null;
+    let printFormat: '2R' | '4R' | '6R' | null = null;
 
     if (printRow) {
       printStatus = printRow.status === 'DEAD_LETTER' ? 'FAILED' : printRow.status;
       printAttempts = printRow.attempts || 0;
       lastPrintError = printRow.last_error || null;
+      if (printRow.format) {
+        const norm = String(printRow.format).toUpperCase();
+        if (norm === '2R' || norm === '4R' || norm === '6R') {
+          printFormat = norm as any;
+        }
+      }
     } else if (row.print_status === 'printed') {
       printStatus = 'COMPLETED';
     } else if (row.print_status === 'failed') {
       printStatus = 'FAILED';
     } else {
       printStatus = 'NOT_QUEUED';
+    }
+
+    if (!printFormat && row.frame_id) {
+      const fId = String(row.frame_id).toUpperCase();
+      if (fId === '2R' || fId.includes('2R') || fId.includes('STRIP')) {
+        printFormat = '2R';
+      } else if (fId === '6R' || fId.includes('6R')) {
+        printFormat = '6R';
+      } else if (fId === '4R' || fId.includes('4R') || fId.includes('POSTCARD')) {
+        printFormat = '4R';
+      }
     }
 
     // Upload status resolution
@@ -690,6 +709,7 @@ export function getSessionHistory(query?: KioskSessionHistoryQuery): KioskSessio
       compositeExists,
       printStatus,
       printAttempts,
+      printFormat,
       lastPrintError,
       uploaded: Boolean(row.uploaded),
       uploadStatus,
@@ -723,9 +743,19 @@ export function getSessionHistory(query?: KioskSessionHistoryQuery): KioskSessio
 export async function reprintSessionWithDebounce(
   sessionId: string,
   copies: number = 1,
+  format?: string,
   reason: string = 'OPERATOR_REPRINT'
 ): Promise<{ success: boolean; printJobId?: string; error?: string }> {
   if (!db) return { success: false, error: 'Database not initialized' };
+
+  // Strict integer validation for copy count (enforce reasonable maximum 10)
+  const numCopies = Number(copies);
+  if (isNaN(numCopies) || !Number.isInteger(numCopies) || numCopies < 1 || numCopies > 10) {
+    return {
+      success: false,
+      error: 'Jumlah salinan cetak tidak valid. Masukkan bilangan bulat antara 1 dan 10.',
+    };
+  }
 
   try {
     const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId) as any;
@@ -801,14 +831,14 @@ export async function reprintSessionWithDebounce(
 
     // 4. Delegate to reprintSession in PrintQueueService
     const { reprintSession } = require('./PrintQueueService');
-    const result = await reprintSession(sessionId, copies);
+    const result = await reprintSession(sessionId, numCopies, format);
 
     if (result.success) {
       recordSystemEvent(
         'SESSION_REPRINT',
         'INFO',
         'AdminSessionHistory',
-        `Operator melakukan cetak ulang untuk sesi ${sessionId} (${copies} copy). Job ID: ${result.id}. Alasan: ${reason}`
+        `Operator melakukan cetak ulang untuk sesi ${sessionId} (${numCopies} copy, format: ${format || 'AUTO'}). Job ID: ${result.id}. Alasan: ${reason}`
       );
       return { success: true, printJobId: result.id };
     } else {
@@ -2251,8 +2281,8 @@ export function registerSyncHandlers(engineConfig: SyncEngineConfig): void {
     return getSessionHistory(query);
   });
 
-  ipcMain.handle('session:history:reprint', async (_event, params: { sessionId: string; copies?: number; reason?: string }) => {
-    return reprintSessionWithDebounce(params?.sessionId, params?.copies || 1, params?.reason || 'OPERATOR_REPRINT');
+  ipcMain.handle('session:history:reprint', async (_event, params: { sessionId: string; copies?: number; format?: string; reason?: string }) => {
+    return reprintSessionWithDebounce(params?.sessionId, params?.copies ?? 1, params?.format, params?.reason || 'OPERATOR_REPRINT');
   });
 
   ipcMain.handle('session:history:force-upload', async (_event, params: { sessionId: string }) => {

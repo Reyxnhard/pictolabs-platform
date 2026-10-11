@@ -906,18 +906,47 @@ export function retryPrintJob(jobId: string): { success: boolean; error?: string
 
 export async function reprintSession(
   sessionId: string,
-  overrideCopies?: number
+  overrideCopies?: number,
+  overrideFormat?: string
 ): Promise<{ success: boolean; id?: string; error?: string; isDuplicate?: boolean }> {
   const db = getDatabase();
   if (!db) return { success: false, error: 'Database not initialized' };
 
+  // 1. Strict copy count validation (must be positive integer between 1 and 10)
+  let copies: number = 1;
+  if (overrideCopies !== undefined && overrideCopies !== null) {
+    const numCopies = Number(overrideCopies);
+    if (isNaN(numCopies) || !Number.isInteger(numCopies) || numCopies < 1 || numCopies > 10) {
+      return {
+        success: false,
+        error: 'Jumlah salinan cetak tidak valid. Masukkan bilangan bulat antara 1 dan 10.',
+      };
+    }
+    copies = numCopies;
+  }
+
   try {
     let filePath: string | null = null;
-    let targetPrinter: string | null = null;
-    let copies: number = overrideCopies && overrideCopies > 0 ? overrideCopies : 1;
     let format: string | null = null;
 
-    // 1. Authoritative: Inspect previous print_queue jobs for this session
+    // Explicit format override from operator UI
+    if (overrideFormat) {
+      const normOverride = String(overrideFormat).toUpperCase().trim();
+      if (normOverride === '2R' || normOverride === '2R (CUT)' || normOverride === 'STRIP2X6' || normOverride === 'STRIP') {
+        format = '2R';
+      } else if (normOverride === '4R' || normOverride === '4R (UNCUT)' || normOverride === 'PHOTO4X6' || normOverride === 'POSTCARD') {
+        format = '4R';
+      } else if (normOverride === '6R' || normOverride === '6R (UNCUT)' || normOverride === 'PHOTO6X8') {
+        format = '6R';
+      } else {
+        return {
+          success: false,
+          error: `Format cetak yang dipilih ('${overrideFormat}') tidak valid. Pilih 2R (Cut) atau 4R (Uncut).`,
+        };
+      }
+    }
+
+    // 2. Authoritative: Inspect previous print_queue jobs for this session
     const lastJob = db.prepare(`
       SELECT file_path, printer_name, format, copies 
       FROM print_queue 
@@ -930,13 +959,10 @@ export async function reprintSession(
       if (lastJob.file_path) {
         filePath = lastJob.file_path;
       }
-      if (lastJob.printer_name) {
-        targetPrinter = lastJob.printer_name;
-      }
-      if (lastJob.copies && (!overrideCopies || overrideCopies <= 0)) {
+      if (lastJob.copies && (overrideCopies === undefined || overrideCopies === null)) {
         copies = lastJob.copies;
       }
-      if (lastJob.format) {
+      if (!format && lastJob.format) {
         const jf = String(lastJob.format).toUpperCase();
         if (jf === '2R' || jf === '4R' || jf === '6R') {
           format = jf;
@@ -944,7 +970,7 @@ export async function reprintSession(
       }
     }
 
-    // 2. Secondary: Inspect sessions table for composite_path and frame_id
+    // 3. Secondary: Inspect sessions table for composite_path and frame_id
     const sessionRow = db.prepare('SELECT composite_path, frame_id FROM sessions WHERE id = ?').get(sessionId) as any;
     if (sessionRow) {
       if (!filePath && sessionRow.composite_path) {
@@ -962,12 +988,12 @@ export async function reprintSession(
       }
     }
 
-    // 3. Validation: Composite image existence
+    // 4. Validation: Composite image existence
     if (!filePath) {
       return { success: false, error: `No composite photo found for session ${sessionId}` };
     }
 
-    // 4. Strict Validation: If format is missing or ambiguous
+    // 5. Strict Validation: If format is missing or ambiguous
     // Rule: NEVER silently classify an unknown or ambiguous format as 4R!
     if (!format) {
       return {
@@ -978,7 +1004,7 @@ export async function reprintSession(
 
     const cleanPath = filePath.replace(/^file:\/\/\/?/, '');
 
-    // 5. Manual reprint deduplication & lock guard:
+    // 6. Manual reprint deduplication & lock guard:
     // If an active job for this session is already PENDING or PRINTING, prevent duplicate enqueue!
     const activeJob = db.prepare(`
       SELECT id, status FROM print_queue 
@@ -997,18 +1023,21 @@ export async function reprintSession(
       await ensureCompositeOnDisk(sessionId, cleanPath);
     }
 
-    const printer = targetPrinter || getDefaultPrinterName() || 'AUTO';
+    // CRITICAL: Force 'AUTO' queue routing so executePrintJob dynamically resolves the
+    // configured printer queue strictly according to media format (strip2x6 vs photo4x6).
+    // Never copy a hardcoded or stale printer name from lastJob or defaultPrinterName!
+    const printer = 'AUTO';
     const newJobId = `print_reprint_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();
 
-    // 6. Create new print_queue row (without modifying old job)
+    // 7. Create new print_queue row (without modifying old job)
     db.prepare(`
       INSERT INTO print_queue (
         id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, last_error, next_retry_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', 0, 5, NULL, NULL, ?, ?)
-    `).run(newJobId, sessionId, cleanPath, printer, format, copies, now, now);
+      ) VALUES (?, ?, ?, 'AUTO', ?, ?, 'PENDING', 0, 5, NULL, NULL, ?, ?)
+    `).run(newJobId, sessionId, cleanPath, format, copies, now, now);
 
-    console.log(`[PrintQueueService] 🖨️ Manual reprint initiated: New job ${newJobId} created for session ${sessionId} (format: ${format}, ${cleanPath})`);
+    console.log(`[PrintQueueService] 🖨️ Manual reprint initiated: New job ${newJobId} created for session ${sessionId} (format: ${format}, ${cleanPath}, copies: ${copies})`);
     triggerQueueProcessing();
 
     return { success: true, id: newJobId, isDuplicate: false };

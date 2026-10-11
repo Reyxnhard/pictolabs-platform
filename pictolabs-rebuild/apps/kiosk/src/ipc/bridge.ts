@@ -378,6 +378,7 @@ export interface KioskSessionHistoryItem {
   compositeExists: boolean;
   printStatus: 'pending' | 'printed' | 'failed' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'PENDING' | 'NOT_QUEUED';
   printAttempts: number;
+  printFormat?: '2R' | '4R' | '6R' | null;
   lastPrintError?: string | null;
   uploaded: boolean;
   uploadStatus: 'PENDING' | 'UPLOADING' | 'COMPLETED' | 'FAILED';
@@ -391,7 +392,7 @@ export interface KioskSessionHistoryItem {
 
 export interface KioskSessionHistoryAPI {
   list(query?: KioskSessionHistoryQuery): Promise<KioskSessionHistoryItem[]>;
-  reprint(params: { sessionId: string; copies?: number; reason?: string }): Promise<{ success: boolean; printJobId?: string; error?: string }>;
+  reprint(params: { sessionId: string; copies?: number; format?: '2R' | '4R' | string; reason?: string }): Promise<{ success: boolean; printJobId?: string; error?: string }>;
   forceUpload(params: { sessionId: string }): Promise<{ success: boolean; enqueuedCount: number; error?: string }>;
 }
 

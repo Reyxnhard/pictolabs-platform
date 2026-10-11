@@ -725,7 +725,15 @@ export async function resolvePrinterQueue(
     };
   }
 
-  // 2. If 6R format was requested but no 6R queue is configured:
+  // 2. If 4R format was requested but no 4R queue is configured:
+  if ((mediaFormat === '4R' || mediaFormat === 'photo4x6') && !candidateQueue) {
+    return {
+      success: false,
+      error: 'Antrean printer 4R (photo 4x6) belum dikonfigurasi di Admin Panel. Harap tentukan antrean printer 4R yang valid.',
+    };
+  }
+
+  // 3. If 6R format was requested but no 6R queue is configured:
   if ((mediaFormat === '6R' || mediaFormat === 'photo6x8') && !candidateQueue) {
     return {
       success: false,
@@ -733,8 +741,21 @@ export async function resolvePrinterQueue(
     };
   }
 
-  // 3. If explicit or configured candidate queue exists:
+  // 4. If explicit or configured candidate queue exists:
   if (candidateQueue) {
+    // If printing 4R (uncut), strictly reject if candidateQueue is a 2-inch cut queue
+    if (mediaFormat === '4R' || mediaFormat === 'photo4x6') {
+      const isCutName =
+        /(2x6|strip|2-inch|2 inch|\bcut\b|\bpotong\b)/i.test(candidateQueue) &&
+        !/uncut/i.test(candidateQueue);
+      if (isCutName) {
+        return {
+          success: false,
+          error: `Antrean printer '${candidateQueue}' dikonfigurasi dengan mode pemotongan 2-inci (cut), tidak aman untuk format 4R (Uncut).`,
+        };
+      }
+    }
+
     const isInstalled = installedPrinters.some(
       (p) => p.toLowerCase() === candidateQueue!.toLowerCase()
     );

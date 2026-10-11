@@ -21,6 +21,8 @@ import {
   reconcileRemoteConfig,
   pushConfigToRemote,
   getDatabase,
+  reprintSessionWithDebounce,
+  getSessionHistory,
 } from '../apps/kiosk/electron/services/SyncEngine.ts';
 
 import {
@@ -518,6 +520,239 @@ async function runSuite() {
     assert.strictEqual(enq2.success, true);
     assert.strictEqual(enq2.isDuplicate, true, 'Prevented duplicate 2R job enqueue');
     assert.strictEqual(enq2.id, enq1.id, 'Returned same job ID');
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // TASK C: ADMIN MANUAL REPRINT & FORMAT/COPY CONTROLS
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log('\n--- TASK C: ADMIN MANUAL REPRINT & FORMAT/COPY CONTROLS ---');
+
+  await testAsync('C1: Operator explicit 2R override on 4R session routes to 2R cut queue ("DS-RX1 (Copy 1)")', async () => {
+    seedSession('session_override_to_2r', '4R');
+    db.prepare(`
+      INSERT INTO print_queue (id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, created_at, updated_at)
+      VALUES ('job_prev_4r_orig', 'session_override_to_2r', ?, 'AUTO', '4R', 1, 'COMPLETED', 1, 5, datetime('now', '-2 minutes'), datetime('now', '-2 minutes'))
+    `).run(dummyFile);
+
+    const reprintRes = await reprintSession('session_override_to_2r', 1, '2R');
+    assert.strictEqual(reprintRes.success, true);
+    assert.ok(reprintRes.id);
+
+    const job = db.prepare('SELECT format, copies, printer_name FROM print_queue WHERE id = ?').get(reprintRes.id);
+    assert.strictEqual(job.format, '2R', 'Job format reflects operator override: 2R');
+    assert.strictEqual(job.copies, 1);
+    assert.strictEqual(job.printer_name, 'AUTO', 'Forces AUTO printer name for dynamic format routing');
+
+    // Verify queue resolution with installed printers
+    const installed = ['DS-RX1 (Copy 1)', 'DS-RX1 (Copy 2)', 'Microsoft Print to PDF'];
+    const resolved = await resolvePrinterQueue(null, job.format, installed);
+    assert.strictEqual(resolved.success, true);
+    assert.strictEqual(resolved.printerName, 'DS-RX1 (Copy 1)', 'Resolved to configured 2R cut queue');
+  });
+
+  await testAsync('C2: Operator explicit 4R override on 2R session routes to 4R uncut queue ("DS-RX1 (Copy 2)")', async () => {
+    seedSession('session_override_to_4r', '2R');
+    db.prepare(`
+      INSERT INTO print_queue (id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, created_at, updated_at)
+      VALUES ('job_prev_2r_orig', 'session_override_to_4r', ?, 'AUTO', '2R', 1, 'COMPLETED', 1, 5, datetime('now', '-2 minutes'), datetime('now', '-2 minutes'))
+    `).run(dummyFile);
+
+    const reprintRes = await reprintSession('session_override_to_4r', 1, '4R');
+    assert.strictEqual(reprintRes.success, true);
+    assert.ok(reprintRes.id);
+
+    const job = db.prepare('SELECT format, copies, printer_name FROM print_queue WHERE id = ?').get(reprintRes.id);
+    assert.strictEqual(job.format, '4R', 'Job format reflects operator override: 4R');
+    assert.strictEqual(job.copies, 1);
+    assert.strictEqual(job.printer_name, 'AUTO');
+
+    const installed = ['DS-RX1 (Copy 1)', 'DS-RX1 (Copy 2)', 'Microsoft Print to PDF'];
+    const resolved = await resolvePrinterQueue(null, job.format, installed);
+    assert.strictEqual(resolved.success, true);
+    assert.strictEqual(resolved.printerName, 'DS-RX1 (Copy 2)', 'Resolved to configured 4R uncut queue');
+  });
+
+  await testAsync('C3: Operator custom copy count enqueues exact count (e.g. 3 copies) without double multiplication', async () => {
+    seedSession('session_custom_3x', '2R');
+    db.prepare(`
+      INSERT INTO print_queue (id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, created_at, updated_at)
+      VALUES ('job_prev_custom_3x', 'session_custom_3x', ?, 'AUTO', '2R', 1, 'COMPLETED', 1, 5, datetime('now', '-2 minutes'), datetime('now', '-2 minutes'))
+    `).run(dummyFile);
+
+    const reprintRes = await reprintSession('session_custom_3x', 3, '2R');
+    assert.strictEqual(reprintRes.success, true);
+    assert.ok(reprintRes.id);
+
+    const job = db.prepare('SELECT format, copies FROM print_queue WHERE id = ?').get(reprintRes.id);
+    assert.strictEqual(job.copies, 3, 'Queue row stores exactly 3 copies');
+    assert.strictEqual(job.format, '2R');
+
+    // Confirm exactly 2 jobs exist for this session in total (1 initial + 1 reprint)
+    const count = db.prepare('SELECT count(*) as cnt FROM print_queue WHERE session_id = ?').get('session_custom_3x');
+    assert.strictEqual(count.cnt, 2, 'Exactly one new reprint job row created for custom copy request');
+  });
+
+  await testAsync('C4: Copy count validation rejects invalid values (0, negative, >10, fractional, NaN)', async () => {
+    seedSession('session_val_copies', '2R');
+    db.prepare(`
+      INSERT INTO print_queue (id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, created_at, updated_at)
+      VALUES ('job_prev_val', 'session_val_copies', ?, 'AUTO', '2R', 1, 'COMPLETED', 1, 5, datetime('now', '-2 minutes'), datetime('now', '-2 minutes'))
+    `).run(dummyFile);
+
+    // 0 copies
+    const resZero = await reprintSession('session_val_copies', 0);
+    assert.strictEqual(resZero.success, false);
+    assert.ok(resZero.error.includes('antara 1 dan 10'));
+
+    // Negative copies
+    const resNeg = await reprintSession('session_val_copies', -2);
+    assert.strictEqual(resNeg.success, false);
+    assert.ok(resNeg.error.includes('antara 1 dan 10'));
+
+    // Greater than 10
+    const resOver = await reprintSession('session_val_copies', 11);
+    assert.strictEqual(resOver.success, false);
+    assert.ok(resOver.error.includes('antara 1 dan 10'));
+
+    // Fractional copies
+    const resFrac = await reprintSession('session_val_copies', 2.5);
+    assert.strictEqual(resFrac.success, false);
+    assert.ok(resFrac.error.includes('antara 1 dan 10'));
+
+    // NaN copies
+    const resNaN = await reprintSession('session_val_copies', NaN);
+    assert.strictEqual(resNaN.success, false);
+    assert.ok(resNaN.error.includes('antara 1 dan 10'));
+
+    // Test validation in reprintSessionWithDebounce as well
+    const debZero = await reprintSessionWithDebounce('session_val_copies', 0);
+    assert.strictEqual(debZero.success, false);
+    assert.ok(debZero.error.includes('antara 1 dan 10'));
+
+    const debOver = await reprintSessionWithDebounce('session_val_copies', 20);
+    assert.strictEqual(debOver.success, false);
+    assert.ok(debOver.error.includes('antara 1 dan 10'));
+
+    const debFrac = await reprintSessionWithDebounce('session_val_copies', 1.5);
+    assert.strictEqual(debFrac.success, false);
+    assert.ok(debFrac.error.includes('antara 1 dan 10'));
+  });
+
+  await testAsync('C5: Unconfigured 4R queue fails fast with actionable Indonesian error (NO silent fallback)', async () => {
+    // Unconfigure 4R queue in local config
+    const configWithout4R = {
+      ...customConfig,
+      hardware: {
+        ...customConfig.hardware,
+        printerNames: {
+          strip2x6: 'DS-RX1 (Copy 1)',
+          photo4x6: null,
+          photo6x8: null,
+        },
+      },
+    };
+    writeLocalKioskConfig(configWithout4R);
+
+    const installed = ['DS-RX1 (Copy 1)', 'Microsoft Print to PDF'];
+    const res = await resolvePrinterQueue(null, '4R', installed);
+    assert.strictEqual(res.success, false, 'Must reject 4R resolution when photo4x6 queue is null');
+    assert.ok(res.error.includes('photo 4x6') && res.error.includes('belum dikonfigurasi'), 'Actionable error message');
+
+    // Restore configuration
+    writeLocalKioskConfig(customConfig);
+  });
+
+  await testAsync('C6: 4R queue configured with cut keywords is strictly rejected (cut protection guard)', async () => {
+    const installed = ['DS-RX1 2-inch cut', 'Microsoft Print to PDF'];
+    const res = await resolvePrinterQueue('DS-RX1 2-inch cut', '4R', installed);
+    assert.strictEqual(res.success, false, 'Must reject candidate queue with cut keywords for 4R format');
+    assert.ok(res.error.includes('pemotongan 2-inci') || res.error.includes('terdeteksi'), 'Clear rejection error');
+  });
+
+  test('C7: SyncEngine.getSessionHistory exposes authoritative printFormat from print_queue to Admin UI', () => {
+    seedSession('session_history_fmt_test', 'classic-white');
+    db.prepare(`
+      INSERT INTO print_queue (id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, created_at, updated_at)
+      VALUES ('job_history_fmt_2r', 'session_history_fmt_test', ?, 'AUTO', '2R', 1, 'COMPLETED', 1, 5, datetime('now'), datetime('now'))
+    `).run(dummyFile);
+
+    const history = getSessionHistory(10, 0);
+    const item = history.find((s) => s.id === 'session_history_fmt_test');
+    assert.ok(item, 'Session found in history list');
+    assert.strictEqual(item.printFormat, '2R', 'Authoritative format 2R exposed from print_queue (not overwritten by frameId classic-white)');
+    assert.strictEqual(item.frameId, 'classic-white', 'Preserves original theme/frameId for display');
+  });
+
+  await testAsync('C8: End-to-end reprintSessionWithDebounce propagates operator format and custom copies cleanly', async () => {
+    seedSession('session_debounce_e2e_ok', '2R');
+    db.prepare(`
+      INSERT INTO print_queue (id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, created_at, updated_at)
+      VALUES ('job_prev_deb_e2e', 'session_debounce_e2e_ok', ?, 'AUTO', '2R', 1, 'COMPLETED', 1, 5, datetime('now', '-5 minutes'), datetime('now', '-5 minutes'))
+    `).run(dummyFile);
+
+    const debRes = await reprintSessionWithDebounce('session_debounce_e2e_ok', 4, '4R', 'TEST_OPERATOR_REQUEST');
+    assert.strictEqual(debRes.success, true);
+    assert.ok(debRes.printJobId);
+
+    const enqueuedJob = db.prepare('SELECT format, copies, printer_name, status FROM print_queue WHERE id = ?').get(debRes.printJobId);
+    assert.strictEqual(enqueuedJob.format, '4R', 'Persisted format matches requested override (4R)');
+    assert.strictEqual(enqueuedJob.copies, 4, 'Persisted copies matches requested count (4)');
+    assert.strictEqual(enqueuedJob.printer_name, 'AUTO');
+    assert.strictEqual(enqueuedJob.status, 'PENDING');
+  });
+
+  await testAsync('C9: Rapid repeated clicks / double-tap debounce prevents duplicate job creation', async () => {
+    seedSession('session_debounce_doubletap', '2R');
+    db.prepare(`
+      INSERT INTO print_queue (id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, created_at, updated_at)
+      VALUES ('job_prev_doubletap', 'session_debounce_doubletap', ?, 'AUTO', '2R', 1, 'COMPLETED', 1, 5, datetime('now', '-5 minutes'), datetime('now', '-5 minutes'))
+    `).run(dummyFile);
+
+    // First click: succeeds
+    const click1 = await reprintSessionWithDebounce('session_debounce_doubletap', 1, '2R');
+    assert.strictEqual(click1.success, true);
+    const firstJobId = click1.printJobId;
+
+    // Second click immediately (<4 seconds later): must be debounced
+    const click2 = await reprintSessionWithDebounce('session_debounce_doubletap', 1, '2R');
+    assert.strictEqual(click2.success, false, 'Rapid repeated click blocked by debounce guard');
+    assert.ok(click2.error.includes('baru saja dikirim') || click2.error.includes('sedang aktif'));
+
+    // Verify exactly one new job was created for this session
+    const jobs = db.prepare('SELECT id FROM print_queue WHERE session_id = ? AND status = ?').all('session_debounce_doubletap', 'PENDING');
+    assert.strictEqual(jobs.length, 1, 'Exactly one pending reprint job in queue');
+    assert.strictEqual(jobs[0].id, firstJobId);
+  });
+
+  await testAsync('C10: Invalid operator format string is rejected fail-safe', async () => {
+    seedSession('session_invalid_fmt', '2R');
+    const res = await reprintSession('session_invalid_fmt', 1, 'SUPER_POSTCARD');
+    assert.strictEqual(res.success, false);
+    assert.ok(res.error.includes('tidak valid') && res.error.includes('Pilih 2R (Cut) atau 4R (Uncut)'));
+
+    const count = db.prepare('SELECT count(*) as cnt FROM print_queue WHERE session_id = ?').get('session_invalid_fmt');
+    assert.strictEqual(count.cnt, 0, 'No job enqueued when format is invalid');
+  });
+
+  await testAsync('C11: Existing customer 2R routing remains intact (regression verification)', async () => {
+    seedSession('session_cust_2r_recheck', '2R');
+    const enq = enqueuePrintJob('session_cust_2r_recheck', dummyFile, 1, undefined, '2R');
+    assert.strictEqual(enq.success, true);
+
+    const job = db.prepare('SELECT format, printer_name FROM print_queue WHERE id = ?').get(enq.id);
+    assert.strictEqual(job.format, '2R');
+
+    const installed = ['DS-RX1 (Copy 1)', 'DS-RX1 (Copy 2)', 'Microsoft Print to PDF'];
+    const resolved = await resolvePrinterQueue(null, job.format, installed);
+    assert.strictEqual(resolved.success, true);
+    assert.strictEqual(resolved.printerName, 'DS-RX1 (Copy 1)', 'Customer 2R session routes strictly to 2R cut queue');
+  });
+
+  test('C12: Existing configuration persistence and booth isolation remain intact', () => {
+    const diskConfig = readLocalKioskConfig();
+    assert.strictEqual(diskConfig.hardware.printerCalibration.scale, 97, 'Calibration scale preserved');
+    assert.strictEqual(diskConfig.hardware.printerNames.strip2x6, 'DS-RX1 (Copy 1)', '2R queue mapping preserved');
+    assert.strictEqual(diskConfig.hardware.printerNames.photo4x6, 'DS-RX1 (Copy 2)', '4R queue mapping preserved');
   });
 
   stopSyncEngine();
