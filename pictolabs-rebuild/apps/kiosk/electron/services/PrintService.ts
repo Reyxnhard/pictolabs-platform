@@ -9,6 +9,7 @@ import {
   acquirePrintDispatchLock,
   releasePrintDispatchLock,
   getCurrentDispatchOwner,
+  registerActivePrintPid,
 } from './PrinterMonitorService';
 import { findPrintExePath, findCalibrationTargetPath, getHardwareStatus, PrinterHardwareStatus } from './PrinterHardwareAdapter';
 
@@ -759,6 +760,63 @@ export async function resolvePrinterQueue(
   };
 }
 
+/**
+ * Resolves and verifies an uncut 4x6 printer queue specifically for geometric calibration.
+ * Guardrails:
+ * 1. Requires an explicitly configured 4R queue in config.hardware.printerNames.photo4x6.
+ * 2. Strictly rejects routing to a queue configured for 2-inch cut (strip2x6) or with 2-inch cut naming.
+ * 3. Verifies that the queue is installed in Windows.
+ * 4. Never falls back silently to an unverified or cut-configured default printer.
+ */
+export async function resolveCalibrationPrinterQueue(
+  installedPrintersOverride?: string[]
+): Promise<{ success: boolean; printerName?: string; error?: string }> {
+  const localConfig = readLocalKioskConfig();
+  const queueMap = localConfig?.hardware?.printerNames;
+  const installedPrinters = installedPrintersOverride || (await listPrinters());
+
+  const photo4x6Queue = queueMap?.photo4x6?.trim() || null;
+  const strip2x6Queue = queueMap?.strip2x6?.trim() || null;
+
+  // 1. Explicit 4R queue must be configured
+  if (!photo4x6Queue) {
+    return {
+      success: false,
+      error: 'Antrean printer 4R (4x6 uncut) belum dikonfigurasi di Admin Panel. Harap tentukan antrean printer 4R yang valid agar target kalibrasi tidak terpotong.',
+    };
+  }
+
+  // 2. Reject if queue is configured for 2-inch cut or shares name with 2R queue
+  const isCutName =
+    /(2x6|strip|2-inch|2 inch|\bcut\b|\bpotong\b)/i.test(photo4x6Queue) &&
+    !/uncut/i.test(photo4x6Queue);
+  const isSameAs2R = Boolean(strip2x6Queue && photo4x6Queue.toLowerCase() === strip2x6Queue.toLowerCase());
+
+  if (isCutName || isSameAs2R) {
+    return {
+      success: false,
+      error: `Antrean '${photo4x6Queue}' terkonfigurasi untuk pemotongan 2-inch (2R). Kalibrasi geometris 4x6 membutuhkan antrean tanpa potong (uncut). Silakan pilih antrean 4R yang berbeda di Admin Panel.`,
+    };
+  }
+
+  // 3. Verify queue is installed in Windows
+  const isInstalled = installedPrinters.some(
+    (p) => p.toLowerCase() === photo4x6Queue.toLowerCase()
+  );
+  if (!isInstalled && installedPrinters.length > 0) {
+    return {
+      success: false,
+      error: `Antrean printer 4R terkonfigurasi '${photo4x6Queue}' tidak ditemukan di sistem Windows. Pastikan nama antrean printer sesuai.`,
+    };
+  }
+
+  const exactMatch = installedPrinters.find(
+    (p) => p.toLowerCase() === photo4x6Queue.toLowerCase()
+  );
+
+  return { success: true, printerName: exactMatch || photo4x6Queue };
+}
+
 export async function printImage(
   imagePath: string,
   printerName?: string | null,
@@ -837,11 +895,12 @@ export async function printImage(
   }
 
   const dispatchResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
-    execFile(
+    const child = execFile(
       printExe,
       printArgs,
       { timeout: 30000, cwd: path.dirname(printExe) },
       (error, stdout, stderr) => {
+        registerActivePrintPid(null);
         if (error) {
           console.error('[PrintService] print.exe dispatch failed:', error.message, stderr);
           resolve({ ok: false, error: stderr || error.message });
@@ -854,6 +913,9 @@ export async function printImage(
         }
       }
     );
+    if (child && child.pid) {
+      registerActivePrintPid(child.pid);
+    }
   });
 
   if (!dispatchResult.ok) {
@@ -1020,6 +1082,17 @@ export function registerPrintHandlers(config: PrintServiceConfig): void {
     }
 
     try {
+      // 1. Verify safe 4x6 uncut queue BEFORE creating or dispatching calibration target
+      const queueRes = await resolveCalibrationPrinterQueue();
+      if (!queueRes.success || !queueRes.printerName) {
+        console.warn(`[PrintService] ⚠️ Calibration cut-test blocked: ${queueRes.error}`);
+        return {
+          success: false,
+          error: queueRes.error || 'Antrean printer 4R tidak valid untuk kalibrasi.',
+        };
+      }
+      const targetPrinter = queueRes.printerName;
+
       const testDir = path.join(os.tmpdir(), 'pictolabs-print');
       if (!fs.existsSync(testDir)) fs.mkdirSync(testDir, { recursive: true });
 
@@ -1046,8 +1119,8 @@ export function registerPrintHandlers(config: PrintServiceConfig): void {
       }
 
       try {
-        // Route through single printImage dispatch with mediaFormat '2R' for queue resolution & calibration injection
-        return await printImage(testPath, undefined, 1, undefined, undefined, '2R');
+        // Route through single printImage dispatch with targetPrinter and mediaFormat '4R' (uncut)
+        return await printImage(testPath, targetPrinter, 1, undefined, undefined, '4R');
       } finally {
         try {
           if (fs.existsSync(testPath)) fs.unlinkSync(testPath);
