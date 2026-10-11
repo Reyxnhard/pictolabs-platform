@@ -55,9 +55,9 @@ function normalizeKioskConfig(raw, fallback = null) {
   const rawOffY = typeof rawCal?.offsetY === 'number' && !isNaN(rawCal.offsetY) ? rawCal.offsetY : base.hardware.printerCalibration.offsetY;
 
   const normalizedCalibration = {
-    scale: Math.max(85, Math.min(105, rawScale)),
-    offsetX: Math.max(-25, Math.min(25, rawOffX)),
-    offsetY: Math.max(-25, Math.min(25, rawOffY)),
+    scale: Math.max(85, Math.min(100, rawScale)),
+    offsetX: Math.max(-15, Math.min(15, rawOffX)),
+    offsetY: Math.max(-15, Math.min(15, rawOffY)),
   };
 
   const rawNames = raw?.hardware?.printerNames;
@@ -109,15 +109,15 @@ test('Preserves valid custom calibration and custom printer queue names', () => 
 });
 
 // 3. Clamping out of bounds
-test('Defensively clamps scale and offsets to safe hardware envelope [85..105] & [-25..25]', () => {
+test('Defensively clamps scale and offsets to safe hardware envelope [85..100] & [-15..15]', () => {
   const config = normalizeKioskConfig({
     hardware: {
       printerCalibration: { scale: 150, offsetX: -99, offsetY: 88 },
     },
   });
-  assert.strictEqual(config.hardware.printerCalibration.scale, 105);
-  assert.strictEqual(config.hardware.printerCalibration.offsetX, -25);
-  assert.strictEqual(config.hardware.printerCalibration.offsetY, 25);
+  assert.strictEqual(config.hardware.printerCalibration.scale, 100);
+  assert.strictEqual(config.hardware.printerCalibration.offsetX, -15);
+  assert.strictEqual(config.hardware.printerCalibration.offsetY, 15);
 });
 
 // 4. Per-booth config isolation

@@ -118,9 +118,9 @@ function buildPrintArgs(targetPath, copies, calib, activePrinter) {
   const rawOffX = typeof calib?.offsetX === 'number' && !isNaN(calib.offsetX) ? calib.offsetX : 0;
   const rawOffY = typeof calib?.offsetY === 'number' && !isNaN(calib.offsetY) ? calib.offsetY : 3;
 
-  const scaleArg = String(Math.max(85, Math.min(105, rawScale)));
-  const offXArg = String(Math.max(-25, Math.min(25, rawOffX)));
-  const offYArg = String(Math.max(-25, Math.min(25, rawOffY)));
+  const scaleArg = String(Math.max(85, Math.min(100, rawScale)));
+  const offXArg = String(Math.max(-15, Math.min(15, rawOffX)));
+  const offYArg = String(Math.max(-15, Math.min(15, rawOffY)));
 
   return [
     targetPath,
@@ -272,14 +272,14 @@ async function runSuite() {
   });
 
   // Test 10: Dynamic calibration arguments clamp out-of-bounds scale and offsets
-  test('TEST 10: Out-of-bounds calibration strictly clamped to approved safe limits [85..105, -25..25]', () => {
+  test('TEST 10: Out-of-bounds calibration strictly clamped to approved safe limits [85..100, -15..15]', () => {
     const args = buildPrintArgs('C:\\photos\\strip.jpg', 1, { scale: 120, offsetX: -60, offsetY: 80 }, 'DS-RX1 (Copy 2)');
     assert.deepStrictEqual(args, [
       'C:\\photos\\strip.jpg',
       '1',
-      '105',
-      '-25',
-      '25',
+      '100',
+      '-15',
+      '15',
       'DS-RX1 (Copy 2)'
     ]);
 
@@ -288,8 +288,8 @@ async function runSuite() {
       'C:\\photos\\strip.jpg',
       '1',
       '85',
-      '-25',
-      '-25',
+      '-15',
+      '-15',
       'DS-RX1 (Copy 2)'
     ]);
   });

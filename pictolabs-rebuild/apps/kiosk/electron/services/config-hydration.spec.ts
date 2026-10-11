@@ -261,11 +261,11 @@ async function runConfigHydrationTests() {
       fs.writeFileSync(configPath, JSON.stringify(oobConfig, null, 2), 'utf-8');
       const loaded = readLocalKioskConfig();
 
-      assert.strictEqual(loaded.hardware?.printerCalibration?.scale, 105, 'OOB scale 120 clamped to 105');
-      assert.strictEqual(loaded.hardware?.printerCalibration?.offsetX, -25, 'OOB offsetX -50 clamped to -25');
-      assert.strictEqual(loaded.hardware?.printerCalibration?.offsetY, 25, 'OOB offsetY 40 clamped to 25');
+      assert.strictEqual(loaded.hardware?.printerCalibration?.scale, 100, 'OOB scale 120 clamped to 100');
+      assert.strictEqual(loaded.hardware?.printerCalibration?.offsetX, -15, 'OOB offsetX -50 clamped to -15');
+      assert.strictEqual(loaded.hardware?.printerCalibration?.offsetY, 15, 'OOB offsetY 40 clamped to 15');
 
-      console.log('✓ TEST 9 PASS: Out-of-bounds calibration safely clamped to [85..105] and [-25..25]');
+      console.log('✓ TEST 9 PASS: Out-of-bounds calibration safely clamped to [85..100] and [-15..15]');
       passed++;
     } catch (err: any) {
       console.error('✗ TEST 9 FAIL:', err.message);

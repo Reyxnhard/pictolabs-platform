@@ -1808,9 +1808,9 @@ export function readLocalKioskConfig(): Record<string, any> {
             : defaultFallback.hardware.printerCalibration.offsetY;
 
         const normalizedCalibration = {
-          scale: Math.max(85, Math.min(105, rawScale)),
-          offsetX: Math.max(-25, Math.min(25, rawOffX)),
-          offsetY: Math.max(-25, Math.min(25, rawOffY)),
+          scale: Math.max(85, Math.min(100, rawScale)),
+          offsetX: Math.max(-15, Math.min(15, rawOffX)),
+          offsetY: Math.max(-15, Math.min(15, rawOffY)),
         };
 
         const rawNames = parsed?.hardware?.printerNames;
@@ -1881,9 +1881,9 @@ export function writeLocalKioskConfig(newConfig: Record<string, any>): Record<st
     const rawOffX = typeof rawCal?.offsetX === 'number' && !isNaN(rawCal.offsetX) ? rawCal.offsetX : 0;
     const rawOffY = typeof rawCal?.offsetY === 'number' && !isNaN(rawCal.offsetY) ? rawCal.offsetY : 3;
     normalized.hardware.printerCalibration = {
-      scale: Math.max(85, Math.min(105, rawScale)),
-      offsetX: Math.max(-25, Math.min(25, rawOffX)),
-      offsetY: Math.max(-25, Math.min(25, rawOffY)),
+      scale: Math.max(85, Math.min(100, rawScale)),
+      offsetX: Math.max(-15, Math.min(15, rawOffX)),
+      offsetY: Math.max(-15, Math.min(15, rawOffY)),
     };
   }
 

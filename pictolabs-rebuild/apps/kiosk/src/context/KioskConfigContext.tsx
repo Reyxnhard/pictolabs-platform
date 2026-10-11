@@ -189,9 +189,9 @@ export const normalizeConfigPayload = (incoming: any, base: KioskConfig): KioskC
     ...(merged.hardware || {}),
     ...(incoming.hardware || {}),
     printerCalibration: {
-      scale: Math.max(85, Math.min(105, rawScale)),
-      offsetX: Math.max(-25, Math.min(25, rawOffX)),
-      offsetY: Math.max(-25, Math.min(25, rawOffY)),
+      scale: Math.max(85, Math.min(100, rawScale)),
+      offsetX: Math.max(-15, Math.min(15, rawOffX)),
+      offsetY: Math.max(-15, Math.min(15, rawOffY)),
     },
     printerNames: {
       ...defaultNames,

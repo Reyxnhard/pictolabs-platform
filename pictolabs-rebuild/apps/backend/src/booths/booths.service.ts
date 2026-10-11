@@ -390,9 +390,9 @@ export class BoothsService {
     const rawOffY = typeof rawCal?.offsetY === 'number' && !isNaN(rawCal.offsetY) ? rawCal.offsetY : 3;
 
     const normalizedCalibration = {
-      scale: Math.max(85, Math.min(105, rawScale)),
-      offsetX: Math.max(-25, Math.min(25, rawOffX)),
-      offsetY: Math.max(-25, Math.min(25, rawOffY)),
+      scale: Math.max(85, Math.min(100, rawScale)),
+      offsetX: Math.max(-15, Math.min(15, rawOffX)),
+      offsetY: Math.max(-15, Math.min(15, rawOffY)),
     };
 
     const rawNames = raw?.hardware?.printerNames;
@@ -528,7 +528,7 @@ export class BoothsService {
         ...(patchCal || {}),
       },
       printerNames: {
-        ...(current.hardware?.printerNames || { strip2x6: 'CITIZEN CY-02', photo4x6: 'CITIZEN CY-02', photo6x8: 'CITIZEN CY-02' }),
+        ...(current.hardware?.printerNames || { strip2x6: null, photo4x6: null, photo6x8: null }),
         ...(patchNames || {}),
       },
     };
@@ -538,14 +538,14 @@ export class BoothsService {
       const offsetX = newHardware.printerCalibration.offsetX;
       const offsetY = newHardware.printerCalibration.offsetY;
 
-      if (typeof scale === 'number' && (scale < 85 || scale > 105)) {
-        throw new BadRequestException('Skala kalibrasi printer harus berada di antara 85% dan 105%.');
+      if (typeof scale === 'number' && (scale < 85 || scale > 100)) {
+        throw new BadRequestException('Skala kalibrasi printer harus berada di antara 85% dan 100%.');
       }
-      if (typeof offsetX === 'number' && (offsetX < -25 || offsetX > 25)) {
-        throw new BadRequestException('Offset X kalibrasi printer harus berada di antara -25mm dan 25mm.');
+      if (typeof offsetX === 'number' && (offsetX < -15 || offsetX > 15)) {
+        throw new BadRequestException('Offset X kalibrasi printer harus berada di antara -15 dan 15 unit (1/100 inci / ±3.81 mm).');
       }
-      if (typeof offsetY === 'number' && (offsetY < -25 || offsetY > 25)) {
-        throw new BadRequestException('Offset Y kalibrasi printer harus berada di antara -25mm dan 25mm.');
+      if (typeof offsetY === 'number' && (offsetY < -15 || offsetY > 15)) {
+        throw new BadRequestException('Offset Y kalibrasi printer harus berada di antara -15 dan 15 unit (1/100 inci / ±3.81 mm).');
       }
     }
 

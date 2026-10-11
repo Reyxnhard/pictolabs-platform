@@ -874,13 +874,13 @@ export default function AdminScreen({ onClose, onNavigate }: AdminScreenProps) {
               <div className="w-px h-4 bg-slate-800" />
               <div>
                 <span className="text-slate-500">Batas Skala: </span>
-                <span className="text-blue-400 font-bold">85% – 105%</span>
+                <span className="text-blue-400 font-bold">85% – 100%</span>
               </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Panel Kiri: Pemetaan Antrean Windows */}
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            {/* Panel 1: Pemetaan Antrean Windows */}
             <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-xl flex flex-col justify-between">
               <div>
                 <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
@@ -1026,7 +1026,7 @@ export default function AdminScreen({ onClose, onNavigate }: AdminScreenProps) {
               </div>
             </div>
 
-            {/* Panel Kanan: Slider Kalibrasi Hardware */}
+            {/* Panel 2: Slider Kalibrasi Hardware */}
             <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-xl flex flex-col justify-between">
               <div>
                 <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
@@ -1035,7 +1035,7 @@ export default function AdminScreen({ onClose, onNavigate }: AdminScreenProps) {
                     <h3 className="font-bold text-base text-slate-200">Parameter Offset & Skala</h3>
                   </div>
                   <span className="text-[11px] font-mono text-slate-400 bg-slate-950 px-2.5 py-1 rounded-xl border border-slate-800">
-                    Batas: ±25 Unit / 85–105%
+                    Batas: ±15 Unit / 85–100%
                   </span>
                 </div>
 
@@ -1056,7 +1056,7 @@ export default function AdminScreen({ onClose, onNavigate }: AdminScreenProps) {
                       id="slider-calib-scale"
                       type="range"
                       min={85}
-                      max={105}
+                      max={100}
                       step={1}
                       value={calibScale}
                       onChange={(e) => setCalibScale(Number(e.target.value))}
@@ -1065,7 +1065,7 @@ export default function AdminScreen({ onClose, onNavigate }: AdminScreenProps) {
                     <div className="flex justify-between text-[10px] text-slate-500 font-mono">
                       <span>85% (Kecil)</span>
                       <span className="text-slate-400">Default: 99%</span>
-                      <span>105% (Besar)</span>
+                      <span>100% (Maksimal)</span>
                     </div>
                   </div>
 
@@ -1080,17 +1080,17 @@ export default function AdminScreen({ onClose, onNavigate }: AdminScreenProps) {
                     <input
                       id="slider-calib-offset-x"
                       type="range"
-                      min={-25}
-                      max={25}
+                      min={-15}
+                      max={15}
                       step={1}
                       value={calibOffX}
                       onChange={(e) => setCalibOffX(Number(e.target.value))}
                       className="w-full accent-blue-500 h-2 bg-slate-800 rounded-lg cursor-pointer"
                     />
                     <div className="flex justify-between text-[10px] text-slate-500 font-mono">
-                      <span>-25 (-6.35 mm)</span>
-                      <span className="text-slate-400">Default: 0</span>
-                      <span>+25 (+6.35 mm)</span>
+                      <span>-15 (-3.81 mm)</span>
+                      <span className="text-slate-400">Default: 0 (0.00 mm)</span>
+                      <span>+15 (+3.81 mm)</span>
                     </div>
                   </div>
 
@@ -1105,17 +1105,17 @@ export default function AdminScreen({ onClose, onNavigate }: AdminScreenProps) {
                     <input
                       id="slider-calib-offset-y"
                       type="range"
-                      min={-25}
-                      max={25}
+                      min={-15}
+                      max={15}
                       step={1}
                       value={calibOffY}
                       onChange={(e) => setCalibOffY(Number(e.target.value))}
                       className="w-full accent-blue-500 h-2 bg-slate-800 rounded-lg cursor-pointer"
                     />
                     <div className="flex justify-between text-[10px] text-slate-500 font-mono">
-                      <span>-25 (-6.35 mm)</span>
+                      <span>-15 (-3.81 mm)</span>
                       <span className="text-slate-400">Default: +3 (+0.76 mm)</span>
-                      <span>+25 (+6.35 mm)</span>
+                      <span>+15 (+3.81 mm)</span>
                     </div>
                   </div>
                 </div>
@@ -1123,7 +1123,126 @@ export default function AdminScreen({ onClose, onNavigate }: AdminScreenProps) {
 
               <div className="mt-4 pt-3 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
                 <span>1 unit = 0.254 mm (1/100 inci)</span>
-                <span className="text-slate-500">Rentang aman hardware DNP DS-RX1</span>
+                <span className="text-slate-500">Rentang: -3.81 mm s/d +3.81 mm</span>
+              </div>
+            </div>
+
+            {/* Panel 3: Live Visual Calibration Preview (Reference Parity) */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-xl flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-3 pb-3 border-b border-slate-800">
+                  <div className="flex items-center gap-2.5">
+                    <Eye className="w-5 h-5 text-emerald-400" />
+                    <h3 className="font-bold text-base text-slate-200">Visualisasi Kalibrasi</h3>
+                  </div>
+                  <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-xl border border-emerald-500/20 font-bold">
+                    4x6 / 2R LIVE
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-slate-400 leading-relaxed mb-3">
+                  Inspeksi visual pergeseran komposit foto, batas bleed, dan garis pemotongan tengah mekanikal (50.8 mm / 2 inci) secara real-time.
+                </p>
+
+                {/* Simulated 4x6 Paper Viewport (200x300 px = exactly 4:6 aspect) */}
+                <div className="flex justify-center my-2">
+                  <div
+                    className="relative bg-slate-950 rounded-xl border-2 border-dashed border-slate-700 shadow-2xl overflow-hidden"
+                    style={{ width: '200px', height: '300px' }}
+                  >
+                    {/* Paper Label Watermark */}
+                    <div className="absolute top-1.5 left-2 text-[9px] font-mono text-slate-600 font-bold select-none pointer-events-none">
+                      LEMBAR 4x6 (1200x1800 px)
+                    </div>
+
+                    {/* Mechanical Center 2-inch Cut Line for 2R Strip */}
+                    <div
+                      className="absolute top-0 bottom-0 border-r-2 border-dashed border-amber-500/70 z-20 pointer-events-none flex flex-col justify-between items-center py-2"
+                      style={{ left: '100px' }}
+                    >
+                      <Scissors className="w-3.5 h-3.5 text-amber-400 -mr-3.5 drop-shadow" />
+                      <span className="text-[8px] font-mono font-bold text-amber-300 bg-slate-950/90 px-1 py-0.5 rounded border border-amber-500/40 -mr-16 whitespace-nowrap">
+                        Garis Potong 2R (50.8 mm)
+                      </span>
+                      <Scissors className="w-3.5 h-3.5 text-amber-400 -mr-3.5 drop-shadow rotate-180" />
+                    </div>
+
+                    {/* Paper Center Grid Guide Lines */}
+                    <div className="absolute left-0 right-0 top-1/2 border-t border-slate-800/60 pointer-events-none" />
+
+                    {/* Scaled & Offset Active Print Box */}
+                    {(() => {
+                      const scaleVal = Math.max(85, Math.min(100, calibScale));
+                      const boxW = 200 * (scaleVal / 100);
+                      const boxH = 300 * (scaleVal / 100);
+                      const offXVal = Math.max(-15, Math.min(15, calibOffX));
+                      const offYVal = Math.max(-15, Math.min(15, calibOffY));
+                      const shiftX = offXVal * (200 / 400); // 1 unit = 0.5 px
+                      const shiftY = offYVal * (300 / 600); // 1 unit = 0.5 px
+                      const leftPos = (200 - boxW) / 2 + shiftX;
+                      const topPos = (300 - boxH) / 2 + shiftY;
+
+                      return (
+                        <div
+                          className="absolute border border-blue-400/80 bg-blue-500/10 rounded-sm shadow-inner transition-all duration-150 flex flex-col items-center justify-center p-2 z-10"
+                          style={{
+                            left: `${leftPos}px`,
+                            top: `${topPos}px`,
+                            width: `${boxW}px`,
+                            height: `${boxH}px`,
+                          }}
+                        >
+                          {/* Centered crosshair reticle inside shifted box */}
+                          <div className="w-3 h-3 rounded-full border border-blue-400 flex items-center justify-center pointer-events-none">
+                            <div className="w-1 h-1 rounded-full bg-blue-400" />
+                          </div>
+                          <span className="text-[9px] font-mono font-bold text-blue-300 mt-1 select-none pointer-events-none text-center">
+                            Area Komposit
+                          </span>
+                          <span className="text-[8px] font-mono text-blue-400/80 select-none pointer-events-none">
+                            {scaleVal}% Zoom
+                          </span>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                {/* Real-time Telemetry Pills */}
+                <div className="grid grid-cols-3 gap-1.5 mt-3 text-center">
+                  <div className="bg-slate-950/70 p-1.5 rounded-lg border border-slate-800">
+                    <div className="text-[9px] text-slate-500 font-mono">Skala</div>
+                    <div className="text-[11px] font-bold font-mono text-blue-400">{calibScale}%</div>
+                  </div>
+                  <div className="bg-slate-950/70 p-1.5 rounded-lg border border-slate-800">
+                    <div className="text-[9px] text-slate-500 font-mono">Geser X</div>
+                    <div className="text-[11px] font-bold font-mono text-blue-400">
+                      {calibOffX >= 0 ? `+${calibOffX}` : calibOffX}u
+                    </div>
+                  </div>
+                  <div className="bg-slate-950/70 p-1.5 rounded-lg border border-slate-800">
+                    <div className="text-[9px] text-slate-500 font-mono">Geser Y</div>
+                    <div className="text-[11px] font-bold font-mono text-blue-400">
+                      {calibOffY >= 0 ? `+${calibOffY}` : calibOffY}u
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sharpness Status Callout (Investigated & Deferred per Scope Guardrail) */}
+                <div className="mt-3 bg-slate-950/70 border border-slate-800/80 rounded-xl p-2.5 text-[10px] text-slate-400 flex items-start gap-2">
+                  <span className="text-amber-400 text-xs">ℹ️</span>
+                  <div>
+                    <span className="font-bold text-slate-300">Penajaman Citra (Sharpness): Dinonaktifkan</span>
+                    <p className="text-[9px] text-slate-500 mt-0.5 leading-snug">
+                      Executable print.exe & driver DNP tidak mendukung flag ketajaman runtime. Opsi ditangguhkan untuk menjaga fidelitas piksel.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+                <span>Rasio: 2:3 (4x6 inci)</span>
+                <span className="text-emerald-400 font-medium">Uji Potong Menggunakan Target Resmi</span>
               </div>
             </div>
           </div>

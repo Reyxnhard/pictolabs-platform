@@ -34,15 +34,23 @@ async function run() {
 
   let schemaErrorCaught = false;
   try {
-    PrinterCalibrationSchema.parse({ scale: 120 });
+    PrinterCalibrationSchema.parse({ scale: 105 });
   } catch {
     schemaErrorCaught = true;
   }
-  assert(schemaErrorCaught, 'PrinterCalibrationSchema rejects scale 120 (> 105)');
+  assert(schemaErrorCaught, 'PrinterCalibrationSchema rejects scale 105 (> 100)');
 
-  const parsedNames = PrinterNamesSchema.parse({ strip2x6: 'DNP DS-RX1', photo4x6: 'CITIZEN CY-02' });
+  let offsetErrorCaught = false;
+  try {
+    PrinterCalibrationSchema.parse({ offsetX: 20 });
+  } catch {
+    offsetErrorCaught = true;
+  }
+  assert(offsetErrorCaught, 'PrinterCalibrationSchema rejects offsetX 20 (> 15)');
+
+  const parsedNames = PrinterNamesSchema.parse({ strip2x6: 'DNP DS-RX1', photo4x6: 'DS-RX1 (Copy 2)' });
   assert(
-    parsedNames.strip2x6 === 'DNP DS-RX1' && parsedNames.photo4x6 === 'CITIZEN CY-02',
+    parsedNames.strip2x6 === 'DNP DS-RX1' && parsedNames.photo4x6 === 'DS-RX1 (Copy 2)',
     'PrinterNamesSchema parses custom media queue names'
   );
 
@@ -70,10 +78,10 @@ async function run() {
     },
   }, 'booth-test-01');
   assert(
-    env2.hardware.printerCalibration.scale === 105 &&
-    env2.hardware.printerCalibration.offsetX === -25 &&
-    env2.hardware.printerCalibration.offsetY === 25,
-    'Out-of-bounds calibration safely clamped to [85..105] and [-25..25]'
+    env2.hardware.printerCalibration.scale === 100 &&
+    env2.hardware.printerCalibration.offsetX === -15 &&
+    env2.hardware.printerCalibration.offsetY === 15,
+    'Out-of-bounds calibration safely clamped to [85..100] and [-15..15]'
   );
 
   const env3 = service.normalizeConfigEnvelope({

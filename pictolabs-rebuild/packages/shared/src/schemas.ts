@@ -22,9 +22,9 @@ export const GeneralSettingsSchema = z.object({
 });
 
 export const PrinterCalibrationSchema = z.object({
-  scale: z.number().min(85).max(105).default(99),
-  offsetX: z.number().min(-25).max(25).default(0),
-  offsetY: z.number().min(-25).max(25).default(3)
+  scale: z.number().min(85).max(100).default(99),
+  offsetX: z.number().min(-15).max(15).default(0),
+  offsetY: z.number().min(-15).max(15).default(3)
 });
 
 export const PrinterNamesSchema = z.object({

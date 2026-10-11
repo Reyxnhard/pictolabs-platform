@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { getLastSession, readLocalKioskConfig } from './SyncEngine';
 import { setPrintDispatchActive } from './PrinterMonitorService';
-import { findPrintExePath, getHardwareStatus, PrinterHardwareStatus } from './PrinterHardwareAdapter';
+import { findPrintExePath, findCalibrationTargetPath, getHardwareStatus, PrinterHardwareStatus } from './PrinterHardwareAdapter';
 
 /**
  * PrintService — Enterprise Windows Spooler Integration for DNP & Photo Printers.
@@ -810,9 +810,9 @@ export async function printImage(
   const rawOffX = typeof calib?.offsetX === 'number' && !isNaN(calib.offsetX) ? calib.offsetX : 0;
   const rawOffY = typeof calib?.offsetY === 'number' && !isNaN(calib.offsetY) ? calib.offsetY : 3;
 
-  const scaleArg = String(Math.max(85, Math.min(105, rawScale)));
-  const offXArg = String(Math.max(-25, Math.min(25, rawOffX)));
-  const offYArg = String(Math.max(-25, Math.min(25, rawOffY)));
+  const scaleArg = String(Math.max(85, Math.min(100, rawScale)));
+  const offXArg = String(Math.max(-15, Math.min(15, rawOffX)));
+  const offYArg = String(Math.max(-15, Math.min(15, rawOffY)));
 
   // Native CLI argument vector:
   // print.exe <imagePath> [copies] [scale%] [offsetX] [offsetY] [printerName]
@@ -986,37 +986,47 @@ export function registerPrintHandlers(config: PrintServiceConfig): void {
   // ─── Operator Cut / Calibration Test ───────────────────
   ipcMain.handle('printer:cut-test', async () => {
     if (isBypassMode) {
-      console.log('[PrintService] [BYPASS] Simulated paper cut test');
+      console.log('[PrintService] [BYPASS] Simulated paper cut test with Pictolabs calibration target');
       return { success: true };
     }
 
-    if (!defaultPrinterName) {
-      return { success: false, error: 'Tidak ada printer terpasang' };
-    }
-
     try {
-      const sharp = require('sharp');
       const testDir = path.join(os.tmpdir(), 'pictolabs-print');
       if (!fs.existsSync(testDir)) fs.mkdirSync(testDir, { recursive: true });
-      const testPath = path.join(testDir, 'cut_test.jpg');
 
-      // Create a small 2-inch calibration strip (600x600 px)
-      await sharp({
-        create: {
-          width: 1200,
-          height: 600,
-          channels: 3,
-          background: { r: 240, g: 240, b: 240 },
-        },
-      })
-        .jpeg({ quality: 90 })
-        .toFile(testPath);
+      const targetAssetPath = findCalibrationTargetPath();
+      let testPath: string;
+
+      if (targetAssetPath && fs.existsSync(targetAssetPath)) {
+        testPath = path.join(testDir, `calibration_target_${Date.now()}.png`);
+        fs.copyFileSync(targetAssetPath, testPath);
+      } else {
+        // Fallback: create 1200x1800 300 DPI test image if asset missing
+        const sharp = require('sharp');
+        testPath = path.join(testDir, `calibration_target_${Date.now()}.jpg`);
+        await sharp({
+          create: {
+            width: 1200,
+            height: 1800,
+            channels: 3,
+            background: { r: 245, g: 245, b: 245 },
+          },
+        })
+          .jpeg({ quality: 90 })
+          .toFile(testPath);
+      }
 
       setPrintDispatchActive(true);
       try {
-        return await printImage(testPath, defaultPrinterName, 1);
+        // Route through single printImage dispatch with mediaFormat '2R' for queue resolution & calibration injection
+        return await printImage(testPath, undefined, 1, undefined, undefined, '2R');
       } finally {
         setPrintDispatchActive(false);
+        try {
+          if (fs.existsSync(testPath)) fs.unlinkSync(testPath);
+        } catch {
+          // ignore temp cleanup error
+        }
       }
     } catch (err: any) {
       return { success: false, error: err.message };
