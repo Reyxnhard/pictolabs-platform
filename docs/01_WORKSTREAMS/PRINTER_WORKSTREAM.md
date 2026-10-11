@@ -15,7 +15,7 @@ The Printer Workstream manages physical photostrip output on DNP DS-RX1 dye-subl
 | **Startup Freeze Elimination & Async Discovery** | `CLOSED` | Electron getPrintersAsync (<15ms), 3s deferred monitor; sub-second boot. |
 | **Founder Physical Hardware UAT (RCA-7)** | `FOUNDER_UAT_PASS` | **PASS** — Founder physical UAT: zero duplicate prints, customer print & admin reprint verified on Booth #1. |
 | **Printer RCA-7 Physical Regression** | `PASS` | **PASS** — Live physical printing, mechanical cutter, and DS-RX1 detection verified during Startup UAT. |
-| **PR-02 Profiles & Hardware Calibration** | `FOUNDER_UAT_PASS` | **PASS — READY FOR CLOSURE** — Founder physical UAT confirmed on Booth #1: persistence, 2R cut, Admin reprint queue routing, original format stability, explicit 2R/4R selection, custom copies, unknown-format guard, zero duplicate prints. 41/41 UAT suite, 17/17 blocker, 25 checkpoint, 36/36 RCA-6, 6/6 RCA-7 (10 invariants). |
+| **PR-02 Profiles & Hardware Calibration** | `CLOSED` | **CLOSED (2026-10-11)** — Formally closed based on Founder physical UAT PASS on Booth #1 (8/8 physical scenarios verified: persistence, 2R cut, queue routing, format integrity, explicit 2R/4R selection, custom copies, unknown-format guard, zero duplicate prints), 100% automated suites (41/41 UAT suite, 17/17 blocker, 25/25 checkpoints, 36/36 RCA-6, 6/6 RCA-7 [10 invariants]), clean monorepo build, and remote branch push (`aec7780`). |
 | **Founder Physical Hardware UAT (PR-02)** | `PASS` | **PASS** — Physical retest on Booth #1 hardware verified all 8 scenarios; physical 2x6 strip cut verified; zero duplicate prints observed. |
 | **Release Closure** | `RELEASE_CLOSURE_PENDING` | Production installer packaged (`Pictolabs Kiosk Setup 1.0.0.exe`); awaiting physical UAT & VPS deployment. |
 | **Physical Paper Sensor Verification** | `DEFERRED` | Application relies on Windows Spooler acceptance semantics. |
@@ -70,16 +70,16 @@ The printer pipeline follows a streamlined, direct-dispatch architecture:
 
 ## 6. Known Open Issues & Next Steps
 - **RCA-7 Release Closure:** Standalone installer is packaged (`Pictolabs Kiosk Setup 1.0.0.exe`); pending final VPS release deployment smoke test after all Pilot Readiness gates.
-- **PR-02 Gate Status:** `FOUNDER_UAT_PASS` — Ready for formal closure (`READY_TO_CLOSE_PR02`). All 8 physical UAT scenarios passed on Booth #1; 100% automated suites passed (41/41 UAT suite, 17/17 blocker, 25/25 checkpoints, 36/36 RCA-6, 6/6 RCA-7 [10 invariants]).
+- **PR-02 Gate Status:** `CLOSED` — Formally closed on 2026-10-11 based on Founder Physical UAT PASS on Booth #1 across all 8 physical scenarios, 100% automated test pass (41/41 UAT suite, 17/17 blocker, 25/25 checkpoints, 36/36 RCA-6, 6/6 RCA-7 [10 invariants]), clean monorepo build, and remote push (`aec7780`).
 - **Pilot Gate Independence:** PR-02 closure does NOT mark Pilot Booth #1 Launch as READY. Overall pilot launch remains HELD pending independent gates: `CAMERA-01` (Canon EDSDK reconnect RCA), `MIDTRANS-01` (Midtrans QRIS credentials), and VPS production smoke test.
-- **Next Step:** Submit PR-02 documentation and UAT evidence for ChatGPT final audit and Founder sign-off before formal Git push, merge, or deployment.
+- **Next Technical Workstream:** Camera Reliability RCA (`CAMERA-01`) & PR-03 Camera Selection & Configuration.
 
 ## 7. Next Task
-1. Obtain ChatGPT audit sign-off and Founder authorization for formal PR-02 closure.
-2. Proceed to next independent Pilot Readiness gate: Camera Reliability RCA (`CAMERA-01`).
+1. Initiate Camera Reliability RCA (`CAMERA-01`) to investigate Canon EDSDK v13.x native integration, live preview ↔ capture sensor synchronization, and USB reconnect hardening.
+2. Track external `MIDTRANS-01` sandbox HTTP 402 resolution and production merchant credential provisioning.
 
 ## 8. Evidence
-1. [`docs/02_EVIDENCE/UAT/PR-02_LOCAL_FOUNDER_UAT_READINESS_REPORT.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/UAT/PR-02_LOCAL_FOUNDER_UAT_READINESS_REPORT.md) — Comprehensive Founder Physical UAT Evidence & Closure Audit Report.
+1. [`docs/02_EVIDENCE/UAT/PR-02_LOCAL_FOUNDER_UAT_READINESS_REPORT.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/UAT/PR-02_LOCAL_FOUNDER_UAT_READINESS_REPORT.md) — Comprehensive Founder Physical UAT Evidence & Closure Audit Report (`DOC-PR02-UAT-CLOSURE-001`).
 2. [`docs/02_EVIDENCE/FIX_REPORTS/PR-02_PRINTER_PROFILES_AND_CALIBRATION_IMPLEMENTATION_REPORT.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/FIX_REPORTS/PR-02_PRINTER_PROFILES_AND_CALIBRATION_IMPLEMENTATION_REPORT.md) — Comprehensive PR-02 implementation, packaging, and test report.
 3. [`docs/02_EVIDENCE/AUDITS/PR-02_CALIBRATION_IMPLEMENTATION_PLAN_AND_PREFLIGHT.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/AUDITS/PR-02_CALIBRATION_IMPLEMENTATION_PLAN_AND_PREFLIGHT.md) — Preflight audit and calibration parameter contract.
 4. [`docs/02_EVIDENCE/AUDITS/PR-02_REFERENCE_FEATURE_COMPARISON_AUDIT.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/AUDITS/PR-02_REFERENCE_FEATURE_COMPARISON_AUDIT.md) — Reverse-engineering benchmark of reference calibration implementation.
@@ -88,7 +88,7 @@ The printer pipeline follows a streamlined, direct-dispatch architecture:
 7. [`docs/02_EVIDENCE/RCA/PRINTER_FAILURE_HANDLING_V2_RCA_6.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/RCA/PRINTER_FAILURE_HANDLING_V2_RCA_6.md) — Anti-duplicate watchdog mutex analysis.
 8. Commit `787b95d` (*"fallback Printer Hardening, remove all overenginerr stuff"*).
 9. Source file: [`apps/kiosk/electron/services/PrintService.ts`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/PrintService.ts).
-10. PR-02 Commits: `cc8cb38`, `35edd1f`, `d6104a3`, `426bd8a`, `9499f4a`, `7e763b2`, `c87c629`, `e74dc2d`, `f478182`, `559aaa9`, `b416aee`.
+10. PR-02 Commits: `cc8cb38`, `35edd1f`, `d6104a3`, `426bd8a`, `9499f4a`, `7e763b2`, `c87c629`, `e74dc2d`, `f478182`, `559aaa9`, `b416aee`, `aec7780`.
 11. [`docs/02_EVIDENCE/FIX_REPORTS/PR-02_ADMIN_SESSION_HISTORY_MANUAL_PRINT_FIX_REPORT.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/FIX_REPORTS/PR-02_ADMIN_SESSION_HISTORY_MANUAL_PRINT_FIX_REPORT.md) — Fix report for Admin Session History manual print format decoupling and strict queue routing.
 12. [`docs/02_EVIDENCE/FIX_REPORTS/PR-02_FOUNDER_UAT_FAILURE_RCA_AND_TARGETED_FIX_REPORT.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/FIX_REPORTS/PR-02_FOUNDER_UAT_FAILURE_RCA_AND_TARGETED_FIX_REPORT.md) — Founder UAT failure RCA and targeted fix report.
 
