@@ -4,7 +4,12 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { getLastSession, readLocalKioskConfig } from './SyncEngine';
-import { setPrintDispatchActive } from './PrinterMonitorService';
+import {
+  setPrintDispatchActive,
+  acquirePrintDispatchLock,
+  releasePrintDispatchLock,
+  getCurrentDispatchOwner,
+} from './PrinterMonitorService';
 import { findPrintExePath, findCalibrationTargetPath, getHardwareStatus, PrinterHardwareStatus } from './PrinterHardwareAdapter';
 
 /**
@@ -973,14 +978,28 @@ export function registerPrintHandlers(config: PrintServiceConfig): void {
       return { success: false, error: `Berkas komposit tidak ditemukan di disk: ${lastSession.compositePath}` };
     }
 
-    console.log(`[PrintService] [Operator Action] Reprinting last session: ${lastSession.id}`);
-    const printResult = await printImage(lastSession.compositePath, defaultPrinterName, 1);
-    return {
-      success: printResult.success,
-      sessionId: lastSession.id,
-      compositePath: lastSession.compositePath,
-      error: printResult.error,
-    };
+    const acquired = acquirePrintDispatchLock('MANUAL');
+    if (!acquired) {
+      return {
+        success: false,
+        sessionId: lastSession.id,
+        compositePath: lastSession.compositePath,
+        error: 'Printer sedang memproses pencetakan lain. Harap tunggu hingga selesai.',
+      };
+    }
+
+    try {
+      console.log(`[PrintService] [Operator Action] Reprinting last session: ${lastSession.id}`);
+      const printResult = await printImage(lastSession.compositePath, defaultPrinterName, 1);
+      return {
+        success: printResult.success,
+        sessionId: lastSession.id,
+        compositePath: lastSession.compositePath,
+        error: printResult.error,
+      };
+    } finally {
+      releasePrintDispatchLock('MANUAL');
+    }
   });
 
   // ─── Operator Cut / Calibration Test ───────────────────
@@ -988,6 +1007,16 @@ export function registerPrintHandlers(config: PrintServiceConfig): void {
     if (isBypassMode) {
       console.log('[PrintService] [BYPASS] Simulated paper cut test with Pictolabs calibration target');
       return { success: true };
+    }
+
+    const acquired = acquirePrintDispatchLock('CALIBRATION');
+    if (!acquired) {
+      const busyOwner = getCurrentDispatchOwner() || 'proses lain';
+      console.warn(`[PrintService] ⚠️ Cannot run cut-test: Print dispatch busy (held by '${busyOwner}')`);
+      return {
+        success: false,
+        error: 'Printer sedang memproses pencetakan lain. Harap tunggu hingga selesai.',
+      };
     }
 
     try {
@@ -1016,12 +1045,10 @@ export function registerPrintHandlers(config: PrintServiceConfig): void {
           .toFile(testPath);
       }
 
-      setPrintDispatchActive(true);
       try {
         // Route through single printImage dispatch with mediaFormat '2R' for queue resolution & calibration injection
         return await printImage(testPath, undefined, 1, undefined, undefined, '2R');
       } finally {
-        setPrintDispatchActive(false);
         try {
           if (fs.existsSync(testPath)) fs.unlinkSync(testPath);
         } catch {
@@ -1030,6 +1057,8 @@ export function registerPrintHandlers(config: PrintServiceConfig): void {
       }
     } catch (err: any) {
       return { success: false, error: err.message };
+    } finally {
+      releasePrintDispatchLock('CALIBRATION');
     }
   });
 

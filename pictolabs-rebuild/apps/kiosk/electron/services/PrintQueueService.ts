@@ -4,7 +4,14 @@ import * as path from 'path';
 import { getDatabase, recordSystemEvent } from './SyncEngine';
 import { getDefaultPrinterName, getIsBypassMode, printImage, queryPrinterHealth } from './PrintService';
 import { recordPrintConsumption } from './PaperTrackerService';
-import { getCachedPrinterHardwareStatus, setPrintDispatchActive } from './PrinterMonitorService';
+import {
+  getCachedPrinterHardwareStatus,
+  setPrintDispatchActive,
+  acquirePrintDispatchLock,
+  releasePrintDispatchLock,
+  forceReleasePrintDispatchLock,
+  getCurrentDispatchOwner,
+} from './PrinterMonitorService';
 
 export type PrintQueueStatus = 'PENDING' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'DEAD_LETTER' | 'CANCELLED';
 
@@ -282,6 +289,7 @@ export function resetStuckPrintJobs(
           `[PrintQueueService] ⚠️ Print Watchdog: Mutex reset EXECUTED. Reason: ${resetReason} ` +
           `(Exec: ${activeWorkerExecutionId || 'NONE'}, Job: ${activeJobId || 'NONE'}, Phase: ${currentWorkerPhase})`
         );
+        forceReleasePrintDispatchLock();
         isProcessing = false;
         activeWorkerExecutionId = null;
         activeJobId = null;
@@ -645,7 +653,17 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
       console.warn(`[PrintQueueService] ⚠️ Pre-dispatch advisory gate blocked: ${cachedHealth.status} - ${cachedHealth.message}`);
       printResult = { success: false, error: cachedHealth.message || `Printer ${cachedHealth.status}` };
     } else {
-      // 2. Transition: PENDING -> PRINTING
+      // 2. Acquire Atomic Print Dispatch Lock
+      const lockAcquired = acquirePrintDispatchLock('QUEUE_WORKER');
+      if (!lockAcquired) {
+        console.warn(`[PrintQueueService] ⚠️ Print dispatch busy (held by '${getCurrentDispatchOwner()}'). Deferring job ${item.id}...`);
+        updateWorkerPhase('IDLE', null);
+        hasPendingWork = true;
+        setTimeout(() => triggerQueueProcessing(), 1000);
+        return;
+      }
+
+      // Transition: PENDING -> PRINTING
       updateWorkerPhase('PRINTING', item.id);
       pulseWorkerHeartbeat();
       const printingTime = new Date().toISOString();
@@ -658,7 +676,6 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
       console.log(`[PrintQueueService] Dispatching print job ${item.id} (Session: ${item.session_id}, Attempt: ${item.attempts + 1}, Exec: ${activeWorkerExecutionId}) to '${targetPrinter}'...`);
 
       // 3. Dispatch to PrintService (which invokes print.exe directly)
-      setPrintDispatchActive(true);
       try {
         printResult = await printImage(
           cleanPath,
@@ -670,7 +687,7 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
           }
         );
       } finally {
-        setPrintDispatchActive(false);
+        releasePrintDispatchLock('QUEUE_WORKER');
       }
       pulseWorkerHeartbeat();
     }

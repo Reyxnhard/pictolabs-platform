@@ -38,8 +38,71 @@ let consecutiveErrorCount = 0;
 let lastWin32CheckTime = Date.now();
 const DEBOUNCE_THRESHOLD = 2; // Require 2 consecutive failed queries to escalate to OFFLINE (hysteresis)
 
+export type PrintDispatchOwner = 'QUEUE_WORKER' | 'CALIBRATION' | 'MANUAL';
+
 let isDispatchActive = false;
 let lastDispatchEndTime = 0;
+let currentDispatchOwner: PrintDispatchOwner | null = null;
+let dispatchLockAcquireTime = 0;
+
+/**
+ * Atomically attempt to acquire the global print dispatch lock.
+ * Ensures strict mutual exclusion between customer queue printing,
+ * operator calibration test-prints, and manual reprints.
+ *
+ * In Node.js single-threaded event loop, this synchronous check-and-set
+ * is strictly atomic (zero async race window).
+ */
+export function acquirePrintDispatchLock(owner: PrintDispatchOwner): boolean {
+  if (currentDispatchOwner !== null) {
+    // Stale lock breaker: if lock held > 60s without release (hung print safeguard), break stale lock safely
+    if (dispatchLockAcquireTime > 0 && Date.now() - dispatchLockAcquireTime > 60_000) {
+      console.warn(`[PrinterMonitorService] ⚠️ Breaking stale print dispatch lock held by '${currentDispatchOwner}' (>60s)`);
+      currentDispatchOwner = null;
+    } else {
+      return false;
+    }
+  }
+
+  currentDispatchOwner = owner;
+  dispatchLockAcquireTime = Date.now();
+  isDispatchActive = true;
+  return true;
+}
+
+/**
+ * Release the global print dispatch lock if held by the specified owner.
+ */
+export function releasePrintDispatchLock(owner: PrintDispatchOwner): void {
+  if (currentDispatchOwner === owner) {
+    currentDispatchOwner = null;
+    dispatchLockAcquireTime = 0;
+    isDispatchActive = false;
+    lastDispatchEndTime = Date.now();
+  }
+}
+
+/**
+ * Force release print dispatch lock (for watchdog recovery or test isolation).
+ */
+export function forceReleasePrintDispatchLock(): void {
+  currentDispatchOwner = null;
+  dispatchLockAcquireTime = 0;
+  isDispatchActive = false;
+  lastDispatchEndTime = Date.now();
+}
+
+export function getCurrentDispatchOwner(): PrintDispatchOwner | null {
+  return currentDispatchOwner;
+}
+
+export function isPrintDispatchBusy(): boolean {
+  return currentDispatchOwner !== null || isDispatchActive;
+}
+
+export function getLastDispatchEndTime(): number {
+  return lastDispatchEndTime;
+}
 
 /**
  * Lifecycle coordination: Notify printer monitor when print.exe dispatch begins or finishes.
@@ -49,6 +112,8 @@ export function setPrintDispatchActive(active: boolean): void {
   isDispatchActive = active;
   if (!active) {
     lastDispatchEndTime = Date.now();
+    currentDispatchOwner = null;
+    dispatchLockAcquireTime = 0;
   }
 }
 
