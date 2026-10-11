@@ -53,12 +53,18 @@ const cameraStatus: CameraStatus = {
 };
 
 export function getEffectiveCameraStatus(): CameraStatus {
+  const isCanonUsable = Boolean(activeCamera && cameraStatus.isCanonConnected);
+  const isCanonStreaming = Boolean(isCanonUsable && isLiveViewActive && cameraStatus.isLiveView);
+  let sensor = cameraStatus.activeSensor;
+  if (sensor === 'canon' && !isCanonUsable) {
+    sensor = 'none';
+  }
+
   return {
     ...cameraStatus,
-    isLiveView: isLiveViewActive,
-    activeSensor: activeCamera
-      ? 'canon'
-      : (isLiveViewActive ? 'webcam' : 'none'),
+    isCanonConnected: isCanonUsable,
+    isLiveView: isCanonStreaming,
+    activeSensor: sensor,
   };
 }
 
@@ -212,37 +218,53 @@ async function onCameraPluggedIn(): Promise<void> {
         });
 
         // Configure SaveTo with retry settling loop
-        await configureSaveToWithRetry(activeCamera);
+        const saveConfigOk = await configureSaveToWithRetry(activeCamera);
+        if (!saveConfigOk) {
+          throw new Error('Failed to configure camera SaveTo destination after retries');
+        }
+
+        cameraStatus.isCanonConnected = true;
+        cameraStatus.cameraModel = model;
+        cameraStatus.activeSensor = 'canon';
+        cameraStatus.errorCode = null;
+        cameraStatus.errorMessage = null;
+
+        // Start keep-alive heartbeat loop immediately upon connection
+        startKeepAliveHeartbeat();
+
+        // If user is currently on CaptureScreen, start LiveView stream immediately!
+        if (isLiveViewActive && !liveViewInterval) {
+          try {
+            console.log(`[CameraService] Auto-starting Canon LiveView for ${model}...`);
+            activeCamera.startLiveView();
+            cameraStatus.isLiveView = true;
+            startLiveViewInterval();
+          } catch (lvErr) {
+            console.error('[CameraService] LiveView auto-start error:', lvErr);
+            cameraStatus.isLiveView = false;
+            cameraStatus.activeSensor = 'none';
+            cameraStatus.errorCode = 'ERR_CANON_LIVEVIEW_AUTOSTART';
+            cameraStatus.errorMessage = (lvErr as Error).message;
+          }
+        }
+
+        broadcastCameraStatus();
       } catch (connErr) {
-        console.warn('[CameraService] Note on camera connect:', (connErr as Error).message);
+        console.warn('[CameraService] Note on camera connect failure:', (connErr as Error).message);
+        try {
+          if (activeCamera && typeof activeCamera.disconnect === 'function') {
+            activeCamera.disconnect();
+          }
+        } catch {}
+        activeCamera = null;
+        cameraStatus.isCanonConnected = false;
+        cameraStatus.cameraModel = null;
+        cameraStatus.isLiveView = false;
+        cameraStatus.activeSensor = 'none';
         cameraStatus.errorCode = 'ERR_CANON_CONNECT';
         cameraStatus.errorMessage = (connErr as Error).message;
+        broadcastCameraStatus();
       }
-
-      cameraStatus.isCanonConnected = true;
-      cameraStatus.cameraModel = model;
-      cameraStatus.activeSensor = 'canon';
-      cameraStatus.errorCode = null;
-      cameraStatus.errorMessage = null;
-
-      // Start keep-alive heartbeat loop immediately upon connection
-      startKeepAliveHeartbeat();
-
-      // If user is currently on CaptureScreen, start LiveView stream immediately!
-      if (isLiveViewActive && !liveViewInterval) {
-        try {
-          console.log(`[CameraService] Auto-starting Canon LiveView for ${model}...`);
-          activeCamera.startLiveView();
-          cameraStatus.isLiveView = true;
-          startLiveViewInterval();
-        } catch (lvErr) {
-          console.error('[CameraService] LiveView auto-start error:', lvErr);
-          cameraStatus.errorCode = 'ERR_CANON_LIVEVIEW_AUTOSTART';
-          cameraStatus.errorMessage = (lvErr as Error).message;
-        }
-      }
-
-      broadcastCameraStatus();
     }
   } catch (err) {
     console.error('[CameraService] Error checking cameras:', err);
@@ -255,7 +277,8 @@ function onCameraDisconnected(): void {
   activeCamera = null;
   cameraStatus.isCanonConnected = false;
   cameraStatus.cameraModel = null;
-  cameraStatus.activeSensor = isLiveViewActive ? 'webcam' : 'none';
+  cameraStatus.isLiveView = false;
+  cameraStatus.activeSensor = 'none';
   cameraStatus.errorCode = 'ERR_CANON_DISCONNECTED';
   cameraStatus.errorMessage = 'Canon camera disconnected';
   lastLiveViewDataUrl = null; // Clear stale live view frame buffer immediately on disconnect
@@ -420,14 +443,17 @@ export function registerCameraHandlers(config: CameraServiceConfig): void {
         return { success: true, mode: 'canon' };
       } catch (err) {
         console.error('[CameraService] Canon LiveView start failed:', err);
+        cameraStatus.isLiveView = false;
+        cameraStatus.activeSensor = 'none';
         cameraStatus.errorCode = 'ERR_CANON_LIVEVIEW_START';
         cameraStatus.errorMessage = (err as Error).message;
       }
     }
 
-    // WebRTC mode fallback
-    console.log('[CameraService] WebRTC fallback mode active for LiveView');
-    cameraStatus.activeSensor = 'webcam';
+    // WebRTC mode fallback — renderer must confirm webcam before activeSensor becomes 'webcam'
+    console.log('[CameraService] WebRTC fallback mode active for LiveView (awaiting renderer stream)');
+    cameraStatus.isLiveView = false;
+    cameraStatus.activeSensor = 'none';
     broadcastCameraStatus();
     return { success: true, mode: 'webrtc' };
   });
@@ -639,8 +665,6 @@ export function stopLiveViewInternal(): void {
 
   broadcastCameraStatus();
 }
-
-export { onCameraPluggedIn as onCameraPluggedInForTesting, onCameraDisconnected as onCameraDisconnectedForTesting };
 
 
 
