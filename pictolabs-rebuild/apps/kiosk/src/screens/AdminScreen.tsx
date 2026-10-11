@@ -19,6 +19,8 @@ import {
   Zap,
   WifiOff,
   Clock,
+  Sliders,
+  Save,
 } from 'lucide-react';
 import { kiosk, PrinterHealth, CameraStatus } from '../ipc/bridge';
 import { useKioskConfig } from '../context/KioskConfigContext';
@@ -61,7 +63,30 @@ export default function AdminScreen({ onClose, onNavigate }: AdminScreenProps) {
   const [isBypassMode, setIsBypassMode] = useState(() => {
     return typeof window !== 'undefined' && localStorage.getItem('pictolabs-bypass-printer') !== 'false';
   });
-  const [adminTab, setAdminTab] = useState<'hardware' | 'history'>('hardware');
+  const [adminTab, setAdminTab] = useState<'hardware' | 'calibration' | 'history'>('hardware');
+
+  // Printer Queue and Calibration States
+  const [installedPrinters, setInstalledPrinters] = useState<string[]>([]);
+  const [calibScale, setCalibScale] = useState<number>(() => config.hardware?.printerCalibration?.scale ?? 99);
+  const [calibOffX, setCalibOffX] = useState<number>(() => config.hardware?.printerCalibration?.offsetX ?? 0);
+  const [calibOffY, setCalibOffY] = useState<number>(() => config.hardware?.printerCalibration?.offsetY ?? 3);
+  const [queue2R, setQueue2R] = useState<string>(() => config.hardware?.printerNames?.strip2x6 ?? '');
+  const [queue4R, setQueue4R] = useState<string>(() => config.hardware?.printerNames?.photo4x6 ?? '');
+  const [queue6R, setQueue6R] = useState<string>(() => config.hardware?.printerNames?.photo6x8 ?? '');
+
+  // Synchronize local edit states when context config updates
+  useEffect(() => {
+    if (config.hardware?.printerCalibration) {
+      setCalibScale(config.hardware.printerCalibration.scale ?? 99);
+      setCalibOffX(config.hardware.printerCalibration.offsetX ?? 0);
+      setCalibOffY(config.hardware.printerCalibration.offsetY ?? 3);
+    }
+    if (config.hardware?.printerNames) {
+      setQueue2R(config.hardware.printerNames.strip2x6 ?? '');
+      setQueue4R(config.hardware.printerNames.photo4x6 ?? '');
+      setQueue6R(config.hardware.printerNames.photo6x8 ?? '');
+    }
+  }, [config.hardware]);
 
   // Payment Bypass States
   const [activeOrderId, setActiveOrderId] = useState<string | null>(() => {
@@ -303,14 +328,18 @@ export default function AdminScreen({ onClose, onNavigate }: AdminScreenProps) {
   const refreshDiagnostics = useCallback(async () => {
     setIsRefreshingPrinter(true);
     try {
-      const [health, latest, camStatus] = await Promise.all([
+      const [health, latest, camStatus, printers] = await Promise.all([
         kiosk.printer.getHealth().catch(() => null),
         kiosk.session.getLast().catch(() => null),
         kiosk.camera.getStatus().catch(() => null),
+        kiosk.printer.listPrinters().catch(() => []),
       ]);
       setPrinterHealth(health);
       setLastSession(latest);
       setCameraInfo(camStatus);
+      if (Array.isArray(printers)) {
+        setInstalledPrinters(printers);
+      }
     } catch (err: any) {
       console.error('[AdminScreen] Error fetching diagnostics:', err);
     } finally {
@@ -398,6 +427,59 @@ export default function AdminScreen({ onClose, onNavigate }: AdminScreenProps) {
     } finally {
       setIsActionPending(false);
     }
+  };
+
+  const handleSaveCalibration = () => {
+    updateLocalConfig({
+      hardware: {
+        ...(config.hardware || {}),
+        printerCalibration: {
+          scale: calibScale,
+          offsetX: calibOffX,
+          offsetY: calibOffY,
+        },
+        printerNames: {
+          strip2x6: queue2R.trim() ? queue2R.trim() : null,
+          photo4x6: queue4R.trim() ? queue4R.trim() : null,
+          photo6x8: queue6R.trim() ? queue6R.trim() : null,
+        },
+      },
+    });
+    showToast('✓ Konfigurasi kalibrasi & antrean printer berhasil disimpan ke disk lokal!', 'success');
+  };
+
+  const handleResetCalibration = () => {
+    setConfirmDialog({
+      title: 'Reset Kalibrasi ke Default Pabrik?',
+      message: 'Nilai skala akan diatur ke 99%, Offset X ke 0, Offset Y ke +3, dan pemetaan antrean printer dikembalikan ke otomatis.',
+      confirmText: 'Reset ke Default',
+      confirmColor: 'bg-amber-600 hover:bg-amber-500 shadow-amber-600/30',
+      onConfirm: () => {
+        setCalibScale(99);
+        setCalibOffX(0);
+        setCalibOffY(3);
+        setQueue2R('');
+        setQueue4R('');
+        setQueue6R('');
+        updateLocalConfig({
+          hardware: {
+            ...(config.hardware || {}),
+            printerCalibration: {
+              scale: 99,
+              offsetX: 0,
+              offsetY: 3,
+            },
+            printerNames: {
+              strip2x6: null,
+              photo4x6: null,
+              photo6x8: null,
+            },
+          },
+        });
+        setConfirmDialog(null);
+        showToast('✓ Kalibrasi berhasil di-reset ke nilai default pabrik!', 'success');
+      },
+    });
   };
 
   const handleToggleBypass = async () => {
@@ -730,6 +812,19 @@ export default function AdminScreen({ onClose, onNavigate }: AdminScreenProps) {
           Diagnostik Hardware & Kontrol
         </button>
         <button
+          id="tab-admin-calibration"
+          type="button"
+          onClick={() => setAdminTab('calibration')}
+          className={`flex-1 flex items-center justify-center gap-2.5 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all cursor-pointer ${
+            adminTab === 'calibration'
+              ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Sliders className="w-4 h-4" />
+          Kalibrasi & Antrean Printer
+        </button>
+        <button
           id="tab-admin-history"
           type="button"
           onClick={() => setAdminTab('history')}
@@ -749,6 +844,444 @@ export default function AdminScreen({ onClose, onNavigate }: AdminScreenProps) {
           isOnline={isOnline}
           onShowToast={(text, type) => setActionMessage({ text, type })}
         />
+      ) : adminTab === 'calibration' ? (
+        <div className="max-w-6xl w-full mx-auto flex-1 flex flex-col gap-6">
+          {/* Header Banner */}
+          <div className="bg-gradient-to-r from-blue-900/30 via-slate-900 to-slate-900 border border-blue-500/30 rounded-3xl p-6 shadow-xl flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center border border-blue-500/30">
+                  <Sliders className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+                    KALIBRASI PRINTER & PEMETAAN ANTREAN
+                    <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 font-mono">
+                      NATIVE GDI PRINT ENGINE
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-400">
+                    Konfigurasi driver antrean Windows, skala cetak gambar, dan offset posisi tanpa batas (borderless).
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="hidden lg:flex items-center gap-4 text-xs font-mono text-slate-400 bg-slate-950/80 px-4 py-2.5 rounded-2xl border border-slate-800">
+              <div>
+                <span className="text-slate-500">Satuan Offset: </span>
+                <span className="text-blue-400 font-bold">1/100 inch (0.254 mm)</span>
+              </div>
+              <div className="w-px h-4 bg-slate-800" />
+              <div>
+                <span className="text-slate-500">Batas Skala: </span>
+                <span className="text-blue-400 font-bold">85% – 100%</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            {/* Panel 1: Pemetaan Antrean Windows */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-xl flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
+                  <div className="flex items-center gap-2.5">
+                    <Printer className="w-5 h-5 text-purple-400" />
+                    <h3 className="font-bold text-base text-slate-200">Antrean Printer Windows</h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={refreshDiagnostics}
+                    disabled={isRefreshingPrinter}
+                    className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white bg-slate-800/80 hover:bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700/80 transition-colors"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingPrinter ? 'animate-spin' : ''}`} />
+                    Refresh Antrean
+                  </button>
+                </div>
+
+                <p className="text-xs text-slate-400 leading-relaxed mb-6">
+                  Pilih nama antrean printer Windows spesifik untuk tiap format media. Antrean yang dipilih harus terpasang di sistem operasi Windows. Jika dipilih <span className="text-blue-400 font-semibold">Default (Otomatis)</span>, sistem menggunakan printer foto default yang terdeteksi.
+                </p>
+
+                <div className="space-y-4">
+                  {/* 2R Photostrip (strip2x6) */}
+                  <div className="bg-slate-950/60 rounded-2xl p-4 border border-slate-800/80">
+                    <div className="flex items-center justify-between mb-2">
+                      <label htmlFor="select-queue-strip2x6" className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                        <span>Format 2R Photostrip (strip2x6)</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-mono">
+                          2x6 INCH
+                        </span>
+                      </label>
+                      {queue2R ? (
+                        installedPrinters.some((p) => p.toLowerCase() === queue2R.toLowerCase()) ? (
+                          <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" /> Terpasang
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-rose-400 font-bold flex items-center gap-1">
+                            <AlertTriangle className="w-3 h-3" /> Tidak Terdeteksi
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-[10px] text-slate-400 font-mono">Auto-detect</span>
+                      )}
+                    </div>
+                    <select
+                      id="select-queue-strip2x6"
+                      value={queue2R}
+                      onChange={(e) => setQueue2R(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors font-medium cursor-pointer"
+                    >
+                      <option value="">(Default Otomatis / DNP Auto-detect)</option>
+                      {installedPrinters.map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* 4R Postcard (photo4x6) */}
+                  <div className="bg-slate-950/60 rounded-2xl p-4 border border-slate-800/80">
+                    <div className="flex items-center justify-between mb-2">
+                      <label htmlFor="select-queue-photo4x6" className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                        <span>Format 4R Postcard (photo4x6)</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 font-mono">
+                          4x6 INCH
+                        </span>
+                      </label>
+                      {queue4R ? (
+                        installedPrinters.some((p) => p.toLowerCase() === queue4R.toLowerCase()) ? (
+                          <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" /> Terpasang
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-rose-400 font-bold flex items-center gap-1">
+                            <AlertTriangle className="w-3 h-3" /> Tidak Terdeteksi
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-[10px] text-slate-400 font-mono">Auto-detect</span>
+                      )}
+                    </div>
+                    <select
+                      id="select-queue-photo4x6"
+                      value={queue4R}
+                      onChange={(e) => setQueue4R(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors font-medium cursor-pointer"
+                    >
+                      <option value="">(Default Otomatis / DNP Auto-detect)</option>
+                      {installedPrinters.map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* 6R Large Print (photo6x8) */}
+                  <div className="bg-slate-950/60 rounded-2xl p-4 border border-slate-800/80">
+                    <div className="flex items-center justify-between mb-2">
+                      <label htmlFor="select-queue-photo6x8" className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                        <span>Format 6R Cetak Besar (photo6x8)</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono">
+                          6x8 INCH
+                        </span>
+                      </label>
+                      {queue6R ? (
+                        installedPrinters.some((p) => p.toLowerCase() === queue6R.toLowerCase()) ? (
+                          <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" /> Terpasang
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-rose-400 font-bold flex items-center gap-1">
+                            <AlertTriangle className="w-3 h-3" /> Tidak Terdeteksi
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-[10px] text-slate-400 font-mono">Auto-detect</span>
+                      )}
+                    </div>
+                    <select
+                      id="select-queue-photo6x8"
+                      value={queue6R}
+                      onChange={(e) => setQueue6R(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors font-medium cursor-pointer"
+                    >
+                      <option value="">(Default Otomatis / DNP Auto-detect)</option>
+                      {installedPrinters.map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-slate-800 text-[11px] text-slate-400 flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Fail-safe: Antrean salah ketik akan ditolak cepat sebelum proses cetak berjalan.</span>
+              </div>
+            </div>
+
+            {/* Panel 2: Slider Kalibrasi Hardware */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-xl flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
+                  <div className="flex items-center gap-2.5">
+                    <Sliders className="w-5 h-5 text-blue-400" />
+                    <h3 className="font-bold text-base text-slate-200">Parameter Offset & Skala</h3>
+                  </div>
+                  <span className="text-[11px] font-mono text-slate-400 bg-slate-950 px-2.5 py-1 rounded-xl border border-slate-800">
+                    Batas: ±15 Unit / 85–100%
+                  </span>
+                </div>
+
+                <p className="text-xs text-slate-400 leading-relaxed mb-6">
+                  Sesuaikan skala gambar dan offset posisi secara langsung. Nilai ini diinjeksikan secara real-time ke utilitas cetak tanpa mengubah alur pembayaran atau memicu jeda spooler.
+                </p>
+
+                <div className="space-y-5">
+                  {/* Skala Cetak */}
+                  <div className="bg-slate-950/60 rounded-2xl p-4 border border-slate-800/80 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-200">Skala Cetak (Zoom Factor)</span>
+                      <span className="text-xs font-mono font-bold text-blue-400 bg-blue-500/10 px-2.5 py-0.5 rounded-lg border border-blue-500/20">
+                        {calibScale}%
+                      </span>
+                    </div>
+                    <input
+                      id="slider-calib-scale"
+                      type="range"
+                      min={85}
+                      max={100}
+                      step={1}
+                      value={calibScale}
+                      onChange={(e) => setCalibScale(Number(e.target.value))}
+                      className="w-full accent-blue-500 h-2 bg-slate-800 rounded-lg cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                      <span>85% (Kecil)</span>
+                      <span className="text-slate-400">Default: 99%</span>
+                      <span>100% (Maksimal)</span>
+                    </div>
+                  </div>
+
+                  {/* Offset X */}
+                  <div className="bg-slate-950/60 rounded-2xl p-4 border border-slate-800/80 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-200">Offset Horizontal X (Kiri / Kanan)</span>
+                      <span className="text-xs font-mono font-bold text-blue-400 bg-blue-500/10 px-2.5 py-0.5 rounded-lg border border-blue-500/20">
+                        {calibOffX >= 0 ? `+${calibOffX}` : calibOffX} unit ({calibOffX >= 0 ? '+' : ''}{(calibOffX * 0.254).toFixed(2)} mm)
+                      </span>
+                    </div>
+                    <input
+                      id="slider-calib-offset-x"
+                      type="range"
+                      min={-15}
+                      max={15}
+                      step={1}
+                      value={calibOffX}
+                      onChange={(e) => setCalibOffX(Number(e.target.value))}
+                      className="w-full accent-blue-500 h-2 bg-slate-800 rounded-lg cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                      <span>-15 (-3.81 mm)</span>
+                      <span className="text-slate-400">Default: 0 (0.00 mm)</span>
+                      <span>+15 (+3.81 mm)</span>
+                    </div>
+                  </div>
+
+                  {/* Offset Y */}
+                  <div className="bg-slate-950/60 rounded-2xl p-4 border border-slate-800/80 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-200">Offset Vertikal Y (Atas / Bawah)</span>
+                      <span className="text-xs font-mono font-bold text-blue-400 bg-blue-500/10 px-2.5 py-0.5 rounded-lg border border-blue-500/20">
+                        {calibOffY >= 0 ? `+${calibOffY}` : calibOffY} unit ({calibOffY >= 0 ? '+' : ''}{(calibOffY * 0.254).toFixed(2)} mm)
+                      </span>
+                    </div>
+                    <input
+                      id="slider-calib-offset-y"
+                      type="range"
+                      min={-15}
+                      max={15}
+                      step={1}
+                      value={calibOffY}
+                      onChange={(e) => setCalibOffY(Number(e.target.value))}
+                      className="w-full accent-blue-500 h-2 bg-slate-800 rounded-lg cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                      <span>-15 (-3.81 mm)</span>
+                      <span className="text-slate-400">Default: +3 (+0.76 mm)</span>
+                      <span>+15 (+3.81 mm)</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+                <span>1 unit = 0.254 mm (1/100 inci)</span>
+                <span className="text-slate-500">Rentang: -3.81 mm s/d +3.81 mm</span>
+              </div>
+            </div>
+
+            {/* Panel 3: Live Visual Calibration Preview (Reference Parity) */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-xl flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-3 pb-3 border-b border-slate-800">
+                  <div className="flex items-center gap-2.5">
+                    <Eye className="w-5 h-5 text-emerald-400" />
+                    <h3 className="font-bold text-base text-slate-200">Visualisasi Kalibrasi</h3>
+                  </div>
+                  <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-xl border border-emerald-500/20 font-bold">
+                    4x6 / 2R LIVE
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-slate-400 leading-relaxed mb-3">
+                  Inspeksi visual pergeseran komposit foto, batas bleed, dan garis pemotongan tengah mekanikal (50.8 mm / 2 inci) secara real-time.
+                </p>
+
+                {/* Simulated 4x6 Paper Viewport (200x300 px = exactly 4:6 aspect) */}
+                <div className="flex justify-center my-2">
+                  <div
+                    className="relative bg-slate-950 rounded-xl border-2 border-dashed border-slate-700 shadow-2xl overflow-hidden"
+                    style={{ width: '200px', height: '300px' }}
+                  >
+                    {/* Paper Label Watermark */}
+                    <div className="absolute top-1.5 left-2 text-[9px] font-mono text-slate-600 font-bold select-none pointer-events-none">
+                      LEMBAR 4x6 (1200x1800 px)
+                    </div>
+
+                    {/* Mechanical Center 2-inch Cut Line for 2R Strip */}
+                    <div
+                      className="absolute top-0 bottom-0 border-r-2 border-dashed border-amber-500/70 z-20 pointer-events-none flex flex-col justify-between items-center py-2"
+                      style={{ left: '100px' }}
+                    >
+                      <Scissors className="w-3.5 h-3.5 text-amber-400 -mr-3.5 drop-shadow" />
+                      <span className="text-[8px] font-mono font-bold text-amber-300 bg-slate-950/90 px-1 py-0.5 rounded border border-amber-500/40 -mr-16 whitespace-nowrap">
+                        Garis Potong 2R (50.8 mm)
+                      </span>
+                      <Scissors className="w-3.5 h-3.5 text-amber-400 -mr-3.5 drop-shadow rotate-180" />
+                    </div>
+
+                    {/* Paper Center Grid Guide Lines */}
+                    <div className="absolute left-0 right-0 top-1/2 border-t border-slate-800/60 pointer-events-none" />
+
+                    {/* Scaled & Offset Active Print Box */}
+                    {(() => {
+                      const scaleVal = Math.max(85, Math.min(100, calibScale));
+                      const boxW = 200 * (scaleVal / 100);
+                      const boxH = 300 * (scaleVal / 100);
+                      const offXVal = Math.max(-15, Math.min(15, calibOffX));
+                      const offYVal = Math.max(-15, Math.min(15, calibOffY));
+                      const shiftX = offXVal * (200 / 400); // 1 unit = 0.5 px
+                      const shiftY = offYVal * (300 / 600); // 1 unit = 0.5 px
+                      const leftPos = (200 - boxW) / 2 + shiftX;
+                      const topPos = (300 - boxH) / 2 + shiftY;
+
+                      return (
+                        <div
+                          className="absolute border border-blue-400/80 bg-blue-500/10 rounded-sm shadow-inner transition-all duration-150 flex flex-col items-center justify-center p-2 z-10"
+                          style={{
+                            left: `${leftPos}px`,
+                            top: `${topPos}px`,
+                            width: `${boxW}px`,
+                            height: `${boxH}px`,
+                          }}
+                        >
+                          {/* Centered crosshair reticle inside shifted box */}
+                          <div className="w-3 h-3 rounded-full border border-blue-400 flex items-center justify-center pointer-events-none">
+                            <div className="w-1 h-1 rounded-full bg-blue-400" />
+                          </div>
+                          <span className="text-[9px] font-mono font-bold text-blue-300 mt-1 select-none pointer-events-none text-center">
+                            Area Komposit
+                          </span>
+                          <span className="text-[8px] font-mono text-blue-400/80 select-none pointer-events-none">
+                            {scaleVal}% Zoom
+                          </span>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                {/* Real-time Telemetry Pills */}
+                <div className="grid grid-cols-3 gap-1.5 mt-3 text-center">
+                  <div className="bg-slate-950/70 p-1.5 rounded-lg border border-slate-800">
+                    <div className="text-[9px] text-slate-500 font-mono">Skala</div>
+                    <div className="text-[11px] font-bold font-mono text-blue-400">{calibScale}%</div>
+                  </div>
+                  <div className="bg-slate-950/70 p-1.5 rounded-lg border border-slate-800">
+                    <div className="text-[9px] text-slate-500 font-mono">Geser X</div>
+                    <div className="text-[11px] font-bold font-mono text-blue-400">
+                      {calibOffX >= 0 ? `+${calibOffX}` : calibOffX}u
+                    </div>
+                  </div>
+                  <div className="bg-slate-950/70 p-1.5 rounded-lg border border-slate-800">
+                    <div className="text-[9px] text-slate-500 font-mono">Geser Y</div>
+                    <div className="text-[11px] font-bold font-mono text-blue-400">
+                      {calibOffY >= 0 ? `+${calibOffY}` : calibOffY}u
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sharpness Status Callout (Investigated & Deferred per Scope Guardrail) */}
+                <div className="mt-3 bg-slate-950/70 border border-slate-800/80 rounded-xl p-2.5 text-[10px] text-slate-400 flex items-start gap-2">
+                  <span className="text-amber-400 text-xs">ℹ️</span>
+                  <div>
+                    <span className="font-bold text-slate-300">Penajaman Citra (Sharpness): Dinonaktifkan</span>
+                    <p className="text-[9px] text-slate-500 mt-0.5 leading-snug">
+                      Executable print.exe & driver DNP tidak mendukung flag ketajaman runtime. Opsi ditangguhkan untuk menjaga fidelitas piksel.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+                <span>Rasio: 2:3 (4x6 inci)</span>
+                <span className="text-emerald-400 font-medium">Uji Potong Menggunakan Target Resmi</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Action Bar */}
+          <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3 w-full sm:w-auto">
+              <button
+                id="btn-reset-calibration"
+                type="button"
+                onClick={handleResetCalibration}
+                className="py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs flex items-center justify-center gap-2 transition-all border border-slate-700 cursor-pointer"
+              >
+                <RotateCcw className="w-4 h-4 text-amber-400" />
+                Reset Default Pabrik
+              </button>
+              <button
+                id="btn-test-calibration-print"
+                type="button"
+                onClick={handleCutTest}
+                disabled={isActionPending}
+                className="py-3 px-4 rounded-xl bg-slate-800 hover:bg-purple-600/30 hover:border-purple-500/50 text-purple-300 font-bold text-xs flex items-center justify-center gap-2 transition-all border border-slate-700 cursor-pointer disabled:opacity-50"
+              >
+                <Scissors className="w-4 h-4" />
+                Uji Cetak Kalibrasi (Cut Test)
+              </button>
+            </div>
+
+            <button
+              id="btn-save-calibration"
+              type="button"
+              onClick={handleSaveCalibration}
+              className="w-full sm:w-auto py-3.5 px-8 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-600/30 cursor-pointer"
+            >
+              <Save className="w-4 h-4" />
+              Simpan Konfigurasi Kalibrasi
+            </button>
+          </div>
+        </div>
       ) : (
         /* Main Grid Content */
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-6xl w-full mx-auto flex-1">
@@ -837,6 +1370,14 @@ export default function AdminScreen({ onClose, onNavigate }: AdminScreenProps) {
               Uji Potong (Cut Test)
             </button>
           </div>
+          <button
+            type="button"
+            onClick={() => setAdminTab('calibration')}
+            className="w-full mt-3 py-2.5 px-4 rounded-xl bg-slate-800/80 hover:bg-blue-600/20 hover:border-blue-500/40 text-blue-400 hover:text-blue-300 font-bold text-xs flex items-center justify-center gap-2 transition-all border border-slate-700 cursor-pointer"
+          >
+            <Sliders className="w-4 h-4" />
+            Buka Kalibrasi & Antrean Printer →
+          </button>
         </div>
 
         {/* Hardware Status: Camera */}

@@ -3,8 +3,15 @@ import { exec, execFile } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { getLastSession } from './SyncEngine';
-import { findPrintExePath, getHardwareStatus, PrinterHardwareStatus } from './PrinterHardwareAdapter';
+import { getLastSession, readLocalKioskConfig } from './SyncEngine';
+import {
+  setPrintDispatchActive,
+  acquirePrintDispatchLock,
+  releasePrintDispatchLock,
+  getCurrentDispatchOwner,
+  registerActivePrintPid,
+} from './PrinterMonitorService';
+import { findPrintExePath, findCalibrationTargetPath, getHardwareStatus, PrinterHardwareStatus } from './PrinterHardwareAdapter';
 
 /**
  * PrintService — Enterprise Windows Spooler Integration for DNP & Photo Printers.
@@ -138,14 +145,14 @@ export function listPrintersSync(): string[] {
  * Prioritizes: DNP > Citizen > any "Photo" printer > first available.
  */
 export function autoDetectPrinter(printers: string[]): string | null {
-  const priorities = ['DNP', 'Citizen', 'Photo', 'Mitsubishi', 'HiTi', 'RX1', 'DS620', 'CX-02'];
+  const priorities = ['DNP', 'Citizen', 'Photo', 'Mitsubishi', 'HiTi', 'RX1', 'DS620', 'CX-02', 'P525L', 'CY-02', 'DS-RX1'];
   for (const keyword of priorities) {
     const match = printers.find((p) =>
       p.toLowerCase().includes(keyword.toLowerCase())
     );
     if (match) return match;
   }
-  return printers[0] || null;
+  return null;
 }
 
 /**
@@ -674,12 +681,193 @@ export function isPrinterHandoffValid(
   return preValidatedHealth.name === targetPrinterName;
 }
 
+/**
+ * Resolves the target Windows printer queue according to fail-safe PR-02 rules:
+ * 1. If an explicit queue is requested or configured for the media format:
+ *    - Verify that it exists in installed Windows printers.
+ *    - If missing: fail fast with an actionable error (no silent redirection).
+ * 2. If no explicit queue is configured (null):
+ *    - Use detected default printer ONLY if it is installed and valid.
+ * 3. If neither exists or is installed:
+ *    - Return an error rejecting the print request safely.
+ */
+export async function resolvePrinterQueue(
+  requestedPrinter?: string | null,
+  mediaFormat?: string | null,
+  installedPrintersOverride?: string[]
+): Promise<{ success: boolean; printerName?: string; error?: string }> {
+  const localConfig = readLocalKioskConfig();
+  const queueMap = localConfig?.hardware?.printerNames;
+
+  // Determine candidate queue
+  let candidateQueue: string | null = requestedPrinter || null;
+  if (candidateQueue === 'Default Printer' || candidateQueue === 'AUTO' || candidateQueue === 'DEFAULT') {
+    candidateQueue = null;
+  }
+  if (!candidateQueue && mediaFormat) {
+    if (mediaFormat === '2R' || mediaFormat === 'strip2x6') {
+      candidateQueue = queueMap?.strip2x6 || null;
+    } else if (mediaFormat === '4R' || mediaFormat === 'photo4x6') {
+      candidateQueue = queueMap?.photo4x6 || null;
+    } else if (mediaFormat === '6R' || mediaFormat === 'photo6x8') {
+      candidateQueue = queueMap?.photo6x8 || null;
+    }
+  }
+
+  // Get available printers
+  const installedPrinters = installedPrintersOverride || (await listPrinters());
+
+  // 1. If 2R format was requested but no 2R queue is configured:
+  if ((mediaFormat === '2R' || mediaFormat === 'strip2x6') && !candidateQueue) {
+    return {
+      success: false,
+      error: 'Antrean printer 2R (strip 2x6) belum dikonfigurasi di Admin Panel. Harap tentukan antrean printer 2R yang valid.',
+    };
+  }
+
+  // 2. If 4R format was requested but no 4R queue is configured:
+  if ((mediaFormat === '4R' || mediaFormat === 'photo4x6') && !candidateQueue) {
+    return {
+      success: false,
+      error: 'Antrean printer 4R (photo 4x6) belum dikonfigurasi di Admin Panel. Harap tentukan antrean printer 4R yang valid.',
+    };
+  }
+
+  // 3. If 6R format was requested but no 6R queue is configured:
+  if ((mediaFormat === '6R' || mediaFormat === 'photo6x8') && !candidateQueue) {
+    return {
+      success: false,
+      error: 'Antrean printer 6R (photo 6x8) belum dikonfigurasi di Admin Panel. Harap tentukan antrean printer 6R yang valid.',
+    };
+  }
+
+  // 4. If explicit or configured candidate queue exists:
+  if (candidateQueue) {
+    // If printing 4R (uncut), strictly reject if candidateQueue is a 2-inch cut queue
+    if (mediaFormat === '4R' || mediaFormat === 'photo4x6') {
+      const isCutName =
+        /(2x6|strip|2-inch|2 inch|\bcut\b|\bpotong\b)/i.test(candidateQueue) &&
+        !/uncut/i.test(candidateQueue);
+      if (isCutName) {
+        return {
+          success: false,
+          error: `Antrean printer '${candidateQueue}' dikonfigurasi dengan mode pemotongan 2-inci (cut), tidak aman untuk format 4R (Uncut).`,
+        };
+      }
+    }
+
+    const isInstalled = installedPrinters.some(
+      (p) => p.toLowerCase() === candidateQueue!.toLowerCase()
+    );
+    if (!isInstalled && installedPrinters.length > 0) {
+      const formatLabel = mediaFormat ? `${mediaFormat} ` : '';
+      return {
+        success: false,
+        error: `Antrean printer ${formatLabel}terkonfigurasi '${candidateQueue}' tidak ditemukan di sistem Windows. Pastikan nama antrean printer sesuai di Admin Panel.`,
+      };
+    }
+    const exactMatch = installedPrinters.find(
+      (p) => p.toLowerCase() === candidateQueue!.toLowerCase()
+    );
+    return { success: true, printerName: exactMatch || candidateQueue };
+  }
+
+  // 4. Fallback for 4R (uncut) or general photo printing: candidateQueue is null, use detected default printer
+  const defaultPrinter = getDefaultPrinterName();
+  if (defaultPrinter) {
+    // Ensure default printer is not a 2-inch cut queue when printing 4R
+    const isCutName =
+      /(2x6|strip|2-inch|2 inch|\bcut\b|\bpotong\b)/i.test(defaultPrinter) &&
+      !/uncut/i.test(defaultPrinter);
+    if (!isCutName) {
+      const isInstalled = installedPrinters.length === 0 || installedPrinters.some(
+        (p) => p.toLowerCase() === defaultPrinter.toLowerCase()
+      );
+      if (isInstalled) {
+        const exactMatch = installedPrinters.find(
+          (p) => p.toLowerCase() === defaultPrinter.toLowerCase()
+        );
+        return { success: true, printerName: exactMatch || defaultPrinter };
+      }
+    }
+  }
+
+  // If installedPrinters has photo printers detected via autoDetectPrinter:
+  const autoDetected = autoDetectPrinter(installedPrinters);
+  if (autoDetected) {
+    return { success: true, printerName: autoDetected };
+  }
+
+  return {
+    success: false,
+    error: 'Tidak ada printer foto yang terdeteksi atau terkonfigurasi di sistem Windows.',
+  };
+}
+
+/**
+ * Resolves and verifies an uncut 4x6 printer queue specifically for geometric calibration.
+ * Guardrails:
+ * 1. Requires an explicitly configured 4R queue in config.hardware.printerNames.photo4x6.
+ * 2. Strictly rejects routing to a queue configured for 2-inch cut (strip2x6) or with 2-inch cut naming.
+ * 3. Verifies that the queue is installed in Windows.
+ * 4. Never falls back silently to an unverified or cut-configured default printer.
+ */
+export async function resolveCalibrationPrinterQueue(
+  installedPrintersOverride?: string[]
+): Promise<{ success: boolean; printerName?: string; error?: string }> {
+  const localConfig = readLocalKioskConfig();
+  const queueMap = localConfig?.hardware?.printerNames;
+  const installedPrinters = installedPrintersOverride || (await listPrinters());
+
+  const photo4x6Queue = queueMap?.photo4x6?.trim() || null;
+  const strip2x6Queue = queueMap?.strip2x6?.trim() || null;
+
+  // 1. Explicit 4R queue must be configured
+  if (!photo4x6Queue) {
+    return {
+      success: false,
+      error: 'Antrean printer 4R (4x6 uncut) belum dikonfigurasi di Admin Panel. Harap tentukan antrean printer 4R yang valid agar target kalibrasi tidak terpotong.',
+    };
+  }
+
+  // 2. Reject if queue is configured for 2-inch cut or shares name with 2R queue
+  const isCutName =
+    /(2x6|strip|2-inch|2 inch|\bcut\b|\bpotong\b)/i.test(photo4x6Queue) &&
+    !/uncut/i.test(photo4x6Queue);
+  const isSameAs2R = Boolean(strip2x6Queue && photo4x6Queue.toLowerCase() === strip2x6Queue.toLowerCase());
+
+  if (isCutName || isSameAs2R) {
+    return {
+      success: false,
+      error: `Antrean '${photo4x6Queue}' terkonfigurasi untuk pemotongan 2-inch (2R). Kalibrasi geometris 4x6 membutuhkan antrean tanpa potong (uncut). Silakan pilih antrean 4R yang berbeda di Admin Panel.`,
+    };
+  }
+
+  // 3. Verify queue is installed in Windows
+  const isInstalled = installedPrinters.some(
+    (p) => p.toLowerCase() === photo4x6Queue.toLowerCase()
+  );
+  if (!isInstalled && installedPrinters.length > 0) {
+    return {
+      success: false,
+      error: `Antrean printer 4R terkonfigurasi '${photo4x6Queue}' tidak ditemukan di sistem Windows. Pastikan nama antrean printer sesuai.`,
+    };
+  }
+
+  const exactMatch = installedPrinters.find(
+    (p) => p.toLowerCase() === photo4x6Queue.toLowerCase()
+  );
+
+  return { success: true, printerName: exactMatch || photo4x6Queue };
+}
+
 export async function printImage(
   imagePath: string,
-  printerName: string,
-  copies: number,
+  printerName?: string | null,
+  copies: number = 1,
   preValidatedHealth?: PrinterHealth,
-  onPhaseChange?: (phase: 'PRINTING' | 'VERIFYING') => void
+  onPhaseChange?: (phase: 'PRINTING' | 'VERIFYING') => void,
+  mediaFormat?: string | null
 ): Promise<{ success: boolean; error?: string }> {
   // 1. Bypass Mode check
   if (isBypassMode) {
@@ -706,8 +894,13 @@ export async function printImage(
     return { success: false, error: `File not found: ${targetPath}` };
   }
 
-  // 2. Resolve Active Printer Identity with Strict Exact Matching
-  const activePrinter = printerName || defaultPrinterName || 'DS-RX1';
+  // 2. Resolve Active Printer Identity with Strict Fail-Safe Matching
+  const resolution = await resolvePrinterQueue(printerName, mediaFormat);
+  if (!resolution.success || !resolution.printerName) {
+    console.error(`[PrintService] Queue resolution failed: ${resolution.error}`);
+    return { success: false, error: resolution.error || 'Antrean printer tidak valid' };
+  }
+  const activePrinter = resolution.printerName;
 
   // 3. Dispatch print command via native print.exe CLI
   const printExe = findPrintExePath();
@@ -716,29 +909,42 @@ export async function printImage(
     return { success: false, error: 'Utilitas cetak (print.exe) tidak ditemukan' };
   }
 
+  // Dynamic calibration parameter injection from hydrated local config
+  // Contract: scale in %, offsets in hundredths of an inch (1/100 inch = 0.254 mm)
+  const localConfig = readLocalKioskConfig();
+  const calib = localConfig?.hardware?.printerCalibration;
+  const rawScale = typeof calib?.scale === 'number' && !isNaN(calib.scale) ? calib.scale : 99;
+  const rawOffX = typeof calib?.offsetX === 'number' && !isNaN(calib.offsetX) ? calib.offsetX : 0;
+  const rawOffY = typeof calib?.offsetY === 'number' && !isNaN(calib.offsetY) ? calib.offsetY : 3;
+
+  const scaleArg = String(Math.max(85, Math.min(100, rawScale)));
+  const offXArg = String(Math.max(-15, Math.min(15, rawOffX)));
+  const offYArg = String(Math.max(-15, Math.min(15, rawOffY)));
+
   // Native CLI argument vector:
   // print.exe <imagePath> [copies] [scale%] [offsetX] [offsetY] [printerName]
   const printArgs = [
     targetPath,
     String(copies),
-    '99',
-    '0',
-    '3',
+    scaleArg,
+    offXArg,
+    offYArg,
     activePrinter,
   ];
 
-  console.log(`[PrintService] Dispatching print via print.exe to '${activePrinter}' (x${copies})`);
+  console.log(`[PrintService] Dispatching print via print.exe to '${activePrinter}' (x${copies}) [scale: ${scaleArg}%, offX: ${offXArg}, offY: ${offYArg}]`);
 
   if (onPhaseChange) {
     onPhaseChange('PRINTING');
   }
 
   const dispatchResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
-    execFile(
+    const child = execFile(
       printExe,
       printArgs,
       { timeout: 30000, cwd: path.dirname(printExe) },
       (error, stdout, stderr) => {
+        registerActivePrintPid(null);
         if (error) {
           console.error('[PrintService] print.exe dispatch failed:', error.message, stderr);
           resolve({ ok: false, error: stderr || error.message });
@@ -751,6 +957,9 @@ export async function printImage(
         }
       }
     );
+    if (child && child.pid) {
+      registerActivePrintPid(child.pid);
+    }
   });
 
   if (!dispatchResult.ok) {
@@ -875,48 +1084,98 @@ export function registerPrintHandlers(config: PrintServiceConfig): void {
       return { success: false, error: `Berkas komposit tidak ditemukan di disk: ${lastSession.compositePath}` };
     }
 
-    console.log(`[PrintService] [Operator Action] Reprinting last session: ${lastSession.id}`);
-    const printResult = await printImage(lastSession.compositePath, defaultPrinterName, 1);
-    return {
-      success: printResult.success,
-      sessionId: lastSession.id,
-      compositePath: lastSession.compositePath,
-      error: printResult.error,
-    };
+    const acquired = acquirePrintDispatchLock('MANUAL');
+    if (!acquired) {
+      return {
+        success: false,
+        sessionId: lastSession.id,
+        compositePath: lastSession.compositePath,
+        error: 'Printer sedang memproses pencetakan lain. Harap tunggu hingga selesai.',
+      };
+    }
+
+    try {
+      console.log(`[PrintService] [Operator Action] Reprinting last session: ${lastSession.id}`);
+      const printResult = await printImage(lastSession.compositePath, defaultPrinterName, 1);
+      return {
+        success: printResult.success,
+        sessionId: lastSession.id,
+        compositePath: lastSession.compositePath,
+        error: printResult.error,
+      };
+    } finally {
+      releasePrintDispatchLock('MANUAL');
+    }
   });
 
   // ─── Operator Cut / Calibration Test ───────────────────
   ipcMain.handle('printer:cut-test', async () => {
     if (isBypassMode) {
-      console.log('[PrintService] [BYPASS] Simulated paper cut test');
+      console.log('[PrintService] [BYPASS] Simulated paper cut test with Pictolabs calibration target');
       return { success: true };
     }
 
-    if (!defaultPrinterName) {
-      return { success: false, error: 'Tidak ada printer terpasang' };
+    const acquired = acquirePrintDispatchLock('CALIBRATION');
+    if (!acquired) {
+      const busyOwner = getCurrentDispatchOwner() || 'proses lain';
+      console.warn(`[PrintService] ⚠️ Cannot run cut-test: Print dispatch busy (held by '${busyOwner}')`);
+      return {
+        success: false,
+        error: 'Printer sedang memproses pencetakan lain. Harap tunggu hingga selesai.',
+      };
     }
 
     try {
-      const sharp = require('sharp');
+      // 1. Verify safe 4x6 uncut queue BEFORE creating or dispatching calibration target
+      const queueRes = await resolveCalibrationPrinterQueue();
+      if (!queueRes.success || !queueRes.printerName) {
+        console.warn(`[PrintService] ⚠️ Calibration cut-test blocked: ${queueRes.error}`);
+        return {
+          success: false,
+          error: queueRes.error || 'Antrean printer 4R tidak valid untuk kalibrasi.',
+        };
+      }
+      const targetPrinter = queueRes.printerName;
+
       const testDir = path.join(os.tmpdir(), 'pictolabs-print');
       if (!fs.existsSync(testDir)) fs.mkdirSync(testDir, { recursive: true });
-      const testPath = path.join(testDir, 'cut_test.jpg');
 
-      // Create a small 2-inch calibration strip (600x600 px)
-      await sharp({
-        create: {
-          width: 1200,
-          height: 600,
-          channels: 3,
-          background: { r: 240, g: 240, b: 240 },
-        },
-      })
-        .jpeg({ quality: 90 })
-        .toFile(testPath);
+      const targetAssetPath = findCalibrationTargetPath();
+      let testPath: string;
 
-      return printImage(testPath, defaultPrinterName, 1);
+      if (targetAssetPath && fs.existsSync(targetAssetPath)) {
+        testPath = path.join(testDir, `calibration_target_${Date.now()}.png`);
+        fs.copyFileSync(targetAssetPath, testPath);
+      } else {
+        // Fallback: create 1200x1800 300 DPI test image if asset missing
+        const sharp = require('sharp');
+        testPath = path.join(testDir, `calibration_target_${Date.now()}.jpg`);
+        await sharp({
+          create: {
+            width: 1200,
+            height: 1800,
+            channels: 3,
+            background: { r: 245, g: 245, b: 245 },
+          },
+        })
+          .jpeg({ quality: 90 })
+          .toFile(testPath);
+      }
+
+      try {
+        // Route through single printImage dispatch with targetPrinter and mediaFormat '4R' (uncut)
+        return await printImage(testPath, targetPrinter, 1, undefined, undefined, '4R');
+      } finally {
+        try {
+          if (fs.existsSync(testPath)) fs.unlinkSync(testPath);
+        } catch {
+          // ignore temp cleanup error
+        }
+      }
     } catch (err: any) {
       return { success: false, error: err.message };
+    } finally {
+      releasePrintDispatchLock('CALIBRATION');
     }
   });
 

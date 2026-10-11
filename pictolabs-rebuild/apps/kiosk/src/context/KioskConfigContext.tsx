@@ -25,6 +25,17 @@ export interface KioskConfig {
     printerProfileId?: string | null;
     mirrorViewfinder?: boolean;
     paperSize?: string;
+    printerCalibration?: {
+      scale: number;
+      offsetX: number;
+      offsetY: number;
+    };
+    printerNames?: {
+      strip2x6?: string | null;
+      photo4x6?: string | null;
+      photo6x8?: string | null;
+      [key: string]: string | null | undefined;
+    };
   };
 
   frames?: {
@@ -71,6 +82,16 @@ export const DEFAULT_KIOSK_CONFIG: KioskConfig = {
     printerProfileId: null,
     mirrorViewfinder: true,
     paperSize: '4R',
+    printerCalibration: {
+      scale: 99,
+      offsetX: 0,
+      offsetY: 3,
+    },
+    printerNames: {
+      strip2x6: null,
+      photo4x6: null,
+      photo6x8: null,
+    },
   },
   frames: {
     allowedFrameIds: [],
@@ -149,6 +170,46 @@ export const normalizeConfigPayload = (incoming: any, base: KioskConfig): KioskC
   if (merged.system?.themeColor) merged.themeColor = merged.system.themeColor;
   if (merged.system?.eventName) merged.eventName = merged.system.eventName;
   if (merged.system?.subText) merged.subText = merged.system.subText;
+
+  // Defensive hardware calibration normalization
+  const prevCal = base?.hardware?.printerCalibration || merged.hardware?.printerCalibration;
+  const rawCal = incoming.hardware?.printerCalibration || prevCal;
+  const rawScale = typeof rawCal?.scale === 'number' && !isNaN(rawCal.scale) ? rawCal.scale : (prevCal?.scale ?? 99);
+  const rawOffX = typeof rawCal?.offsetX === 'number' && !isNaN(rawCal.offsetX) ? rawCal.offsetX : (prevCal?.offsetX ?? 0);
+  const rawOffY = typeof rawCal?.offsetY === 'number' && !isNaN(rawCal.offsetY) ? rawCal.offsetY : (prevCal?.offsetY ?? 3);
+
+  const prevNames = base?.hardware?.printerNames || merged.hardware?.printerNames;
+  const incomingNames = incoming.hardware?.printerNames;
+  const defaultNames = DEFAULT_KIOSK_CONFIG.hardware?.printerNames || {
+    strip2x6: null,
+    photo4x6: null,
+    photo6x8: null,
+  };
+
+  const resolvedPrinterNames = {
+    strip2x6: (incomingNames?.strip2x6 !== undefined && incomingNames?.strip2x6 !== null)
+      ? incomingNames.strip2x6
+      : (prevNames?.strip2x6 ?? defaultNames.strip2x6),
+    photo4x6: (incomingNames?.photo4x6 !== undefined && incomingNames?.photo4x6 !== null)
+      ? incomingNames.photo4x6
+      : (prevNames?.photo4x6 ?? defaultNames.photo4x6),
+    photo6x8: (incomingNames?.photo6x8 !== undefined && incomingNames?.photo6x8 !== null)
+      ? incomingNames.photo6x8
+      : (prevNames?.photo6x8 ?? defaultNames.photo6x8),
+  };
+
+  merged.hardware = {
+    ...(DEFAULT_KIOSK_CONFIG.hardware || {}),
+    ...(base?.hardware || {}),
+    ...(merged.hardware || {}),
+    ...(incoming.hardware || {}),
+    printerCalibration: {
+      scale: Math.max(85, Math.min(100, rawScale)),
+      offsetX: Math.max(-15, Math.min(15, rawOffX)),
+      offsetY: Math.max(-15, Math.min(15, rawOffY)),
+    },
+    printerNames: resolvedPrinterNames,
+  };
 
   return merged;
 };

@@ -11,8 +11,8 @@
 ## 1. Executive Summary & Master Timeline Synchronization
 
 ### Current Platform Stage: **Pilot Hardening / Pilot Readiness**
-### Current Active Gate: **Phase B — PR-02 Printer Profiles & Calibration Planning**
-### Next Technical Workstream: **Camera Reliability RCA (`CAMERA-01`) & PR-02 Calibration Audit**
+### Current Active Gate: **Phase B — PR-02 Printer Profiles & Calibration (Founder Physical UAT PASS — Ready for Closure)**
+### Next Technical Workstream: **Camera Reliability RCA (`CAMERA-01`) & PR-02 Closure**
 
 The completion status of the Pictolabs platform reflects strict source-code reality and physical hardware UAT sign-offs across `apps/backend`, `apps/kiosk`, `apps/dashboard`, and `packages/shared`. Outdated documentation claims, planning artifacts, and aspirational roadmaps were reconciled against the authoritative [`docs/00_CONTEXT/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/00_CONTEXT/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md).
 
@@ -24,7 +24,7 @@ The completion status of the Pictolabs platform reflects strict source-code real
 ├────────────────────────────┼─────────────────────────────┼────────────────────────┤
 │ Architecture / Foundation  │ CLOSED                      │ Monorepo & DB verified │
 │ PR-01 Booth Configuration  │ CLOSED (Conditional Ex.)    │ Founder UAT PASS (non-pmt)│
-│ PR-02 Printer Profiles     │ OPEN (PLANNING PHASE)       │ Coordinate & bleed audit│
+│ PR-02 Printer Profiles     │ FOUNDER_UAT_PASS            │ Ready for Closure      │
 │ P0 Admin Panel & Security  │ CLOSED                      │ Offline hash PIN PASS  │
 │ Session History (Kiosk P1-2) CLOSED                      │ Founder UAT PASS       │
 │ Printer Execution (RCA-7)  │ PHYSICAL_REGRESSION_PASS    │ Founder UAT PASS (10/10)│
@@ -301,32 +301,50 @@ c:\Users\ezarh\.gemini\antigravity-ide\scratch\Pictolabs
 
 ### Printer & Hardware Output
 - **Current Timeline Status:**
-  - **RCA-7 Execution Simplification:** `IMPLEMENTED`
-  - **Automated Verification:** `AUTOMATED_VERIFIED` (49/49 PASS across 4 suites)
-  - **Founder Physical Hardware UAT:** `FOUNDER_UAT_PASS`
-  - **Current Release State:** `RELEASE_CLOSURE_PENDING`
-  - **Governance Invariant:** DO NOT mark Printer `CLOSED` until formal release packaging, commit, push, VPS deploy, and smoke test are completed.
-- **Technical Reality & Operational Evidence:**
+  - **RCA-7 Execution Simplification:** `CLOSED / VERIFIED` (Founder Physical UAT PASS on Booth #1; 6/6 spec test blocks, 10/10 architectural invariants audited)
+  - **PR-02 Printer Profiles & Calibration:** `FOUNDER_UAT_PASS` — Ready for formal closure (`READY_TO_CLOSE_PR02`)
+  - **Automated Verification:** `AUTOMATED_VERIFIED` (100% PASS: 41/41 PR-02 UAT suite across Tasks A-D, 17/17 PR-02 blocker suite, 25/25 checkpoint suites [9 Checkpoint 1 + 5 Checkpoint 2 + 11 Checkpoint 3], 36/36 RCA-6, 6/6 RCA-7 [10 invariants audited], 10/10 config hydration, 22/22 PR-01 suite)
+  - **Packaging & Runtime Verification:** `PACKAGED_VERIFIED` (Asset `calibration_target.png` verified 123,101 bytes in `win-unpacked/resources/assets/`; monorepo `turbo run build` clean across 4 packages)
+  - **Physical UAT Gate:** `FOUNDER_PHYSICAL_UAT_PASS` (Founder confirmed PASS across all 8 scenarios on Booth #1: persistence, 2R strip cut, Admin reprint queue routing, original format stability, explicit 2R/4R selection, custom copies, unknown-format guard, zero duplicate prints)
+  - **Release State:** `READY_FOR_CLOSURE` (Pending ChatGPT review & Founder final sign-off; Pilot Booth #1 Launch remains HELD pending independent camera/payment gates)
+
+- **Technical Reality & Operational Evidence (PR-02 Calibration & Profiles):**
+  - **Customer Catalog Scope:** Customer catalog currently offers only 2R Photostrip (`photo-strip-2x6`) with `frameId: '2R'`. Customer-facing 4R product does not exist in catalog; 4R format routing is physically proven via Admin reprint format override and calibration target prints.
+  - **Reference-Parity Calibration Model:** Enforces exact reference boundaries: Scale 85–100%, Offset X -15 to +15, Offset Y -15 to +15. Native units are $1/100\text{ inch}$ per unit (~0.254 mm). Default baseline calibrated at 99% scale, 0 X offset, +3 Y offset.
+  - **Nullable Queue Contract & Media Mapping:** Replaced fictional hardcoded queues (`CITIZEN CY-02`) with `null` fallbacks. Per-media mappings (`strip2x6`, `photo4x6`, `photo6x8`) dynamically resolve to Windows queues (e.g. `"DS-RX1 (Copy 2)"`).
+  - **Single Dispatch Point:** `PrintService.printImage` acts as the singular execution funnel for both customer sessions and calibration prints, injecting dynamic `scaleArg`, `offsetXArg`, `offsetYArg`, and `targetQueue` into `print.exe`.
+  - **Atomic Synchronous Mutex Lock:** `acquirePrintDispatchLock(owner)` in `PrinterMonitorService.ts` guarantees singular print execution across `QUEUE_WORKER`, `CALIBRATION`, and `MANUAL`.
+    - Active customer print rejects calibration tests immediately (`409 Conflict` equivalent with Indonesian error).
+    - Active calibration test-print keeps customer queue jobs safe in SQLite WAL (`PENDING`), retrying every 1000ms.
+  - **Safe Stale-Lock Recovery with Process Liveness:** Stale lock recovery (>60s) checks process existence (`isPrintProcessAlive`) via tracked child PID and `tasklist`. If active, attempts graceful termination (`SIGTERM` + `taskkill /F /T`). If the process remains alive or termination fails, **lock reclamation is strictly refused**. Lock is reclaimed only after confirmed process death.
+  - **Uncut 4x6 Queue Enforcement:** Calibration cut-test specifically validates `hardware.printerNames.photo4x6`. Strictly rejects 2-inch cut queues (`strip2x6` or queues with `/2x6|strip|2-inch|2 inch|\bcut\b|\bpotong\b/i` unless explicitly `uncut`).
+  - **Pembedaan Validasi Kode vs Antrean Fisik Booth #1:** Validasi kode & test suite membuktikan algoritma penolakan antrean 2-inci berjalan deterministik. Keberadaan antrean Windows 4×6 uncut dan 2R cut telah diverifikasi dan diuji secara fisik oleh Founder pada Booth #1.
+  - **USB Bus Collision Cooldown:** `PrinterMonitorService` skips DNP USB telemetry queries during active spooling and enforces a 4,000ms cooldown window post-dispatch.
+  - **Packaged Calibration Asset:** `apps/kiosk/electron-builder.json` packages `resources/assets/*` into `win-unpacked/resources/assets/`. Confirmed by unpacked build inspection (`calibration_target.png`, 123,101 bytes).
+  - **Admin Panel Calibration UI:** Live Canvas preview with 2R cut guidelines, bleed indicators, dynamic slider controls, and single-click calibration test print.
+  - **Offline Configuration Hydration:** `readLocalKioskConfig()` reads atomic `%ProgramData%\Pictolabs\kiosk-config.json` cache synchronously (<1ms), enabling offline calibration persistence.
+
+- **Technical Reality & Operational Evidence (RCA-7 Execution Engine):**
   - Streamlined Direct GDI Dispatch: Replaced legacy polling loops with native `print.exe` direct invocation (~1.0s software dispatch boundary) in [`apps/kiosk/electron/services/PrintService.ts`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/PrintService.ts).
-  - Exact Printer Identity & Dynamic Active Queue Resolution: Resolves active Windows queue (e.g. `DS-RX1 (Copy 1)`) dynamically while strictly preventing cross-printer model collisions.
+  - Exact Printer Identity & Dynamic Active Queue Resolution: Resolves active Windows queue dynamically while strictly preventing cross-printer model collisions.
   - In-Memory Advisory Health Gate: `getCachedPrinterHardwareStatus()` (0ms) in [`PrintQueueService.ts`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/PrintQueueService.ts) checks for `OFFLINE` or `DOOR_OPEN` pre-dispatch without spawning child processes.
-  - Decoupled GIF Transcode: Moved dual FFmpeg transcoding to background in `RenderScreen.tsx`, reducing customer UI wait from 24.5s to <2.5s.
+  - Decoupled GIF Transcode: Dual FFmpeg transcoding backgrounded in `RenderScreen.tsx`, reducing customer UI wait from 24.5s to <2.5s.
   - Non-Duplication Watchdog Safety: Stuck print jobs strictly transition to terminal `DEAD_LETTER`; automatic retry of in-flight prints is strictly BANNED (Commit `787b95d`).
-  - USB Channel Lifecycle Guard: `PrinterMonitorService.ts` suppresses native DNP USB queries during active `print.exe` spooling, eliminating Win32 kernel USB driver collisions.
-  - Admin Reprint: 4,000ms debounce prevents double-tapping and physical print queue flooding.
   - Spooler Handoff Semantics: `COMPLETED` is explicitly defined as **Print Dispatch / Windows Spooler Accepted**, not optical proof of physical paper exit.
-  - **Automated Test Coverage:** 100% PASS across 4 suites (49/49 specs: `rca7-simplification.spec.ts`, `rca6-regression.spec.ts`, `print-queue.spec.ts`, `burn-in.spec.ts`).
-  - **Founder Physical UAT:** **PASS.** Founder personally tested physical hardware on Booth #1 across 10 scenarios: normal customer print, background GIF transcode, printer OFF before dispatch (pending queue dispatches when printer returns), reconnect pending queue, disconnect after dispatch, paper out, cover open, admin reprint (1x/2x with debounce), watchdog delayed previous-session scenario, and duplicate physical print protection.
-  - **Next Formal Action:** Build standalone installer package (`Pictolabs Kiosk Setup 1.0.0.exe`), clean commit, push GitHub, deploy VPS, and execute VPS smoke test.
+  - Founder Physical UAT (RCA-7): **PASS.** Founder personally tested physical hardware on Booth #1 across 10 scenarios.
+
 - **Files Involved:**
   - `apps/kiosk/electron/services/PrintService.ts`
   - `apps/kiosk/electron/services/PrintQueueService.ts`
   - `apps/kiosk/electron/services/PrinterMonitorService.ts`
-  - `apps/kiosk/electron/services/PaperTrackerService.ts`
-  - `apps/kiosk/src/screens/RenderScreen.tsx`
-  - `apps/kiosk/src/screens/QRScreen.tsx`
-  - `apps/kiosk/src/screens/SessionHistorySection.tsx`
-- **Confidence Level:** `HIGH` (Empirical Founder physical hardware UAT pass confirmed; zero duplicate print symptoms).
+  - `apps/kiosk/electron/services/config-hydration.ts`
+  - `apps/kiosk/electron/main.ts`
+  - `apps/kiosk/electron-builder.json`
+  - `apps/kiosk/src/screens/AdminScreen.tsx`
+  - `apps/backend/src/booths/booths.service.ts`
+  - `apps/backend/src/booths/dto/update-booth-config.dto.ts`
+  - `packages/shared/src/schemas.ts`
+- **Confidence Level:** `HIGH` (All 4 layers of automated/build/packaging verification passed. Zero unauthorized physical prints dispatched; awaiting Founder authorization).
 
 ---
 
@@ -659,9 +677,9 @@ The following risks are derived exclusively from actual code patterns:
 
 ## 11. Recommended Next Milestones & Execution Roadmap
 
-### Current Stage: **Pilot Hardening**
-### Current Active Gate: **Formal Printer RCA-7 Release Closure (`RELEASE_CLOSURE_PENDING`)**
-### Next Technical Workstream: **Camera Reliability RCA (`CAMERA-01`)**
+### Current Stage: **Pilot Hardening / Pilot Readiness**
+### Current Active Gate: **Phase B — PR-02 Printer Profiles & Calibration (Founder Physical UAT PASS — Ready for Closure)**
+### Next Technical Workstream: **Camera Reliability RCA (`CAMERA-01`) & Midtrans QRIS Setup**
 
 In strict accordance with the approved [`docs/00_CONTEXT/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/00_CONTEXT/PICTOLABS_PILOT_READINESS_TIMELINE_v3.md), the technical roadmap is governed by physical reliability gates rather than speculative commercial feature development.
 

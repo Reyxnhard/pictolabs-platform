@@ -140,6 +140,7 @@ function initDatabase(dataDir: string): void {
       session_id TEXT NOT NULL,
       file_path TEXT NOT NULL,
       printer_name TEXT NOT NULL,
+      format TEXT NOT NULL DEFAULT '4R',
       copies INTEGER NOT NULL DEFAULT 1,
       status TEXT NOT NULL DEFAULT 'PENDING',
       attempts INTEGER NOT NULL DEFAULT 0,
@@ -222,6 +223,9 @@ function initDatabase(dataDir: string): void {
   } catch (_) {}
   try {
     db.exec('ALTER TABLE sessions ADD COLUMN gif_path TEXT;');
+  } catch (_) {}
+  try {
+    db.exec("ALTER TABLE print_queue ADD COLUMN format TEXT NOT NULL DEFAULT '4R';");
   } catch (_) {}
   try {
     db.exec('ALTER TABLE sessions ADD COLUMN gif_url TEXT;');
@@ -566,6 +570,8 @@ export interface KioskSessionHistoryItem {
   compositeExists: boolean;
   printStatus: 'pending' | 'printed' | 'failed' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'PENDING' | 'NOT_QUEUED';
   printAttempts: number;
+  printFormat?: '2R' | '4R' | '6R' | null;
+  originalFormat?: '2R' | '4R' | '6R' | null;
   lastPrintError?: string | null;
   uploaded: boolean;
   uploadStatus: 'PENDING' | 'UPLOADING' | 'COMPLETED' | 'FAILED';
@@ -592,10 +598,18 @@ export function getSessionHistory(query?: KioskSessionHistoryQuery): KioskSessio
   `).all(limit, offset) as any[];
 
   const stmtPrint = db.prepare(`
-    SELECT status, attempts, last_error 
+    SELECT status, attempts, last_error, format 
     FROM print_queue 
     WHERE session_id = ? 
     ORDER BY created_at DESC 
+    LIMIT 1
+  `);
+
+  const stmtInitialPrint = db.prepare(`
+    SELECT format 
+    FROM print_queue 
+    WHERE session_id = ? 
+    ORDER BY created_at ASC 
     LIMIT 1
   `);
 
@@ -626,22 +640,58 @@ export function getSessionHistory(query?: KioskSessionHistoryQuery): KioskSessio
       localStorageState = 'EVICTED';
     }
 
-    // Print status resolution
+    // Resolve original physical format according to strict priority:
+    // 1. sessions.frame_id when it is a recognized physical format: '2R', '4R', '6R'
+    let originalFormat: '2R' | '4R' | '6R' | null = null;
+    const rawFrameId = (row.frame_id || '').toUpperCase().trim();
+    if (rawFrameId === '2R' || rawFrameId === 'STRIP2X6' || rawFrameId === 'STRIP') {
+      originalFormat = '2R';
+    } else if (rawFrameId === '4R' || rawFrameId === 'PHOTO4X6' || rawFrameId === 'POSTCARD') {
+      originalFormat = '4R';
+    } else if (rawFrameId === '6R' || rawFrameId === 'PHOTO6X8') {
+      originalFormat = '6R';
+    } else {
+      // 2. For legacy sessions where frame_id contains a visual theme (e.g. 'classic-white'),
+      // inspect the earliest valid print-job format for that session
+      const initialRow = stmtInitialPrint.get(row.id) as any;
+      if (initialRow && initialRow.format) {
+        const initNorm = String(initialRow.format).toUpperCase().trim();
+        if (initNorm === '2R' || initNorm === '4R' || initNorm === '6R') {
+          originalFormat = initNorm as any;
+        }
+      }
+      // 3. If neither source is valid, originalFormat remains null (never infer theme as 4R/2R)
+    }
+
+    // Print status & latest printFormat resolution (from most recent print_queue job)
     const printRow = stmtPrint.get(row.id) as any;
     let printStatus: any = row.print_status || 'pending';
     let printAttempts = 0;
     let lastPrintError: string | null = null;
+    let printFormat: '2R' | '4R' | '6R' | null = null;
 
     if (printRow) {
       printStatus = printRow.status === 'DEAD_LETTER' ? 'FAILED' : printRow.status;
       printAttempts = printRow.attempts || 0;
       lastPrintError = printRow.last_error || null;
+      if (printRow.format) {
+        const norm = String(printRow.format).toUpperCase().trim();
+        if (norm === '2R' || norm === '4R' || norm === '6R') {
+          printFormat = norm as any;
+        }
+      }
     } else if (row.print_status === 'printed') {
       printStatus = 'COMPLETED';
     } else if (row.print_status === 'failed') {
       printStatus = 'FAILED';
     } else {
       printStatus = 'NOT_QUEUED';
+    }
+
+    // If printFormat was not recorded in print_queue (e.g. not yet queued or legacy),
+    // fallback printFormat to originalFormat if known
+    if (!printFormat && originalFormat) {
+      printFormat = originalFormat;
     }
 
     // Upload status resolution
@@ -686,6 +736,8 @@ export function getSessionHistory(query?: KioskSessionHistoryQuery): KioskSessio
       compositeExists,
       printStatus,
       printAttempts,
+      printFormat,
+      originalFormat,
       lastPrintError,
       uploaded: Boolean(row.uploaded),
       uploadStatus,
@@ -719,9 +771,19 @@ export function getSessionHistory(query?: KioskSessionHistoryQuery): KioskSessio
 export async function reprintSessionWithDebounce(
   sessionId: string,
   copies: number = 1,
+  format?: string,
   reason: string = 'OPERATOR_REPRINT'
 ): Promise<{ success: boolean; printJobId?: string; error?: string }> {
   if (!db) return { success: false, error: 'Database not initialized' };
+
+  // Strict integer validation for copy count (enforce reasonable maximum 10)
+  const numCopies = Number(copies);
+  if (isNaN(numCopies) || !Number.isInteger(numCopies) || numCopies < 1 || numCopies > 10) {
+    return {
+      success: false,
+      error: 'Jumlah salinan cetak tidak valid. Masukkan bilangan bulat antara 1 dan 10.',
+    };
+  }
 
   try {
     const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId) as any;
@@ -797,14 +859,14 @@ export async function reprintSessionWithDebounce(
 
     // 4. Delegate to reprintSession in PrintQueueService
     const { reprintSession } = require('./PrintQueueService');
-    const result = await reprintSession(sessionId, copies);
+    const result = await reprintSession(sessionId, numCopies, format);
 
     if (result.success) {
       recordSystemEvent(
         'SESSION_REPRINT',
         'INFO',
         'AdminSessionHistory',
-        `Operator melakukan cetak ulang untuk sesi ${sessionId} (${copies} copy). Job ID: ${result.id}. Alasan: ${reason}`
+        `Operator melakukan cetak ulang untuk sesi ${sessionId} (${numCopies} copy, format: ${format || 'AUTO'}). Job ID: ${result.id}. Alasan: ${reason}`
       );
       return { success: true, printJobId: result.id };
     } else {
@@ -1726,7 +1788,22 @@ export function readLocalKioskConfig(): Record<string, any> {
     configVersion: 1,
     pricing: { basePrice: 35000, currency: 'IDR', enableVoucher: true, enableQRIS: true },
     timing: { paymentTimeoutSec: 270, poseCountdownSec: 5, qrTimeoutSec: 60, idleResetSec: 120 },
-    hardware: { cameraProfileId: null, printerProfileId: null, mirrorViewfinder: true, paperSize: '4R' },
+    hardware: {
+      cameraProfileId: null,
+      printerProfileId: null,
+      mirrorViewfinder: true,
+      paperSize: '4R',
+      printerCalibration: {
+        scale: 99,
+        offsetX: 0,
+        offsetY: 3,
+      },
+      printerNames: {
+        strip2x6: null,
+        photo4x6: null,
+        photo6x8: null,
+      },
+    },
     frames: { allowedFrameIds: [] },
     system: { themeColor: '#3b82f6', eventName: 'PICTOLABS SELF PHOTOBOOTH', subText: 'TOUCH SCREEN TO START' },
     price: 35000,
@@ -1777,6 +1854,45 @@ export function readLocalKioskConfig(): Record<string, any> {
           merged.price = defaultFallback.price;
         }
 
+        // Defensive normalization: resolve hardware.printerCalibration and printerNames
+        const rawCal = parsed?.hardware?.printerCalibration;
+        const rawScale =
+          typeof rawCal?.scale === 'number' && !isNaN(rawCal.scale)
+            ? rawCal.scale
+            : defaultFallback.hardware.printerCalibration.scale;
+        const rawOffX =
+          typeof rawCal?.offsetX === 'number' && !isNaN(rawCal.offsetX)
+            ? rawCal.offsetX
+            : defaultFallback.hardware.printerCalibration.offsetX;
+        const rawOffY =
+          typeof rawCal?.offsetY === 'number' && !isNaN(rawCal.offsetY)
+            ? rawCal.offsetY
+            : defaultFallback.hardware.printerCalibration.offsetY;
+
+        const normalizedCalibration = {
+          scale: Math.max(85, Math.min(100, rawScale)),
+          offsetX: Math.max(-15, Math.min(15, rawOffX)),
+          offsetY: Math.max(-15, Math.min(15, rawOffY)),
+        };
+
+        const rawNames = parsed?.hardware?.printerNames;
+        const normalizedPrinterNames = {
+          strip2x6: typeof rawNames?.strip2x6 === 'string' ? rawNames.strip2x6 : (rawNames?.strip2x6 === null ? null : defaultFallback.hardware.printerNames.strip2x6),
+          photo4x6: typeof rawNames?.photo4x6 === 'string' ? rawNames.photo4x6 : (rawNames?.photo4x6 === null ? null : defaultFallback.hardware.printerNames.photo4x6),
+          photo6x8: typeof rawNames?.photo6x8 === 'string' ? rawNames.photo6x8 : (rawNames?.photo6x8 === null ? null : defaultFallback.hardware.printerNames.photo6x8),
+        };
+
+        merged.hardware = {
+          ...defaultFallback.hardware,
+          ...(parsed.hardware || {}),
+          printerCalibration: normalizedCalibration,
+          printerNames: {
+            ...defaultFallback.hardware.printerNames,
+            ...(parsed.hardware?.printerNames || {}),
+            ...normalizedPrinterNames,
+          },
+        };
+
         return merged;
       }
     }
@@ -1820,6 +1936,19 @@ export function writeLocalKioskConfig(newConfig: Record<string, any>): Record<st
     };
   }
 
+  // Defensively normalize printer calibration bounds before saving
+  if (normalized.hardware?.printerCalibration) {
+    const rawCal = normalized.hardware.printerCalibration;
+    const rawScale = typeof rawCal?.scale === 'number' && !isNaN(rawCal.scale) ? rawCal.scale : 99;
+    const rawOffX = typeof rawCal?.offsetX === 'number' && !isNaN(rawCal.offsetX) ? rawCal.offsetX : 0;
+    const rawOffY = typeof rawCal?.offsetY === 'number' && !isNaN(rawCal.offsetY) ? rawCal.offsetY : 3;
+    normalized.hardware.printerCalibration = {
+      scale: Math.max(85, Math.min(100, rawScale)),
+      offsetX: Math.max(-15, Math.min(15, rawOffX)),
+      offsetY: Math.max(-15, Math.min(15, rawOffY)),
+    };
+  }
+
   try {
     fs.writeFileSync(tempPath, JSON.stringify(normalized, null, 2), 'utf-8');
     fs.renameSync(tempPath, configPath);
@@ -1831,6 +1960,60 @@ export function writeLocalKioskConfig(newConfig: Record<string, any>): Record<st
   }
 
   return normalized;
+}
+
+/**
+ * Reconciles local configuration against backend HTTP API (GET /api/booths/:id/config).
+ * Uses a non-blocking 3s timeout to ensure the kiosk never freezes on boot.
+ */
+/**
+ * Pushes saved kiosk configuration to backend API (PUT /api/booths/:id/config).
+ * Safe and non-blocking: fails gracefully if offline or backend is unreachable.
+ */
+export async function pushConfigToRemote(
+  baseUrl: string,
+  boothId: string,
+  deviceSecret: string | undefined,
+  configEnvelope: Record<string, any>
+): Promise<any> {
+  const url = `${baseUrl}/api/booths/${boothId}/config`;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  };
+  if (deviceSecret) {
+    headers['x-device-secret'] = deviceSecret;
+  }
+
+  const payload = {
+    pricing: configEnvelope.pricing,
+    timing: configEnvelope.timing,
+    hardware: configEnvelope.hardware,
+    frames: configEnvelope.frames,
+    system: configEnvelope.system,
+  };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4000);
+  try {
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) {
+      console.warn(`[SyncEngine] Push config returned HTTP ${res.status}`);
+      return null;
+    }
+    const data = await res.json();
+    console.log(`[SyncEngine] ✓ Configuration pushed to cloud successfully (v${data.configVersion})`);
+    return data;
+  } catch (err: any) {
+    clearTimeout(timeout);
+    throw err;
+  }
 }
 
 /**
@@ -1879,9 +2062,69 @@ export async function reconcileRemoteConfig(force: boolean = false): Promise<any
     const localVersion = typeof localConfig.configVersion === 'number' ? localConfig.configVersion : 1;
     const remoteVersion = typeof remoteConfig.configVersion === 'number' ? remoteConfig.configVersion : 0;
 
-    if (remoteVersion >= localVersion || force) {
+    // Conditions to apply remote changes:
+    // 1. Remote is strictly newer (remoteVersion > localVersion)
+    // 2. Force flag is true, but ONLY if remote is at least as new as local (remoteVersion >= localVersion)
+    // NEVER allow older remote config (remoteVersion < localVersion) to overwrite newer local configuration!
+    const shouldReconcile = remoteVersion > localVersion || (force && remoteVersion >= localVersion);
+
+    if (shouldReconcile) {
       console.log(`[SyncEngine] Remote config reconciled: updating local cache from v${localVersion} to v${remoteVersion}`);
-      const merged = { ...localConfig, ...remoteConfig };
+
+      // Safe deep merge that protects configured hardware from cloud null/default overwrites
+      const localHw = localConfig.hardware || {};
+      const remoteHw = remoteConfig.hardware || {};
+
+      const mergedCalibration = {
+        // If remote has non-default calibration, use remote; if remote has factory default (99, 0, 3) and local has custom calibration, preserve local!
+        scale: (typeof remoteHw.printerCalibration?.scale === 'number' && remoteHw.printerCalibration.scale !== 99)
+          ? remoteHw.printerCalibration.scale
+          : (localHw.printerCalibration?.scale ?? 99),
+        offsetX: (typeof remoteHw.printerCalibration?.offsetX === 'number' && remoteHw.printerCalibration.offsetX !== 0)
+          ? remoteHw.printerCalibration.offsetX
+          : (localHw.printerCalibration?.offsetX ?? 0),
+        offsetY: (typeof remoteHw.printerCalibration?.offsetY === 'number' && remoteHw.printerCalibration.offsetY !== 3)
+          ? remoteHw.printerCalibration.offsetY
+          : (localHw.printerCalibration?.offsetY ?? 3),
+      };
+
+      const mergedPrinterNames = {
+        // Null in remote should NOT wipe out configured local queue strings!
+        strip2x6: remoteHw.printerNames?.strip2x6 !== undefined && remoteHw.printerNames?.strip2x6 !== null
+          ? remoteHw.printerNames.strip2x6
+          : (localHw.printerNames?.strip2x6 ?? null),
+        photo4x6: remoteHw.printerNames?.photo4x6 !== undefined && remoteHw.printerNames?.photo4x6 !== null
+          ? remoteHw.printerNames.photo4x6
+          : (localHw.printerNames?.photo4x6 ?? null),
+        photo6x8: remoteHw.printerNames?.photo6x8 !== undefined && remoteHw.printerNames?.photo6x8 !== null
+          ? remoteHw.printerNames.photo6x8
+          : (localHw.printerNames?.photo6x8 ?? null),
+      };
+
+      const merged = {
+        ...localConfig,
+        ...remoteConfig,
+        configVersion: Math.max(localVersion, remoteVersion),
+        pricing: {
+          ...(localConfig.pricing || {}),
+          ...(remoteConfig.pricing || {}),
+        },
+        timing: {
+          ...(localConfig.timing || {}),
+          ...(remoteConfig.timing || {}),
+        },
+        hardware: {
+          ...localHw,
+          ...remoteHw,
+          printerCalibration: mergedCalibration,
+          printerNames: mergedPrinterNames,
+        },
+        system: {
+          ...(localConfig.system || {}),
+          ...(remoteConfig.system || {}),
+        },
+      };
+
       const saved = writeLocalKioskConfig(merged);
 
       configUpdateListeners.forEach((fn) => {
@@ -1892,6 +2135,12 @@ export async function reconcileRemoteConfig(force: boolean = false): Promise<any
       return saved;
     } else {
       console.log(`[SyncEngine] Local config is up to date (local v${localVersion} >= remote v${remoteVersion})`);
+      // If local has newer unpushed changes (e.g. offline save previously), asynchronously push to cloud now that we are online!
+      if (localVersion > remoteVersion && config?.boothId && config?.apiBaseUrl) {
+        pushConfigToRemote(config.apiBaseUrl, config.boothId, config.deviceSecret, localConfig).catch((err) => {
+          console.warn('[SyncEngine] Async sync-up of newer local config to cloud deferred:', err?.message);
+        });
+      }
       return localConfig;
     }
   } catch (err: any) {
@@ -1950,8 +2199,60 @@ export function registerSyncHandlers(engineConfig: SyncEngineConfig): void {
 
     ipcMain.handle('config:set', async (_event, partial: Record<string, unknown>) => {
       const current = readLocalKioskConfig();
-      const merged = { ...current, ...partial };
+      const currentVersion = typeof current.configVersion === 'number' ? current.configVersion : 1;
+      const nextVersion = currentVersion + 1;
+
+      // Safe deep merge for partial configuration updates
+      const partialHardware = (partial.hardware && typeof partial.hardware === 'object') ? (partial.hardware as Record<string, any>) : {};
+      const currentHardware = current.hardware || {};
+
+      const mergedHardware = {
+        ...currentHardware,
+        ...partialHardware,
+        printerCalibration: {
+          ...(currentHardware.printerCalibration || { scale: 99, offsetX: 0, offsetY: 3 }),
+          ...(partialHardware.printerCalibration || {}),
+        },
+        printerNames: {
+          ...(currentHardware.printerNames || { strip2x6: null, photo4x6: null, photo6x8: null }),
+          ...(partialHardware.printerNames || {}),
+        },
+      };
+
+      const merged: Record<string, any> = {
+        ...current,
+        ...partial,
+        configVersion: nextVersion,
+        pricing: {
+          ...(current.pricing || {}),
+          ...((partial.pricing as Record<string, any>) || {}),
+        },
+        timing: {
+          ...(current.timing || {}),
+          ...((partial.timing as Record<string, any>) || {}),
+        },
+        hardware: mergedHardware,
+        system: {
+          ...(current.system || {}),
+          ...((partial.system as Record<string, any>) || {}),
+        },
+      };
+
       const saved = writeLocalKioskConfig(merged);
+
+      configUpdateListeners.forEach((fn) => {
+        try { fn(saved); } catch (_) {}
+      });
+
+      broadcastToWindows('kiosk:config-updated', saved);
+
+      // Asynchronously push updated configuration to backend API (PUT /api/booths/:id/config)
+      if (config?.boothId && config?.apiBaseUrl) {
+        pushConfigToRemote(config.apiBaseUrl, config.boothId, config.deviceSecret, saved).catch((err) => {
+          console.warn('[SyncEngine] Background push of saved config to cloud deferred (offline):', err?.message);
+        });
+      }
+
       return saved;
     });
 
@@ -2008,8 +2309,8 @@ export function registerSyncHandlers(engineConfig: SyncEngineConfig): void {
     return getSessionHistory(query);
   });
 
-  ipcMain.handle('session:history:reprint', async (_event, params: { sessionId: string; copies?: number; reason?: string }) => {
-    return reprintSessionWithDebounce(params?.sessionId, params?.copies || 1, params?.reason || 'OPERATOR_REPRINT');
+  ipcMain.handle('session:history:reprint', async (_event, params: { sessionId: string; copies?: number; format?: string; reason?: string }) => {
+    return reprintSessionWithDebounce(params?.sessionId, params?.copies ?? 1, params?.format, params?.reason || 'OPERATOR_REPRINT');
   });
 
   ipcMain.handle('session:history:force-upload', async (_event, params: { sessionId: string }) => {

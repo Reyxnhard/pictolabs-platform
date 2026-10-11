@@ -103,10 +103,16 @@ export default function QRScreen({ navigate, session, resetSession }: ScreenProp
         }
 
         const sId = session.sessionId || `session_${Date.now()}`;
-        console.log('[QRScreen] Enqueueing and monitoring print job for session:', sId);
+        // Resolve customer product format from session (2R photostrip vs 4R postcard vs 6R)
+        const productFormat: '2R' | '4R' | '6R' =
+          (session.frameId === '2R' || (session.productId && session.productId.toLowerCase().includes('2r'))) ? '2R'
+          : (session.frameId === '6R' || (session.productId && session.productId.toLowerCase().includes('6r'))) ? '6R'
+          : '4R';
 
-        // 1. Enqueue exactly once for this customer session (Sole Enqueue Owner)
-        const enqueueRes = await kiosk.printer.enqueue(cleanPath, 1, sId);
+        console.log(`[QRScreen] Enqueueing and monitoring print job for session ${sId} (format: ${productFormat})`);
+
+        // 1. Enqueue exactly once for this customer session with explicit product format (Sole Enqueue Owner)
+        const enqueueRes = await kiosk.printer.enqueue(cleanPath, 1, sId, productFormat);
         if (!enqueueRes.success) {
           console.warn('[QRScreen] Print enqueue warning/error:', enqueueRes.error);
         }

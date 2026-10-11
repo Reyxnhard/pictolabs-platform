@@ -29,6 +29,10 @@
     {
       "from": "resources/frames",
       "to": "frames"
+    },
+    {
+      "from": "resources/assets",
+      "to": "assets"
     }
   ],
   "win": {

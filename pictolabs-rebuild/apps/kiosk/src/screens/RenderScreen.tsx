@@ -33,7 +33,13 @@ export default function RenderScreen({ session, updateSession, navigate }: Scree
       hasRendered.current = true;
 
       try {
-        const frameId = session.frameDesignId || session.frameId || '2R';
+        // Distinguish authoritative physical print format ('2R', '4R', '6R') from visual theme design ('classic-white', 'noir-black')
+        const physicalFormat: '2R' | '4R' | '6R' =
+          (session.frameId === '2R' || (session.productId && session.productId.toLowerCase().includes('2r'))) ? '2R'
+          : (session.frameId === '6R' || (session.productId && session.productId.toLowerCase().includes('6r'))) ? '6R'
+          : '4R';
+        const designTheme = session.frameDesignId || 'classic-white';
+        const compositeRenderId = `${physicalFormat}:${designTheme}`;
         const filter = session.filter || 'none';
         
         const cleanPhotos = session.photos.map((p: string) => p.replace('file://', ''));
@@ -41,14 +47,15 @@ export default function RenderScreen({ session, updateSession, navigate }: Scree
         if (session.sessionId) {
           kiosk.recovery?.checkpoint?.(session.sessionId, 'RENDER_PENDING', cleanPhotos.length, {
             filter,
-            frameId,
+            frameId: physicalFormat,
+            frameDesignId: designTheme,
             photos: cleanPhotos,
           }).catch(() => {});
         }
 
         const result = await kiosk.render.composite(
           cleanPhotos,
-          frameId,
+          compositeRenderId,
           filter
         );
 
@@ -63,7 +70,7 @@ export default function RenderScreen({ session, updateSession, navigate }: Scree
         try {
           const sessionRecord = await kiosk.session.create({
             id: session.sessionId,
-            frameId,
+            frameId: physicalFormat, // CRITICAL FIX: Save the true physical format ('2R' / '4R' / '6R'), NOT the visual design theme!
             filter,
             photos: cleanPhotos,
             compositePath: filePath,

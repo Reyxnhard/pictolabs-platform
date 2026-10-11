@@ -6,10 +6,10 @@
 **Updated:** 8 October 2026  
 
 **Current stage:** PILOT HARDENING / PILOT READINESS  
-**Current active phase:** Phase B — PR-02 Printer Profiles & Calibration (Planning & Calibration Audit)  
+**Current active phase:** Phase B — PR-02 Printer Profiles & Calibration (Founder Physical UAT PASS — Ready for Closure)  
 **Current gate:** PILOT READINESS FEATURE GAP CLOSURE  
 **Pilot target:** 1 booth (Booth #1) → operational proof → scale 5–10 booths  
-**Pilot Booth #1 Status:** NOT READY (Pending Pilot Readiness Gates PR-02 through PR-08, and Payment Gateway Settlement Gate)  
+**Pilot Booth #1 Status:** NOT READY (Pending Pilot Readiness Gates PR-03 through PR-08, and Payment Gateway Settlement Gate)  
 
 ---
 
@@ -903,16 +903,19 @@ Founder directives have established mandatory feature requirements for Booth #1 
 
 ### PR-02 — Printer Profiles & Calibration
 - **Objective:** Support printer/media profiles (2R photostrips and 4R postcards), bleed calibration, X/Y offset, scale/crop, and a test print calibration workflow to eliminate white edge defects and misaligned cuts after paper/media roll changes.
-- **Current status:** OPEN (PLANNING PHASE / AUDIT ONLY — ZERO PREMATURE CODING)
-- **Existing foundation:** DNP DS-RX1 GDI execution via native `print.exe`, `PhotolabDNP.exe` telemetry, `PrintService.ts`, GDI rendering pipeline, and PR-01 `hardware.printerProfileId` schema.
-- **Missing scope:** Codebase investigation of render/print pipeline coordinate parameters; media profile data model (2R photostrip vs 4R postcard); configurable X/Y offset and bleed parameters; test print calibration pattern generator in Admin Panel; persistent storage of calibration values per booth.
+- **Current status:** FOUNDER_UAT_PASS (READY_FOR_CLOSURE) — Founder physical UAT confirmed on Booth #1 across all 8 target scenarios; all acceptance criteria satisfied.
+- **Existing foundation:** DNP DS-RX1 GDI execution via native `print.exe`, `PhotolabDNP.exe` telemetry, `PrintService.ts`, GDI rendering pipeline, PR-01 `hardware.printerProfileId` schema, and PR-02 calibration engine (`calibration.scale`, `calibration.offsetX`, `calibration.offsetY`).
+- **Implemented Scope:** Reference-parity calibration model (Scale 85–100%, Offset X -15 to +15, Offset Y -15 to +15 native 1/100 inch units, baseline 99/0/3); dynamic per-media printer queue mapping (`strip2x6`, `photo4x6`, `photo6x8`) with nullable fallback contract; live preview canvas with scale/bleed grid; Admin Panel calibration UI & test print; packaged calibration target (`win-unpacked/resources/assets/calibration_target.png`); atomic print dispatch lock (`QUEUE_WORKER`, `CALIBRATION`, `MANUAL`) with safe stale-lock recovery (process liveness verification via PID tracking & tasklist); mandatory 4x6 uncut queue enforcement for calibration test print; USB telemetry 4000ms cooldown; original format stability (`originalFormat` vs `printFormat`); unknown-format safety guards.
+- **Customer Catalog Scope:** Customer catalog currently contains only 2R Photostrip (`photo-strip-2x6`) with `frameId: '2R'`. Customer-facing 4R product does not exist in catalog; 4R format routing is physically proven via Admin reprint format override and calibration target prints.
 - **Dependencies:** PR-01 (Booth Configuration Foundation — CLOSED), Printer RCA-7 engine (`PrintService.ts` — CLOSED).
-- **Acceptance criteria:** Operator can select 2R or 4R profile; calibration test print prints reference alignment grid; X/Y offset and bleed adjustments eliminate white edges on physical prints; calibration persists across reboots.
-- **Founder UAT required:** YES
-- **Implementation status:** NOT_STARTED (Planning & Audit opened; implementation on hold)
-- **Test status:** NOT_STARTED
-- **UAT status:** NOT_STARTED
-- **Release status:** NOT_STARTED
+- **Acceptance criteria:** Operator can calibrate scale and X/Y offset; calibration test print prints reference alignment target without cutting; offset/scale adjustments eliminate white edges on physical prints; calibration persists across reboots and offline runs; dispatch locks prevent concurrency and USB driver collision; format overrides do not corrupt original session format.
+- **Founder UAT required:** YES (Physically executed and verified on Booth #1)
+- **Implementation status:** IMPLEMENTED (Commits `426bd8a`, `7e763b2`, `c87c629`, `e74dc2d`, `f478182`, `b416aee`)
+- **Test status:** AUTOMATED_TESTS_PASSED (41/41 UAT suite across Tasks A-D, 17/17 blocker suite, 25 checkpoint tests across 3 suites [9 Checkpoint 1 + 5 Checkpoint 2 + 11 Checkpoint 3], 36/36 RCA-6, 6/6 RCA-7 [10 invariants audited], 22/22 PR-01)
+- **Build/Typecheck status:** PASSED (`turbo run build` clean across all workspaces, 4/4 packages in 11.69s; TypeScript compilation clean)
+- **Packaged runtime status:** VERIFIED (`release/win-unpacked/resources/assets/calibration_target.png` verified present 123,101 bytes)
+- **UAT status:** FOUNDER_PHYSICAL_UAT_PASSED (Founder physically verified all 8 scenarios on Booth #1: persistence, 2R strip cut, Admin reprint queue routing, original format stability, explicit 2R/4R selection, custom copies, unknown-format guard, zero duplicate prints)
+- **Release status:** READY_FOR_CLOSURE (Pending ChatGPT review & Founder final sign-off; Pilot Booth #1 Launch remains HELD pending independent camera/payment gates)
 
 ### PR-03 — Camera Selection & Configuration
 - **Objective:** Provide camera device selection (DSLR vs webcam) and camera configuration through Admin Panel per booth, ensuring preview camera and capture camera are strictly synchronized to eradicate the historical mismatch bug.
@@ -1107,7 +1110,7 @@ Install kiosk
 ├────────────────────────────────────────┼──────────────────────────────────────────┤
 │ PILOT READINESS (NEW GATES)            │                                          │
 │ - PR-01 Booth Configuration Foundation │ CLOSED (Conditional Exception)           │
-│ - PR-02 Printer Profiles & Calibration │ OPEN (PLANNING PHASE)                    │
+│ - PR-02 Printer Profiles & Calibration │ FOUNDER_UAT_PASS (READY_FOR_CLOSURE)     │
 │ - PR-03 Camera Selection & Config      │ NOT_STARTED / CAMERA WORKSTREAM          │
 │ - PR-04 Frame / Design Asset Mgmt      │ NOT_STARTED                              │
 │ - PR-05 Pricing & Print Quantity       │ PARTIALLY EXISTING / EXTENSION REQUIRED  │
@@ -1194,5 +1197,5 @@ When moving the project to a new chat, follow the canonical documentation hierar
 
 **Current active gate:**
 
-> PILOT READINESS FEATURE GAP CLOSURE (Phase B: PR-02 Printer Profiles & Calibration Planning).
+> PILOT READINESS FEATURE GAP CLOSURE (Phase B: PR-02 Printer Profiles & Calibration — Founder Physical UAT PASS, Ready for Closure).
 

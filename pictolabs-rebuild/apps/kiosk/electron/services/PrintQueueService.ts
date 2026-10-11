@@ -2,9 +2,16 @@ import { ipcMain } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getDatabase, recordSystemEvent } from './SyncEngine';
-import { getDefaultPrinterName, getIsBypassMode, printImage, queryPrinterHealth } from './PrintService';
+import { getDefaultPrinterName, getIsBypassMode, printImage, queryPrinterHealth, resolvePrinterQueue } from './PrintService';
 import { recordPrintConsumption } from './PaperTrackerService';
-import { getCachedPrinterHardwareStatus, setPrintDispatchActive } from './PrinterMonitorService';
+import {
+  getCachedPrinterHardwareStatus,
+  setPrintDispatchActive,
+  acquirePrintDispatchLock,
+  releasePrintDispatchLock,
+  forceReleasePrintDispatchLock,
+  getCurrentDispatchOwner,
+} from './PrinterMonitorService';
 
 export type PrintQueueStatus = 'PENDING' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'DEAD_LETTER' | 'CANCELLED';
 
@@ -32,6 +39,7 @@ export interface PrintQueueItem {
   session_id: string;
   file_path: string;
   printer_name: string;
+  format?: string | null;
   copies: number;
   status: PrintQueueStatus;
   attempts: number;
@@ -46,6 +54,7 @@ export interface PrintJobDTO {
   id: string;
   sessionId: string;
   printerName: string;
+  format?: string | null;
   filePath: string;
   status: PrintQueueStatus;
   copies: number;
@@ -133,6 +142,7 @@ function mapRowToDTO(row: any): PrintJobDTO {
     id: row.id,
     sessionId: row.session_id,
     printerName: row.printer_name,
+    format: row.format || '4R',
     filePath: row.file_path,
     status: row.status,
     copies: row.copies,
@@ -282,6 +292,7 @@ export function resetStuckPrintJobs(
           `[PrintQueueService] ⚠️ Print Watchdog: Mutex reset EXECUTED. Reason: ${resetReason} ` +
           `(Exec: ${activeWorkerExecutionId || 'NONE'}, Job: ${activeJobId || 'NONE'}, Phase: ${currentWorkerPhase})`
         );
+        forceReleasePrintDispatchLock();
         isProcessing = false;
         activeWorkerExecutionId = null;
         activeJobId = null;
@@ -403,7 +414,8 @@ export function enqueuePrintJob(
   sessionId: string,
   filePath: string,
   copies: number = 1,
-  printerName?: string
+  printerName?: string | null,
+  format?: string | null
 ): EnqueueResult {
   const db = getDatabase();
   if (!db) {
@@ -412,7 +424,37 @@ export function enqueuePrintJob(
 
   const cleanPath = filePath.replace(/^file:\/\/\/?/, '');
   const now = new Date().toISOString();
-  const targetPrinter = printerName || getDefaultPrinterName() || 'Default Printer';
+
+  // Resolve media format: explicit format -> frame_id from sessions table -> default '4R'
+  let resolvedFormat: string | null = null;
+  if (format) {
+    const norm = String(format).toUpperCase();
+    if (norm === '2R' || norm === 'STRIP2X6') resolvedFormat = '2R';
+    else if (norm === '4R' || norm === 'PHOTO4X6') resolvedFormat = '4R';
+    else if (norm === '6R' || norm === 'PHOTO6X8') resolvedFormat = '6R';
+  }
+  if (!resolvedFormat && sessionId) {
+    try {
+      const sess = db.prepare('SELECT frame_id FROM sessions WHERE id = ?').get(sessionId) as { frame_id?: string } | undefined;
+      if (sess?.frame_id) {
+        const fId = String(sess.frame_id).toUpperCase();
+        if (fId === '2R' || fId.includes('2R') || fId.includes('STRIP')) {
+          resolvedFormat = '2R';
+        } else if (fId === '6R' || fId.includes('6R')) {
+          resolvedFormat = '6R';
+        } else if (fId === '4R' || fId.includes('4R') || fId.includes('POSTCARD')) {
+          resolvedFormat = '4R';
+        }
+      }
+    } catch (_) {}
+  }
+  if (!resolvedFormat) {
+    resolvedFormat = '4R';
+  }
+
+  const targetPrinter = (printerName && printerName !== 'Default Printer' && printerName !== 'DEFAULT')
+    ? printerName
+    : 'AUTO';
 
   // 1. Idempotency Protection: Check if an active job already exists for (session_id, file_path)
   try {
@@ -436,23 +478,23 @@ export function enqueuePrintJob(
         console.log(`[PrintQueueService] ⚡ Idempotency: Job for session ${sessionId} (${cleanPath}) was ${existing.status}. Reviving to PENDING.`);
         db.prepare(`
           UPDATE print_queue 
-          SET status = 'PENDING', attempts = 0, last_error = NULL, next_retry_at = NULL, updated_at = ?
+          SET status = 'PENDING', format = ?, attempts = 0, last_error = NULL, next_retry_at = NULL, updated_at = ?
           WHERE id = ?
-        `).run(now, existing.id);
+        `).run(resolvedFormat, now, existing.id);
         triggerQueueProcessing();
         return { success: true, id: existing.id, isDuplicate: true };
       }
     }
 
-    // 2. Insert new job
+    // 2. Insert new job with media format
     const id = `print_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     db.prepare(`
       INSERT INTO print_queue (
-        id, session_id, file_path, printer_name, copies, status, attempts, max_attempts, last_error, next_retry_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, 'PENDING', 0, 5, NULL, NULL, ?, ?)
-    `).run(id, sessionId, cleanPath, targetPrinter, copies, now, now);
+        id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, last_error, next_retry_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', 0, 5, NULL, NULL, ?, ?)
+    `).run(id, sessionId, cleanPath, targetPrinter, resolvedFormat, copies, now, now);
 
-    console.log(`[PrintQueueService] ✓ Enqueued print job ${id} for session ${sessionId} (${copies} copies)`);
+    console.log(`[PrintQueueService] ✓ Enqueued print job ${id} for session ${sessionId} (format: ${resolvedFormat}, ${copies} copies)`);
 
     // 3. Event-Driven: Trigger processing immediately
     triggerQueueProcessing();
@@ -617,12 +659,15 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
     }
   }
 
-  // 1. Authoritative Pre-flight Hardware Verification (while job is in PENDING)
+  // 1. Authoritative Pre-flight Hardware Verification & Queue Resolution (while job is in PENDING)
   let printResult: { success: boolean; error?: string };
-  const targetPrinter = item.printer_name || getDefaultPrinterName() || 'DS-RX1';
+
+  const jobFormat = (item.format && (item.format === '2R' || item.format === '4R' || item.format === '6R'))
+    ? item.format
+    : '4R';
 
   if (getIsBypassMode()) {
-    console.log(`[PrintQueueService] [BYPASS] Simulated print job: ${cleanPath} (x${item.copies})`);
+    console.log(`[PrintQueueService] [BYPASS] Simulated print job: ${cleanPath} (format: ${jobFormat}, x${item.copies})`);
     const printingTime = new Date().toISOString();
     updateWorkerPhase('PRINTING', item.id);
     db.prepare(`
@@ -632,6 +677,34 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
     `).run(printingTime, item.id);
     printResult = { success: true };
   } else {
+    const candidatePrinter = (item.printer_name && item.printer_name !== 'Default Printer' && item.printer_name !== 'AUTO')
+      ? item.printer_name
+      : null;
+
+    const resolution = await resolvePrinterQueue(candidatePrinter, jobFormat);
+    if (!resolution.success || !resolution.printerName) {
+      console.error(`[PrintQueueService] ⚠️ Queue resolution failed for job ${item.id} (format ${jobFormat}): ${resolution.error}`);
+      updateWorkerPhase('FAILED', item.id);
+      const failTime = new Date().toISOString();
+      db.prepare(`
+        UPDATE print_queue 
+        SET status = 'FAILED', last_error = ?, updated_at = ? 
+        WHERE id = ?
+      `).run(resolution.error || `Antrean printer format ${jobFormat} tidak tersedia`, failTime, item.id);
+      try {
+        db.prepare('UPDATE sessions SET print_status = ? WHERE id = ?').run('failed', item.session_id);
+      } catch (_) {}
+      recordSystemEvent(
+        'PRINT_ERROR',
+        'ERROR',
+        'PrintQueueService',
+        JSON.stringify({ jobId: item.id, sessionId: item.session_id, format: jobFormat, error: resolution.error })
+      );
+      return;
+    }
+
+    const targetPrinter = resolution.printerName;
+
     updateWorkerPhase('PRE_FLIGHT', item.id);
     pulseWorkerHeartbeat();
 
@@ -643,7 +716,17 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
       console.warn(`[PrintQueueService] ⚠️ Pre-dispatch advisory gate blocked: ${cachedHealth.status} - ${cachedHealth.message}`);
       printResult = { success: false, error: cachedHealth.message || `Printer ${cachedHealth.status}` };
     } else {
-      // 2. Transition: PENDING -> PRINTING
+      // 2. Acquire Atomic Print Dispatch Lock
+      const lockAcquired = acquirePrintDispatchLock('QUEUE_WORKER');
+      if (!lockAcquired) {
+        console.warn(`[PrintQueueService] ⚠️ Print dispatch busy (held by '${getCurrentDispatchOwner()}'). Deferring job ${item.id}...`);
+        updateWorkerPhase('IDLE', null);
+        hasPendingWork = true;
+        setTimeout(() => triggerQueueProcessing(), 1000);
+        return;
+      }
+
+      // Transition: PENDING -> PRINTING
       updateWorkerPhase('PRINTING', item.id);
       pulseWorkerHeartbeat();
       const printingTime = new Date().toISOString();
@@ -653,10 +736,9 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
         WHERE id = ?
       `).run(printingTime, item.id);
 
-      console.log(`[PrintQueueService] Dispatching print job ${item.id} (Session: ${item.session_id}, Attempt: ${item.attempts + 1}, Exec: ${activeWorkerExecutionId}) to '${targetPrinter}'...`);
+      console.log(`[PrintQueueService] Dispatching print job ${item.id} (Session: ${item.session_id}, Format: ${jobFormat}, Attempt: ${item.attempts + 1}, Exec: ${activeWorkerExecutionId}) to '${targetPrinter}'...`);
 
       // 3. Dispatch to PrintService (which invokes print.exe directly)
-      setPrintDispatchActive(true);
       try {
         printResult = await printImage(
           cleanPath,
@@ -665,10 +747,11 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
           undefined,
           (phase) => {
             updateWorkerPhase(phase, item.id);
-          }
+          },
+          jobFormat
         );
       } finally {
-        setPrintDispatchActive(false);
+        releasePrintDispatchLock('QUEUE_WORKER');
       }
       pulseWorkerHeartbeat();
     }
@@ -821,64 +904,143 @@ export function retryPrintJob(jobId: string): { success: boolean; error?: string
 // TASK 3: Manual Reprint
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function reprintSession(sessionId: string, overrideCopies?: number): Promise<{ success: boolean; id?: string; error?: string }> {
+export async function reprintSession(
+  sessionId: string,
+  overrideCopies?: number,
+  overrideFormat?: string
+): Promise<{ success: boolean; id?: string; error?: string; isDuplicate?: boolean }> {
   const db = getDatabase();
   if (!db) return { success: false, error: 'Database not initialized' };
 
+  // 1. Strict copy count validation (must be positive integer between 1 and 10)
+  let copies: number = 1;
+  if (overrideCopies !== undefined && overrideCopies !== null) {
+    const numCopies = Number(overrideCopies);
+    if (isNaN(numCopies) || !Number.isInteger(numCopies) || numCopies < 1 || numCopies > 10) {
+      return {
+        success: false,
+        error: 'Jumlah salinan cetak tidak valid. Masukkan bilangan bulat antara 1 dan 10.',
+      };
+    }
+    copies = numCopies;
+  }
+
   try {
     let filePath: string | null = null;
-    let targetPrinter: string | null = null;
-    let copies: number = overrideCopies && overrideCopies > 0 ? overrideCopies : 1;
+    let format: string | null = null;
 
-    // 1. Find composite photo from sessions table
-    const sessionRow = db.prepare('SELECT composite_path FROM sessions WHERE id = ?').get(sessionId) as any;
-    if (sessionRow && sessionRow.composite_path) {
-      filePath = sessionRow.composite_path;
-    }
-
-    // 2. Fallback to latest print_queue job for this session
-    if (!filePath) {
-      const lastJob = db.prepare(`
-        SELECT file_path, printer_name, copies 
-        FROM print_queue 
-        WHERE session_id = ? 
-        ORDER BY created_at DESC 
-        LIMIT 1
-      `).get(sessionId) as any;
-
-      if (lastJob && lastJob.file_path) {
-        filePath = lastJob.file_path;
-        targetPrinter = lastJob.printer_name;
-        copies = lastJob.copies || 1;
+    // Explicit format override from operator UI
+    if (overrideFormat) {
+      const normOverride = String(overrideFormat).toUpperCase().trim();
+      if (normOverride === '2R' || normOverride === '2R (CUT)' || normOverride === 'STRIP2X6' || normOverride === 'STRIP') {
+        format = '2R';
+      } else if (normOverride === '4R' || normOverride === '4R (UNCUT)' || normOverride === 'PHOTO4X6' || normOverride === 'POSTCARD') {
+        format = '4R';
+      } else if (normOverride === '6R' || normOverride === '6R (UNCUT)' || normOverride === 'PHOTO6X8') {
+        format = '6R';
+      } else {
+        return {
+          success: false,
+          error: `Format cetak yang dipilih ('${overrideFormat}') tidak valid. Pilih 2R (Cut) atau 4R (Uncut).`,
+        };
       }
     }
 
+    // 2. Authoritative: Inspect previous print_queue jobs for this session
+    const lastJob = db.prepare(`
+      SELECT file_path, printer_name, format, copies 
+      FROM print_queue 
+      WHERE session_id = ? 
+      ORDER BY created_at DESC 
+      LIMIT 1
+    `).get(sessionId) as any;
+
+    if (lastJob) {
+      if (lastJob.file_path) {
+        filePath = lastJob.file_path;
+      }
+      if (lastJob.copies && (overrideCopies === undefined || overrideCopies === null)) {
+        copies = lastJob.copies;
+      }
+      if (!format && lastJob.format) {
+        const jf = String(lastJob.format).toUpperCase();
+        if (jf === '2R' || jf === '4R' || jf === '6R') {
+          format = jf;
+        }
+      }
+    }
+
+    // 3. Secondary: Inspect sessions table for composite_path and frame_id
+    const sessionRow = db.prepare('SELECT composite_path, frame_id FROM sessions WHERE id = ?').get(sessionId) as any;
+    if (sessionRow) {
+      if (!filePath && sessionRow.composite_path) {
+        filePath = sessionRow.composite_path;
+      }
+      if (!format && sessionRow.frame_id) {
+        const fId = String(sessionRow.frame_id).toUpperCase();
+        if (fId === '2R' || fId.includes('2R') || fId.includes('STRIP')) {
+          format = '2R';
+        } else if (fId === '6R' || fId.includes('6R')) {
+          format = '6R';
+        } else if (fId === '4R' || fId.includes('4R') || fId.includes('POSTCARD')) {
+          format = '4R';
+        }
+      }
+    }
+
+    // 4. Validation: Composite image existence
     if (!filePath) {
       return { success: false, error: `No composite photo found for session ${sessionId}` };
     }
 
+    // 5. Strict Validation: If format is missing or ambiguous
+    // Rule: NEVER silently classify an unknown or ambiguous format as 4R!
+    if (!format) {
+      return {
+        success: false,
+        error: `Format cetak untuk sesi ${sessionId} tidak valid atau ambigu (${sessionRow?.frame_id || 'tidak diketahui'}). Manual reprint ditolak untuk mencegah kesalahan pemotongan media printer.`,
+      };
+    }
+
     const cleanPath = filePath.replace(/^file:\/\/\/?/, '');
+
+    // 6. Manual reprint deduplication & lock guard:
+    // If an active job for this session is already PENDING or PRINTING, prevent duplicate enqueue!
+    const activeJob = db.prepare(`
+      SELECT id, status FROM print_queue 
+      WHERE session_id = ? AND status IN ('PENDING', 'PRINTING')
+      ORDER BY created_at DESC LIMIT 1
+    `).get(sessionId) as { id: string; status: string } | undefined;
+
+    if (activeJob) {
+      console.log(`[PrintQueueService] ⚡ Manual reprint deduplication: Session ${sessionId} already has an active ${activeJob.status} job (${activeJob.id}). Preventing duplicate enqueue.`);
+      triggerQueueProcessing();
+      return { success: true, id: activeJob.id, isDuplicate: true };
+    }
 
     // Ensure file exists on disk, attempt rehydration from R2 if pruned
     if (!fs.existsSync(cleanPath)) {
       await ensureCompositeOnDisk(sessionId, cleanPath);
     }
 
-    const printer = targetPrinter || getDefaultPrinterName() || 'Default Printer';
+    // CRITICAL: Force 'AUTO' queue routing so executePrintJob dynamically resolves the
+    // configured printer queue strictly according to media format (strip2x6 vs photo4x6).
+    // Never copy a hardcoded or stale printer name from lastJob or defaultPrinterName!
+    const printer = 'AUTO';
     const newJobId = `print_reprint_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();
 
-    // 3. Create new print_queue row (without modifying old job)
+    // 7. Create new print_queue row (without modifying old job)
     db.prepare(`
       INSERT INTO print_queue (
-        id, session_id, file_path, printer_name, copies, status, attempts, max_attempts, last_error, next_retry_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, 'PENDING', 0, 5, NULL, NULL, ?, ?)
-    `).run(newJobId, sessionId, cleanPath, printer, copies, now, now);
+        id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, last_error, next_retry_at, created_at, updated_at
+      ) VALUES (?, ?, ?, 'AUTO', ?, ?, 'PENDING', 0, 5, NULL, NULL, ?, ?)
+    `).run(newJobId, sessionId, cleanPath, format, copies, now, now);
 
-    console.log(`[PrintQueueService] 🖨️ Manual reprint initiated: New job ${newJobId} created for session ${sessionId} (${cleanPath})`);
+    console.log(`[PrintQueueService] 🖨️ Manual reprint initiated: New job ${newJobId} created for session ${sessionId} (format: ${format}, ${cleanPath}, copies: ${copies})`);
     triggerQueueProcessing();
 
-    return { success: true, id: newJobId };
+    return { success: true, id: newJobId, isDuplicate: false };
   } catch (err: any) {
     console.error('[PrintQueueService] Error in reprintSession:', err);
     return { success: false, error: err.message };
@@ -1030,9 +1192,9 @@ export function stopPrintWorker(): void {
  * Register IPC handlers for Print Queue.
  */
 export function registerPrintQueueHandlers(): void {
-  ipcMain.handle('printer:enqueue', async (_event, filePath: string, copies: number = 1, sessionId?: string) => {
+  ipcMain.handle('printer:enqueue', async (_event, filePath: string, copies: number = 1, sessionId?: string, format?: string) => {
     const sId = sessionId || `session_${Date.now()}`;
-    return enqueuePrintJob(sId, filePath, copies);
+    return enqueuePrintJob(sId, filePath, copies, undefined, format);
   });
 
   // Monitoring

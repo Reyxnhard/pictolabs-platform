@@ -364,6 +364,16 @@ export class BoothsService {
       printerProfileId: null,
       mirrorViewfinder: true,
       paperSize: '4R',
+      printerCalibration: {
+        scale: 99,
+        offsetX: 0,
+        offsetY: 3,
+      },
+      printerNames: {
+        strip2x6: null,
+        photo4x6: null,
+        photo6x8: null,
+      },
     };
     const defaultFrames = {
       allowedFrameIds: [],
@@ -372,6 +382,24 @@ export class BoothsService {
       themeColor: '#3b82f6',
       eventName: 'PICTOLABS SELF PHOTOBOOTH',
       subText: 'TOUCH SCREEN TO START',
+    };
+
+    const rawCal = raw?.hardware?.printerCalibration;
+    const rawScale = typeof rawCal?.scale === 'number' && !isNaN(rawCal.scale) ? rawCal.scale : 99;
+    const rawOffX = typeof rawCal?.offsetX === 'number' && !isNaN(rawCal.offsetX) ? rawCal.offsetX : 0;
+    const rawOffY = typeof rawCal?.offsetY === 'number' && !isNaN(rawCal.offsetY) ? rawCal.offsetY : 3;
+
+    const normalizedCalibration = {
+      scale: Math.max(85, Math.min(100, rawScale)),
+      offsetX: Math.max(-15, Math.min(15, rawOffX)),
+      offsetY: Math.max(-15, Math.min(15, rawOffY)),
+    };
+
+    const rawNames = raw?.hardware?.printerNames;
+    const normalizedPrinterNames = {
+      strip2x6: typeof rawNames?.strip2x6 === 'string' ? rawNames.strip2x6 : (rawNames?.strip2x6 === null ? null : defaultHardware.printerNames.strip2x6),
+      photo4x6: typeof rawNames?.photo4x6 === 'string' ? rawNames.photo4x6 : (rawNames?.photo4x6 === null ? null : defaultHardware.printerNames.photo4x6),
+      photo6x8: typeof rawNames?.photo6x8 === 'string' ? rawNames.photo6x8 : (rawNames?.photo6x8 === null ? null : defaultHardware.printerNames.photo6x8),
     };
 
     const envelope: BoothConfigEnvelope = {
@@ -404,6 +432,12 @@ export class BoothsService {
       hardware: {
         ...defaultHardware,
         ...(raw?.hardware || {}),
+        printerCalibration: normalizedCalibration,
+        printerNames: {
+          ...defaultHardware.printerNames,
+          ...(raw?.hardware?.printerNames || {}),
+          ...normalizedPrinterNames,
+        },
       },
       frames: {
         ...defaultFrames,
@@ -483,10 +517,37 @@ export class BoothsService {
       ...(typeof patch.countdown === 'number' ? { poseCountdownSec: patch.countdown } : {}),
     };
 
+    const patchCal = patch.hardware?.printerCalibration;
+    const patchNames = patch.hardware?.printerNames;
+
     const newHardware = {
       ...current.hardware,
       ...(patch.hardware || {}),
+      printerCalibration: {
+        ...(current.hardware?.printerCalibration || { scale: 99, offsetX: 0, offsetY: 3 }),
+        ...(patchCal || {}),
+      },
+      printerNames: {
+        ...(current.hardware?.printerNames || { strip2x6: null, photo4x6: null, photo6x8: null }),
+        ...(patchNames || {}),
+      },
     };
+
+    if (newHardware.printerCalibration) {
+      const scale = newHardware.printerCalibration.scale;
+      const offsetX = newHardware.printerCalibration.offsetX;
+      const offsetY = newHardware.printerCalibration.offsetY;
+
+      if (typeof scale === 'number' && (scale < 85 || scale > 100)) {
+        throw new BadRequestException('Skala kalibrasi printer harus berada di antara 85% dan 100%.');
+      }
+      if (typeof offsetX === 'number' && (offsetX < -15 || offsetX > 15)) {
+        throw new BadRequestException('Offset X kalibrasi printer harus berada di antara -15 dan 15 unit (1/100 inci / ±3.81 mm).');
+      }
+      if (typeof offsetY === 'number' && (offsetY < -15 || offsetY > 15)) {
+        throw new BadRequestException('Offset Y kalibrasi printer harus berada di antara -15 dan 15 unit (1/100 inci / ±3.81 mm).');
+      }
+    }
 
     const newFrames = {
       ...current.frames,

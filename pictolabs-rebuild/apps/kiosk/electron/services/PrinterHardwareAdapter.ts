@@ -97,6 +97,28 @@ export function findPrintExePath(): string | null {
 }
 
 /**
+ * Locate the Pictolabs measurable calibration target asset across packaged and local dev environments.
+ */
+export function findCalibrationTargetPath(): string | null {
+  const candidates = [
+    path.join(process.resourcesPath || '', 'assets', 'calibration_target.png'),
+    path.join(process.resourcesPath || '', 'calibration_target.png'),
+    path.resolve(__dirname, '../resources/assets/calibration_target.png'),
+    path.resolve(__dirname, '../../resources/assets/calibration_target.png'),
+    path.resolve(__dirname, '../../../resources/assets/calibration_target.png'),
+    path.resolve(process.cwd(), 'resources/assets/calibration_target.png'),
+    path.resolve(process.cwd(), 'apps/kiosk/resources/assets/calibration_target.png'),
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+/**
  * Query real physical hardware telemetry from DNP photo printer.
  *
  * Clean internal abstraction:

@@ -38,8 +38,194 @@ let consecutiveErrorCount = 0;
 let lastWin32CheckTime = Date.now();
 const DEBOUNCE_THRESHOLD = 2; // Require 2 consecutive failed queries to escalate to OFFLINE (hysteresis)
 
+export type PrintDispatchOwner = 'QUEUE_WORKER' | 'CALIBRATION' | 'MANUAL';
+
 let isDispatchActive = false;
 let lastDispatchEndTime = 0;
+let currentDispatchOwner: PrintDispatchOwner | null = null;
+let dispatchLockAcquireTime = 0;
+let activePrintPid: number | null = null;
+
+export type ProcessLivenessChecker = () => boolean;
+export type ProcessTerminator = () => boolean;
+
+let customLivenessChecker: ProcessLivenessChecker | null = null;
+let customTerminator: ProcessTerminator | null = null;
+
+export function setProcessLivenessCheckerForTesting(checker: ProcessLivenessChecker | null): void {
+  customLivenessChecker = checker;
+}
+
+export function setProcessTerminatorForTesting(terminator: ProcessTerminator | null): void {
+  customTerminator = terminator;
+}
+
+export function registerActivePrintPid(pid: number | null): void {
+  activePrintPid = pid;
+}
+
+export function getActivePrintPid(): number | null {
+  return activePrintPid;
+}
+
+/**
+ * Checks whether the active print child process or any system print.exe is currently alive.
+ */
+export function isPrintProcessAlive(): boolean {
+  if (customLivenessChecker) {
+    return customLivenessChecker();
+  }
+
+  // 1. Check registered ChildProcess PID if known
+  if (activePrintPid !== null && activePrintPid > 0) {
+    try {
+      // Sending signal 0 tests process existence without terminating it
+      process.kill(activePrintPid, 0);
+      return true;
+    } catch (err: any) {
+      if (err.code === 'ESRCH') {
+        // Process does not exist
+        activePrintPid = null;
+      } else {
+        // EPERM means process exists but we lack permissions, still alive
+        return true;
+      }
+    }
+  }
+
+  // 2. On Windows, check OS task table for print.exe
+  if (process.platform === 'win32') {
+    try {
+      const { execSync } = require('child_process');
+      const output = execSync('tasklist /FI "IMAGENAME eq print.exe" /NH', {
+        encoding: 'utf8',
+        timeout: 3000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      if (output && output.toLowerCase().includes('print.exe')) {
+        return true;
+      }
+    } catch (_) {}
+  }
+
+  return false;
+}
+
+/**
+ * Safely terminates hung print subprocesses and confirms termination.
+ * Returns true only if the process is confirmed dead.
+ */
+export function terminateAndConfirmPrintProcess(): boolean {
+  if (customTerminator) {
+    return customTerminator();
+  }
+
+  // Attempt termination via registered PID
+  if (activePrintPid !== null && activePrintPid > 0) {
+    try {
+      process.kill(activePrintPid, 'SIGTERM');
+    } catch (_) {}
+  }
+
+  // On Windows, kill print.exe tree
+  if (process.platform === 'win32') {
+    try {
+      const { execSync } = require('child_process');
+      execSync('taskkill /F /FI "IMAGENAME eq print.exe" /T', {
+        encoding: 'utf8',
+        timeout: 3000,
+        stdio: ['ignore', 'ignore', 'ignore'],
+      });
+    } catch (_) {}
+  }
+
+  // Confirm process is dead
+  const stillAlive = isPrintProcessAlive();
+  if (!stillAlive) {
+    activePrintPid = null;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Atomically attempt to acquire the global print dispatch lock.
+ * Ensures strict mutual exclusion between customer queue printing,
+ * operator calibration test-prints, and manual reprints.
+ *
+ * In Node.js single-threaded event loop, this synchronous check-and-set
+ * is strictly atomic (zero async race window).
+ *
+ * Stale-lock safety: A lock is NEVER reclaimed solely because 60s elapsed.
+ * Before recovery, we verify whether the process is alive; if active, we attempt
+ * termination and verify termination. If termination fails or process remains alive,
+ * lock recovery is REFUSED to prevent concurrent print dispatches.
+ */
+export function acquirePrintDispatchLock(owner: PrintDispatchOwner): boolean {
+  if (currentDispatchOwner !== null) {
+    if (dispatchLockAcquireTime > 0 && Date.now() - dispatchLockAcquireTime > 60_000) {
+      console.warn(`[PrinterMonitorService] ⚠️ Stale dispatch lock candidate (>60s held by '${currentDispatchOwner}'). Verifying process liveness...`);
+      const processAlive = isPrintProcessAlive();
+      if (processAlive) {
+        console.warn(`[PrinterMonitorService] ⚠️ Original print process is still active. Attempting termination before releasing lock...`);
+        const terminated = terminateAndConfirmPrintProcess();
+        if (!terminated) {
+          console.error(`[PrinterMonitorService] ❌ Cannot recover stale lock: print process remains active and could not be terminated. Refusing concurrent dispatch.`);
+          return false;
+        }
+        console.log(`[PrinterMonitorService] ✓ Hung print process successfully terminated and confirmed dead.`);
+      }
+
+      // Safe to recover: process has exited or was successfully terminated
+      console.warn(`[PrinterMonitorService] 🛡 Safely reclaiming stale print dispatch lock from '${currentDispatchOwner}' for new owner '${owner}'.`);
+      currentDispatchOwner = null;
+      activePrintPid = null;
+    } else {
+      return false;
+    }
+  }
+
+  currentDispatchOwner = owner;
+  dispatchLockAcquireTime = Date.now();
+  isDispatchActive = true;
+  return true;
+}
+
+/**
+ * Release the global print dispatch lock if held by the specified owner.
+ */
+export function releasePrintDispatchLock(owner: PrintDispatchOwner): void {
+  if (currentDispatchOwner === owner) {
+    currentDispatchOwner = null;
+    dispatchLockAcquireTime = 0;
+    activePrintPid = null;
+    isDispatchActive = false;
+    lastDispatchEndTime = Date.now();
+  }
+}
+
+/**
+ * Force release print dispatch lock (for watchdog recovery or test isolation).
+ */
+export function forceReleasePrintDispatchLock(): void {
+  currentDispatchOwner = null;
+  dispatchLockAcquireTime = 0;
+  activePrintPid = null;
+  isDispatchActive = false;
+  lastDispatchEndTime = Date.now();
+}
+
+export function getCurrentDispatchOwner(): PrintDispatchOwner | null {
+  return currentDispatchOwner;
+}
+
+export function isPrintDispatchBusy(): boolean {
+  return currentDispatchOwner !== null || isDispatchActive;
+}
+
+export function getLastDispatchEndTime(): number {
+  return lastDispatchEndTime;
+}
 
 /**
  * Lifecycle coordination: Notify printer monitor when print.exe dispatch begins or finishes.
@@ -49,6 +235,9 @@ export function setPrintDispatchActive(active: boolean): void {
   isDispatchActive = active;
   if (!active) {
     lastDispatchEndTime = Date.now();
+    currentDispatchOwner = null;
+    dispatchLockAcquireTime = 0;
+    activePrintPid = null;
   }
 }
 

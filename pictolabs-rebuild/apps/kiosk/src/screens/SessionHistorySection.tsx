@@ -15,6 +15,9 @@ import {
   FileImage,
   WifiOff,
   RotateCw,
+  Scissors,
+  Minus,
+  Plus,
 } from 'lucide-react';
 import { kiosk, KioskSessionHistoryItem, KioskSessionHistoryQuery } from '../ipc/bridge';
 
@@ -106,9 +109,24 @@ export default function SessionHistorySection({ isOnline, onShowToast }: Session
   // Action states
   const [reprintingId, setReprintingId] = useState<string | null>(null);
   const [reprintCopies, setReprintCopies] = useState<number>(1);
+  const [reprintFormat, setReprintFormat] = useState<'2R' | '4R' | null>(null);
   const [forceUploadingId, setForceUploadingId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Preselect format strictly based on original session's authoritative format when modal opens
+  useEffect(() => {
+    if (selectedSession) {
+      const orig = selectedSession.originalFormat;
+      if (orig === '2R' || orig === '4R') {
+        setReprintFormat(orig);
+      } else {
+        // Unknown or ambiguous format: never silently default to 2R or 4R
+        setReprintFormat(null);
+      }
+      setReprintCopies(1);
+    }
+  }, [selectedSession]);
 
   // Load session history from SQLite via IPC
   const loadSessions = useCallback(async () => {
@@ -149,7 +167,29 @@ export default function SessionHistorySection({ isOnline, onShowToast }: Session
   }, [sessions]);
 
   // Handle Reprint Action
-  const handleReprint = async (session: KioskSessionHistoryItem, copies: number = 1) => {
+  const handleReprint = async (
+    session: KioskSessionHistoryItem,
+    copies: number = 1,
+    format?: '2R' | '4R' | null
+  ) => {
+    // Validate copies (positive integer between 1 and 10)
+    const cleanCopies = Math.floor(Number(copies));
+    if (isNaN(cleanCopies) || cleanCopies < 1 || cleanCopies > 10) {
+      const msg = 'Jumlah salinan cetak tidak valid. Masukkan angka bulat antara 1 dan 10.';
+      setActionNotice({ text: msg, type: 'error' });
+      onShowToast?.(msg, 'error');
+      return;
+    }
+
+    // Determine target format: explicit parameter -> reprintFormat
+    const targetFormat = format || reprintFormat;
+    if (!targetFormat || (targetFormat !== '2R' && targetFormat !== '4R')) {
+      const msg = 'Format cetak belum dipilih atau tidak valid. Harap pilih 2R (Cut) atau 4R (Uncut) terlebih dahulu.';
+      setActionNotice({ text: msg, type: 'error' });
+      onShowToast?.(msg, 'error');
+      return;
+    }
+
     // Pruned & Offline check
     if (!session.compositeExists && !isOnline) {
       const msg = 'Tidak dapat mencetak: File fisik di SSD telah dibersihkan oleh sistem retensi dan kiosk sedang offline (tidak dapat mengunduh dari cloud).';
@@ -164,12 +204,14 @@ export default function SessionHistorySection({ isOnline, onShowToast }: Session
     try {
       const res = await kiosk.sessionHistory?.reprint({
         sessionId: session.id,
-        copies,
+        copies: cleanCopies,
+        format: targetFormat,
         reason: 'OPERATOR_LOCAL_REPRINT',
       });
 
       if (res && res.success) {
-        const msg = `✓ Cetak ulang ${copies} copy berhasil dimasukkan ke antrean printer (Job: ${res.printJobId || 'Active'}).`;
+        const formatLabel = targetFormat === '2R' ? '2R (Cut)' : '4R (Uncut)';
+        const msg = `✓ Cetak ulang ${cleanCopies} lembar [${formatLabel}] berhasil dimasukkan ke antrean printer (Job: ${res.printJobId || 'Active'}).`;
         setActionNotice({ text: msg, type: 'success' });
         onShowToast?.(msg, 'success');
         // Refresh local session list to reflect new printing status
@@ -545,7 +587,20 @@ export default function SessionHistorySection({ isOnline, onShowToast }: Session
                       disabled={isReprintingThis || (!session.compositeExists && !isOnline)}
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleReprint(session, 1);
+                        if (session.originalFormat === '2R' || session.originalFormat === '4R') {
+                          handleReprint(session, 1, session.originalFormat);
+                        } else {
+                          // Unknown format: open detail modal and require explicit selection
+                          setSelectedSession(session);
+                          setActionNotice({
+                            text: 'Format asli sesi ini tidak diketahui. Harap pilih 2R (Cut) atau 4R (Uncut) secara manual di detail sesi.',
+                            type: 'error',
+                          });
+                          onShowToast?.(
+                            'Format asli sesi ini tidak diketahui. Harap pilih 2R (Cut) atau 4R (Uncut) secara manual di detail sesi.',
+                            'error'
+                          );
+                        }
                       }}
                       className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
                         !session.compositeExists && !isOnline
@@ -555,7 +610,9 @@ export default function SessionHistorySection({ isOnline, onShowToast }: Session
                       title={
                         !session.compositeExists && !isOnline
                           ? 'File fisik tidak ada di SSD & Kiosk sedang offline'
-                          : 'Cetak Ulang Langsung'
+                          : session.originalFormat === '2R' || session.originalFormat === '4R'
+                          ? `Cetak Ulang Langsung (${session.originalFormat === '2R' ? '2R Cut' : '4R Uncut'})`
+                          : 'Pilih Format di Detail Sesi'
                       }
                     >
                       <Printer className={`w-3.5 h-3.5 ${isReprintingThis ? 'animate-spin' : ''}`} />
@@ -563,7 +620,9 @@ export default function SessionHistorySection({ isOnline, onShowToast }: Session
                         ? 'Memproses...'
                         : !session.compositeExists && !isOnline
                         ? 'Offline & Diprune'
-                        : 'Cetak Ulang'}
+                        : session.originalFormat === '2R' || session.originalFormat === '4R'
+                        ? 'Cetak Ulang'
+                        : 'Pilih Format'}
                     </button>
                   </div>
                 </div>
@@ -787,45 +846,157 @@ export default function SessionHistorySection({ isOnline, onShowToast }: Session
 
                 {/* Action Controls */}
                 <div className="space-y-3 pt-2">
-                  {/* Copies Selector Bar */}
-                  <div className="flex items-center justify-between bg-slate-950/80 p-2 rounded-2xl border border-slate-800">
-                    <span className="text-xs text-slate-400 font-medium pl-2">Jumlah Salinan Cetak:</span>
-                    <div className="flex gap-1.5">
+                  {/* Format Selector Bar */}
+                  <div className="bg-slate-950/80 p-3 rounded-2xl border border-slate-800">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs text-slate-300 font-bold flex items-center gap-1.5">
+                        <Printer className="w-3.5 h-3.5 text-blue-400" />
+                        Pilih Format Cetak:
+                      </span>
+                      <div className="flex items-center gap-2 text-[10px] font-mono">
+                        <span className="text-slate-400">
+                          Format Asli:{' '}
+                          <strong className={selectedSession.originalFormat ? 'text-cyan-300' : 'text-amber-400 font-bold'}>
+                            {selectedSession.originalFormat
+                              ? `${selectedSession.originalFormat} ${selectedSession.originalFormat === '2R' ? '(Cut)' : '(Uncut)'}`
+                              : 'Tidak diketahui'}
+                          </strong>
+                        </span>
+                        {selectedSession.printFormat && selectedSession.printFormat !== selectedSession.originalFormat && (
+                          <span className="text-purple-400">
+                            (Terakhir: {selectedSession.printFormat})
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Actionable Warning Banner when original format is unknown */}
+                    {!selectedSession.originalFormat && (
+                      <div className="mb-2.5 p-2.5 rounded-xl bg-amber-950/70 border border-amber-500/50 text-amber-200 text-[11px] flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>Format asli sesi ini tidak diketahui. Harap pilih 2R (Cut) atau 4R (Uncut) secara manual sebelum mencetak.</span>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
-                        onClick={() => setReprintCopies(1)}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                          reprintCopies === 1
-                            ? 'bg-blue-600 text-white shadow'
-                            : 'bg-slate-800 text-slate-400 hover:text-white'
+                        onClick={() => setReprintFormat('2R')}
+                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col gap-0.5 ${
+                          reprintFormat === '2R'
+                            ? 'bg-blue-600/20 border-blue-500 text-white shadow-md'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
                         }`}
                       >
-                        1 Lembar
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <Scissors className="w-3.5 h-3.5 text-cyan-400" />
+                            2R (Cut)
+                          </span>
+                          {selectedSession.originalFormat === '2R' && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-mono font-bold">
+                              Asli
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-slate-400">
+                          Dua strip 2×6 inci (pisau aktif)
+                        </span>
                       </button>
+
                       <button
                         type="button"
-                        onClick={() => setReprintCopies(2)}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                          reprintCopies === 2
-                            ? 'bg-blue-600 text-white shadow'
-                            : 'bg-slate-800 text-slate-400 hover:text-white'
+                        onClick={() => setReprintFormat('4R')}
+                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col gap-0.5 ${
+                          reprintFormat === '4R'
+                            ? 'bg-blue-600/20 border-blue-500 text-white shadow-md'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
                         }`}
                       >
-                        2 Lembar (Strip Cut)
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <Layers className="w-3.5 h-3.5 text-purple-400" />
+                            4R (Uncut)
+                          </span>
+                          {selectedSession.originalFormat === '4R' && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-mono font-bold">
+                              Asli
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-slate-400">
+                          Satu lembar 4×6 inci (tanpa potong)
+                        </span>
                       </button>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  {/* Separate Numeric Copy Count Control */}
+                  <div className="flex items-center justify-between bg-slate-950/80 p-3 rounded-2xl border border-slate-800">
+                    <div>
+                      <span className="text-xs text-slate-300 font-bold block">
+                        Jumlah Salinan Cetak:
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        Maksimal 10 salinan per cetak ulang
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={reprintCopies <= 1}
+                        onClick={() => setReprintCopies((c) => Math.max(1, c - 1))}
+                        className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm flex items-center justify-center transition-colors cursor-pointer"
+                        title="Kurangi Salinan"
+                      >
+                        <Minus className="w-3.5 h-3.5" />
+                      </button>
+                      <input
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={reprintCopies}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          if (!isNaN(val)) {
+                            setReprintCopies(Math.max(1, Math.min(10, val)));
+                          }
+                        }}
+                        className="w-12 h-8 text-center bg-slate-900 border border-slate-700 rounded-xl text-white font-mono font-bold text-sm focus:outline-none focus:border-blue-500"
+                      />
+                      <button
+                        type="button"
+                        disabled={reprintCopies >= 10}
+                        onClick={() => setReprintCopies((c) => Math.min(10, c + 1))}
+                        className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm flex items-center justify-center transition-colors cursor-pointer"
+                        title="Tambah Salinan"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                      <span className="text-xs font-semibold text-slate-400 pl-1">Lembar</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 pt-1">
                     {/* Reprint Button */}
                     <button
                       type="button"
-                      disabled={reprintingId === selectedSession.id || (!selectedSession.compositeExists && !isOnline)}
-                      onClick={() => handleReprint(selectedSession, reprintCopies)}
+                      disabled={
+                        !reprintFormat ||
+                        reprintingId === selectedSession.id ||
+                        (!selectedSession.compositeExists && !isOnline) ||
+                        reprintCopies < 1 ||
+                        reprintCopies > 10
+                      }
+                      onClick={() => handleReprint(selectedSession, reprintCopies, reprintFormat)}
                       className="py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-600/20 cursor-pointer"
                     >
                       <Printer className={`w-4 h-4 ${reprintingId === selectedSession.id ? 'animate-spin' : ''}`} />
-                      {reprintingId === selectedSession.id ? 'Memproses Cetak...' : `Cetak Ulang (${reprintCopies}x)`}
+                      {reprintingId === selectedSession.id
+                        ? 'Memproses Cetak...'
+                        : !reprintFormat
+                        ? 'Pilih Format Cetak Terlebih Dahulu'
+                        : `Cetak Ulang (${reprintFormat === '2R' ? '2R Cut' : '4R Uncut'} • ${reprintCopies}x)`}
                     </button>
 
                     {/* Force Upload Button */}

@@ -125,7 +125,7 @@ export interface PrinterHardwareStatus {
 
 export interface KioskPrinterAPI {
   print(imagePath: string, copies?: number): Promise<PrintResult>;
-  enqueue(imagePath: string, copies?: number, sessionId?: string): Promise<EnqueuePrintResult>;
+  enqueue(imagePath: string, copies?: number, sessionId?: string, format?: string): Promise<EnqueuePrintResult>;
   getQueueStatus(sessionId: string): Promise<PrintQueueItem | null>;
   getQueueList(): Promise<PrintQueueItem[]>;
   getAllPrintJobs?(): Promise<PrintJobDTO[]>;
@@ -378,6 +378,8 @@ export interface KioskSessionHistoryItem {
   compositeExists: boolean;
   printStatus: 'pending' | 'printed' | 'failed' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'PENDING' | 'NOT_QUEUED';
   printAttempts: number;
+  printFormat?: '2R' | '4R' | '6R' | null;
+  originalFormat?: '2R' | '4R' | '6R' | null;
   lastPrintError?: string | null;
   uploaded: boolean;
   uploadStatus: 'PENDING' | 'UPLOADING' | 'COMPLETED' | 'FAILED';
@@ -391,7 +393,7 @@ export interface KioskSessionHistoryItem {
 
 export interface KioskSessionHistoryAPI {
   list(query?: KioskSessionHistoryQuery): Promise<KioskSessionHistoryItem[]>;
-  reprint(params: { sessionId: string; copies?: number; reason?: string }): Promise<{ success: boolean; printJobId?: string; error?: string }>;
+  reprint(params: { sessionId: string; copies?: number; format?: '2R' | '4R' | string; reason?: string }): Promise<{ success: boolean; printJobId?: string; error?: string }>;
   forceUpload(params: { sessionId: string }): Promise<{ success: boolean; enqueuedCount: number; error?: string }>;
 }
 
@@ -473,8 +475,8 @@ const mockPrinter: KioskPrinterAPI = {
     console.log(`[MockKiosk] Printer: print ${imagePath} x${copies} (simulated)`);
     return { success: true };
   },
-  async enqueue(imagePath, copies = 1, sessionId) {
-    console.log(`[MockKiosk] Printer: enqueue ${imagePath} x${copies} for ${sessionId} (simulated)`);
+  async enqueue(imagePath, copies = 1, sessionId, format) {
+    console.log(`[MockKiosk] Printer: enqueue ${imagePath} x${copies} for ${sessionId} (format: ${format || '4R'}, simulated)`);
     return { success: true, id: `mock_print_${Date.now()}` };
   },
   async getQueueStatus(sessionId) {
