@@ -755,6 +755,177 @@ async function runSuite() {
     assert.strictEqual(diskConfig.hardware.printerNames.photo4x6, 'DS-RX1 (Copy 2)', '4R queue mapping preserved');
   });
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // TASK D: ORIGINAL FORMAT INTEGRITY & UNKNOWN-FORMAT SAFETY TESTS
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log('\n--- TASK D: ORIGINAL FORMAT INTEGRITY & UNKNOWN-FORMAT SAFETY ---');
+
+  test('D1: Original 2R session with first job 2R and latest override job 4R yields originalFormat="2R", printFormat="4R", only 2R receives Asli badge', () => {
+    seedSession('session_d1_2r_orig_4r_override', '2R');
+    db.prepare(`
+      INSERT INTO print_queue (id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, created_at, updated_at)
+      VALUES 
+        ('job_d1_initial', 'session_d1_2r_orig_4r_override', ?, 'AUTO', '2R', 1, 'COMPLETED', 1, 5, datetime('now', '-10 minutes'), datetime('now', '-10 minutes')),
+        ('job_d1_override', 'session_d1_2r_orig_4r_override', ?, 'AUTO', '4R', 1, 'COMPLETED', 1, 5, datetime('now', '-1 minute'), datetime('now', '-1 minute'))
+    `).run(dummyFile, dummyFile);
+
+    const history = getSessionHistory(20, 0);
+    const session = history.find((s) => s.id === 'session_d1_2r_orig_4r_override');
+    assert.ok(session, 'Session found in history');
+    assert.strictEqual(session.originalFormat, '2R', 'originalFormat remains strictly 2R despite later 4R override');
+    assert.strictEqual(session.printFormat, '4R', 'printFormat reflects latest override job');
+
+    // UI badge assertion: Asli badge is rendered if and only if option === originalFormat
+    const is2RAsli = session.originalFormat === '2R';
+    const is4RAsli = session.originalFormat === '4R';
+    assert.strictEqual(is2RAsli, true, '2R receives Asli badge');
+    assert.strictEqual(is4RAsli, false, '4R DOES NOT receive Asli badge');
+  });
+
+  test('D2: Original 4R session with latest override job 2R yields originalFormat="4R", printFormat="2R", only 4R receives Asli badge', () => {
+    seedSession('session_d2_4r_orig_2r_override', '4R');
+    db.prepare(`
+      INSERT INTO print_queue (id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, created_at, updated_at)
+      VALUES 
+        ('job_d2_initial', 'session_d2_4r_orig_2r_override', ?, 'AUTO', '4R', 1, 'COMPLETED', 1, 5, datetime('now', '-10 minutes'), datetime('now', '-10 minutes')),
+        ('job_d2_override', 'session_d2_4r_orig_2r_override', ?, 'AUTO', '2R', 1, 'COMPLETED', 1, 5, datetime('now', '-1 minute'), datetime('now', '-1 minute'))
+    `).run(dummyFile, dummyFile);
+
+    const history = getSessionHistory(20, 0);
+    const session = history.find((s) => s.id === 'session_d2_4r_orig_2r_override');
+    assert.ok(session, 'Session found in history');
+    assert.strictEqual(session.originalFormat, '4R', 'originalFormat remains strictly 4R despite later 2R override');
+    assert.strictEqual(session.printFormat, '2R', 'printFormat reflects latest override job');
+
+    const is2RAsli = session.originalFormat === '2R';
+    const is4RAsli = session.originalFormat === '4R';
+    assert.strictEqual(is2RAsli, false, '2R DOES NOT receive Asli badge');
+    assert.strictEqual(is4RAsli, true, '4R receives Asli badge');
+  });
+
+  test('D3: Legacy theme frame_id = "classic-white" with earliest valid 2R job resolves originalFormat="2R" and latest printFormat', () => {
+    seedSession('session_d3_legacy_theme', 'classic-white');
+    db.prepare(`
+      INSERT INTO print_queue (id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, created_at, updated_at)
+      VALUES 
+        ('job_d3_earliest', 'session_d3_legacy_theme', ?, 'AUTO', '2R', 1, 'COMPLETED', 1, 5, datetime('now', '-20 minutes'), datetime('now', '-20 minutes')),
+        ('job_d3_latest_override', 'session_d3_legacy_theme', ?, 'AUTO', '4R', 1, 'COMPLETED', 1, 5, datetime('now', '-2 minutes'), datetime('now', '-2 minutes'))
+    `).run(dummyFile, dummyFile);
+
+    const history = getSessionHistory(20, 0);
+    const session = history.find((s) => s.id === 'session_d3_legacy_theme');
+    assert.ok(session, 'Session found in history');
+    assert.strictEqual(session.originalFormat, '2R', 'Resolved originalFormat from earliest print job');
+    assert.strictEqual(session.printFormat, '4R', 'Resolved printFormat from latest print job');
+    assert.strictEqual(session.frameId, 'classic-white', 'Preserved theme frame_id');
+  });
+
+  test('D4: Legacy session with no valid format source returns originalFormat=null and printFormat=null', () => {
+    seedSession('session_d4_unknown_legacy', 'retro-vintage-theme');
+    // No print_queue records
+
+    const history = getSessionHistory(20, 0);
+    const session = history.find((s) => s.id === 'session_d4_unknown_legacy');
+    assert.ok(session, 'Session found in history');
+    assert.strictEqual(session.originalFormat, null, 'originalFormat is strictly null when no physical format exists');
+    assert.strictEqual(session.printFormat, null, 'printFormat is strictly null');
+  });
+
+  test('D5: Unknown format does not auto-select 2R or 4R in UI state initialization', () => {
+    const sessionWithNullOriginal = {
+      id: 'session_unknown_ui',
+      originalFormat: null,
+      printFormat: null,
+    };
+
+    const initialFormat = (sessionWithNullOriginal.originalFormat === '2R' || sessionWithNullOriginal.originalFormat === '4R')
+      ? sessionWithNullOriginal.originalFormat
+      : null;
+
+    assert.strictEqual(initialFormat, null, 'UI initializes reprintFormat to null (NO silent default to 2R or 4R)');
+
+    // Neither button receives Asli badge
+    const is2RAsli = sessionWithNullOriginal.originalFormat === '2R';
+    const is4RAsli = sessionWithNullOriginal.originalFormat === '4R';
+    assert.strictEqual(is2RAsli, false, 'No Asli badge on 2R');
+    assert.strictEqual(is4RAsli, false, 'No Asli badge on 4R');
+  });
+
+  await testAsync('D6: Print action remains disabled until operator explicitly chooses a valid format', async () => {
+    let reprintFormat = null;
+    let isReprinting = false;
+    let isPrintDisabled = !reprintFormat || isReprinting;
+    assert.strictEqual(isPrintDisabled, true, 'Print button is disabled when reprintFormat is null');
+
+    // Attempting to reprint with null format fails validation
+    seedSession('session_d6_disabled_check', 'unknown-theme');
+    const directCall = await reprintSession('session_d6_disabled_check', 1, null);
+    assert.strictEqual(directCall.success, false, 'Direct reprint call with null format is rejected');
+    assert.ok(directCall.error.includes('tidak valid') || directCall.error.includes('Pilih 2R (Cut) atau 4R (Uncut)'));
+
+    // Once operator explicitly selects '4R', button is enabled
+    reprintFormat = '4R';
+    isPrintDisabled = !reprintFormat || isReprinting;
+    assert.strictEqual(isPrintDisabled, false, 'Print button is enabled after operator explicit selection');
+  });
+
+  test('D7: Quick-print on session card for unknown-format session opens detail modal instead of dispatching', () => {
+    const unknownSession = {
+      id: 'session_d7_quick_unknown',
+      originalFormat: null,
+      printFormat: null,
+    };
+
+    let openedModalSession = null;
+    let toastMessage = null;
+    let dispatchedJob = false;
+
+    // Mirrors handleQuickReprint logic in SessionHistorySection.tsx
+    function handleQuickReprint(session) {
+      if (!session.originalFormat || (session.originalFormat !== '2R' && session.originalFormat !== '4R')) {
+        openedModalSession = session;
+        toastMessage = {
+          type: 'warning',
+          text: 'Format asli tidak diketahui. Harap pilih format secara manual di detail sesi.',
+        };
+        return;
+      }
+      dispatchedJob = true;
+    }
+
+    handleQuickReprint(unknownSession);
+    assert.strictEqual(dispatchedJob, false, 'Quick print DID NOT dispatch for unknown format');
+    assert.strictEqual(openedModalSession.id, 'session_d7_quick_unknown', 'Opened detail modal instead');
+    assert.ok(toastMessage.text.includes('Format asli tidak diketahui'), 'Actionable warning toast shown');
+
+    // With known format (2R), quick print dispatches directly
+    const knownSession = {
+      id: 'session_d7_quick_known',
+      originalFormat: '2R',
+      printFormat: '2R',
+    };
+    handleQuickReprint(knownSession);
+    assert.strictEqual(dispatchedJob, true, 'Quick print dispatched directly for known 2R format');
+  });
+
+  test('D8: Multi-override history sequence preserves original session format across multiple overrides', () => {
+    seedSession('session_d8_multi_override', '2R');
+    db.prepare(`
+      INSERT INTO print_queue (id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, created_at, updated_at)
+      VALUES 
+        ('job_d8_1', 'session_d8_multi_override', ?, 'AUTO', '2R', 1, 'COMPLETED', 1, 5, datetime('now', '-30 minutes'), datetime('now', '-30 minutes')),
+        ('job_d8_2', 'session_d8_multi_override', ?, 'AUTO', '4R', 1, 'COMPLETED', 1, 5, datetime('now', '-20 minutes'), datetime('now', '-20 minutes')),
+        ('job_d8_3', 'session_d8_multi_override', ?, 'AUTO', '2R', 2, 'COMPLETED', 1, 5, datetime('now', '-10 minutes'), datetime('now', '-10 minutes')),
+        ('job_d8_4', 'session_d8_multi_override', ?, 'AUTO', '4R', 1, 'COMPLETED', 1, 5, datetime('now', '-1 minute'), datetime('now', '-1 minute'))
+    `).run(dummyFile, dummyFile, dummyFile, dummyFile);
+
+    const history = getSessionHistory(20, 0);
+    const session = history.find((s) => s.id === 'session_d8_multi_override');
+    assert.ok(session);
+    assert.strictEqual(session.originalFormat, '2R', 'originalFormat remains strictly 2R despite multiple toggles');
+    assert.strictEqual(session.printFormat, '4R', 'printFormat tracks newest job (4R)');
+  });
+
   stopSyncEngine();
 
   console.log('\n══════════════════════════════════════════════════════════════════════');

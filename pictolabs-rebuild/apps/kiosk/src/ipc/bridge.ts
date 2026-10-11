@@ -379,6 +379,7 @@ export interface KioskSessionHistoryItem {
   printStatus: 'pending' | 'printed' | 'failed' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'PENDING' | 'NOT_QUEUED';
   printAttempts: number;
   printFormat?: '2R' | '4R' | '6R' | null;
+  originalFormat?: '2R' | '4R' | '6R' | null;
   lastPrintError?: string | null;
   uploaded: boolean;
   uploadStatus: 'PENDING' | 'UPLOADING' | 'COMPLETED' | 'FAILED';

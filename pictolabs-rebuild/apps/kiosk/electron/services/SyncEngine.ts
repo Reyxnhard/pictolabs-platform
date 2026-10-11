@@ -571,6 +571,7 @@ export interface KioskSessionHistoryItem {
   printStatus: 'pending' | 'printed' | 'failed' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'PENDING' | 'NOT_QUEUED';
   printAttempts: number;
   printFormat?: '2R' | '4R' | '6R' | null;
+  originalFormat?: '2R' | '4R' | '6R' | null;
   lastPrintError?: string | null;
   uploaded: boolean;
   uploadStatus: 'PENDING' | 'UPLOADING' | 'COMPLETED' | 'FAILED';
@@ -604,6 +605,14 @@ export function getSessionHistory(query?: KioskSessionHistoryQuery): KioskSessio
     LIMIT 1
   `);
 
+  const stmtInitialPrint = db.prepare(`
+    SELECT format 
+    FROM print_queue 
+    WHERE session_id = ? 
+    ORDER BY created_at ASC 
+    LIMIT 1
+  `);
+
   const stmtUpload = db.prepare(`
     SELECT 
       COUNT(*) as total,
@@ -631,7 +640,30 @@ export function getSessionHistory(query?: KioskSessionHistoryQuery): KioskSessio
       localStorageState = 'EVICTED';
     }
 
-    // Print status & format resolution
+    // Resolve original physical format according to strict priority:
+    // 1. sessions.frame_id when it is a recognized physical format: '2R', '4R', '6R'
+    let originalFormat: '2R' | '4R' | '6R' | null = null;
+    const rawFrameId = (row.frame_id || '').toUpperCase().trim();
+    if (rawFrameId === '2R' || rawFrameId === 'STRIP2X6' || rawFrameId === 'STRIP') {
+      originalFormat = '2R';
+    } else if (rawFrameId === '4R' || rawFrameId === 'PHOTO4X6' || rawFrameId === 'POSTCARD') {
+      originalFormat = '4R';
+    } else if (rawFrameId === '6R' || rawFrameId === 'PHOTO6X8') {
+      originalFormat = '6R';
+    } else {
+      // 2. For legacy sessions where frame_id contains a visual theme (e.g. 'classic-white'),
+      // inspect the earliest valid print-job format for that session
+      const initialRow = stmtInitialPrint.get(row.id) as any;
+      if (initialRow && initialRow.format) {
+        const initNorm = String(initialRow.format).toUpperCase().trim();
+        if (initNorm === '2R' || initNorm === '4R' || initNorm === '6R') {
+          originalFormat = initNorm as any;
+        }
+      }
+      // 3. If neither source is valid, originalFormat remains null (never infer theme as 4R/2R)
+    }
+
+    // Print status & latest printFormat resolution (from most recent print_queue job)
     const printRow = stmtPrint.get(row.id) as any;
     let printStatus: any = row.print_status || 'pending';
     let printAttempts = 0;
@@ -643,7 +675,7 @@ export function getSessionHistory(query?: KioskSessionHistoryQuery): KioskSessio
       printAttempts = printRow.attempts || 0;
       lastPrintError = printRow.last_error || null;
       if (printRow.format) {
-        const norm = String(printRow.format).toUpperCase();
+        const norm = String(printRow.format).toUpperCase().trim();
         if (norm === '2R' || norm === '4R' || norm === '6R') {
           printFormat = norm as any;
         }
@@ -656,15 +688,10 @@ export function getSessionHistory(query?: KioskSessionHistoryQuery): KioskSessio
       printStatus = 'NOT_QUEUED';
     }
 
-    if (!printFormat && row.frame_id) {
-      const fId = String(row.frame_id).toUpperCase();
-      if (fId === '2R' || fId.includes('2R') || fId.includes('STRIP')) {
-        printFormat = '2R';
-      } else if (fId === '6R' || fId.includes('6R')) {
-        printFormat = '6R';
-      } else if (fId === '4R' || fId.includes('4R') || fId.includes('POSTCARD')) {
-        printFormat = '4R';
-      }
+    // If printFormat was not recorded in print_queue (e.g. not yet queued or legacy),
+    // fallback printFormat to originalFormat if known
+    if (!printFormat && originalFormat) {
+      printFormat = originalFormat;
     }
 
     // Upload status resolution
@@ -710,6 +737,7 @@ export function getSessionHistory(query?: KioskSessionHistoryQuery): KioskSessio
       printStatus,
       printAttempts,
       printFormat,
+      originalFormat,
       lastPrintError,
       uploaded: Boolean(row.uploaded),
       uploadStatus,
