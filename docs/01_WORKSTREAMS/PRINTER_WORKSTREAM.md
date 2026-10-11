@@ -86,7 +86,9 @@ The printer pipeline follows a streamlined, direct-dispatch architecture:
 6. [`docs/02_EVIDENCE/RCA/PRINTER_FAILURE_HANDLING_V2_RCA_6.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/RCA/PRINTER_FAILURE_HANDLING_V2_RCA_6.md) — Anti-duplicate watchdog mutex analysis.
 7. Commit `787b95d` (*"fallback Printer Hardening, remove all overenginerr stuff"*).
 8. Source file: [`apps/kiosk/electron/services/PrintService.ts`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/pictolabs-rebuild/apps/kiosk/electron/services/PrintService.ts).
-9. PR-02 Commits: `cc8cb38`, `35edd1f`, `d6104a3`, `426bd8a`, `9499f4a`.
+9. PR-02 Commits: `cc8cb38`, `35edd1f`, `d6104a3`, `426bd8a`, `9499f4a`, `7e763b2`, `c87c629`, `e74dc2d`, `f478182`.
+10. [`docs/02_EVIDENCE/FIX_REPORTS/PR-02_ADMIN_SESSION_HISTORY_MANUAL_PRINT_FIX_REPORT.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/FIX_REPORTS/PR-02_ADMIN_SESSION_HISTORY_MANUAL_PRINT_FIX_REPORT.md) — Fix report for Admin Session History manual print format decoupling and strict queue routing.
+11. [`docs/02_EVIDENCE/FIX_REPORTS/PR-02_FOUNDER_UAT_FAILURE_RCA_AND_TARGETED_FIX_REPORT.md`](file:///c:/Users/ezarh/.gemini/antigravity-ide/scratch/Pictolabs/docs/02_EVIDENCE/FIX_REPORTS/PR-02_FOUNDER_UAT_FAILURE_RCA_AND_TARGETED_FIX_REPORT.md) — Founder UAT failure RCA and targeted fix report.
 
 ## 9. Related Workstreams
 - **Session History:** Admin Reprint triggers physical reprints via `SyncEngine`.
