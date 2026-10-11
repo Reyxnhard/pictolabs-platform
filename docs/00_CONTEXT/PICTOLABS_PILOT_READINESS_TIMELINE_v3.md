@@ -910,10 +910,10 @@ Founder directives have established mandatory feature requirements for Booth #1 
 - **Acceptance criteria:** Operator can calibrate scale and X/Y offset; calibration test print prints reference alignment target without cutting; offset/scale adjustments eliminate white edges on physical prints; calibration persists across reboots and offline runs; dispatch locks prevent concurrency and USB driver collision.
 - **Founder UAT required:** YES (Strictly requires Founder physical authorization before actuating DNP DS-RX1)
 - **Implementation status:** IMPLEMENTED (Commit `426bd8a`)
-- **Test status:** AUTOMATED_TESTS_PASSED (17/17 blocker suite, 25/25 checkpoint 2 suite, 36/36 RCA-6, 10/10 RCA-7, 22/22 PR-01)
-- **Build/Typecheck status:** PASSED (`turbo run build` clean across all workspaces)
+- **Test status:** AUTOMATED_TESTS_PASSED (17/17 blocker suite, 25 checkpoint tests across 3 suites [9 Checkpoint 1 + 5 Checkpoint 2 + 11 Checkpoint 3], 36/36 RCA-6, 10/10 RCA-7, 22/22 PR-01)
+- **Build/Typecheck status:** PASSED (`turbo run build` clean across all workspaces, 4/4 packages in 15.48s)
 - **Packaged runtime status:** VERIFIED (`release/win-unpacked/resources/assets/calibration_target.png` verified present 123,101 bytes)
-- **UAT status:** PENDING_FOUNDER_AUTHORIZATION (Zero unauthorized physical prints)
+- **UAT status:** PENDING_FOUNDER_AUTHORIZATION (Zero unauthorized physical prints; prerequisite physical 4x6 uncut queue on Booth #1 must be confirmed prior to test print)
 - **Release status:** NOT_STARTED (Release closure protocol pending post-UAT)
 
 ### PR-03 — Camera Selection & Configuration

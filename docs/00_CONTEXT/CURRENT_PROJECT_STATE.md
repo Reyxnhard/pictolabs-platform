@@ -303,8 +303,8 @@ c:\Users\ezarh\.gemini\antigravity-ide\scratch\Pictolabs
 - **Current Timeline Status:**
   - **RCA-7 Execution Simplification:** `CLOSED / VERIFIED` (Founder Physical UAT 10/10 PASS on Booth #1)
   - **PR-02 Printer Profiles & Calibration:** `READY_FOR_FOUNDER_PHYSICAL_UAT`
-  - **Automated Verification:** `AUTOMATED_VERIFIED` (100% PASS: 17/17 PR-02 blocker suite, 25/25 checkpoint 2 suite, 49/49 RCA-6/RCA-7/queue suites, 22/22 PR-01 suite)
-  - **Packaging & Runtime Verification:** `PACKAGED_VERIFIED` (Asset `calibration_target.png` verified 123,101 bytes in `win-unpacked/resources/assets/`)
+  - **Automated Verification:** `AUTOMATED_VERIFIED` (100% PASS: 17/17 PR-02 blocker suite, 25/25 checkpoint suites [9 Checkpoint 1 + 5 Checkpoint 2 + 11 Checkpoint 3], 49/49 RCA-6/RCA-7/queue suites, 22/22 PR-01 suite)
+  - **Packaging & Runtime Verification:** `PACKAGED_VERIFIED` (Asset `calibration_target.png` verified 123,101 bytes in `win-unpacked/resources/assets/`; monorepo `turbo run build` clean across 4 packages)
   - **Physical UAT Gate:** `AWAITING_FOUNDER_AUTHORIZATION` (Strict prohibition on physical actuation without explicit Founder consent)
   - **Release State:** `PENDING_FOUNDER_PHYSICAL_UAT`
 
@@ -317,6 +317,7 @@ c:\Users\ezarh\.gemini\antigravity-ide\scratch\Pictolabs
     - Active calibration test-print keeps customer queue jobs safe in SQLite WAL (`PENDING`), retrying every 1000ms.
   - **Safe Stale-Lock Recovery with Process Liveness:** Stale lock recovery (>60s) checks process existence (`isPrintProcessAlive`) via tracked child PID and `tasklist`. If active, attempts graceful termination (`SIGTERM` + `taskkill /F /T`). If the process remains alive or termination fails, **lock reclamation is strictly refused**. Lock is reclaimed only after confirmed process death.
   - **Uncut 4x6 Queue Enforcement:** Calibration cut-test specifically validates `hardware.printerNames.photo4x6`. Strictly rejects 2-inch cut queues (`strip2x6` or queues with `/2x6|strip|2-inch|2 inch|\bcut\b|\bpotong\b/i` unless explicitly `uncut`).
+  - **Pembedaan Validasi Kode vs Antrean Fisik Booth #1:** Validasi kode & test suite membuktikan algoritma penolakan antrean 2-inci berjalan deterministik. Namun, keberadaan antrean Windows 4×6 uncut pada mesin fisik Pilot Booth #1 belum diverifikasi di Control Panel; konfirmasi fisik ini merupakan prasyarat operator sebelum menjalankan Founder Physical UAT.
   - **USB Bus Collision Cooldown:** `PrinterMonitorService` skips DNP USB telemetry queries during active spooling and enforces a 4,000ms cooldown window post-dispatch.
   - **Packaged Calibration Asset:** `apps/kiosk/electron-builder.json` packages `resources/assets/*` into `win-unpacked/resources/assets/`. Confirmed by unpacked build inspection (`calibration_target.png`, 123,101 bytes).
   - **Admin Panel Calibration UI:** Live Canvas preview with 2R cut guidelines, bleed indicators, dynamic slider controls, and single-click calibration test print.
