@@ -38,6 +38,13 @@ import {
   _setWorkerStateForTesting,
 } from '../apps/kiosk/electron/services/PrintQueueService.ts';
 
+import {
+  acquirePrintDispatchLock,
+  releasePrintDispatchLock,
+  getCurrentDispatchOwner,
+  forceReleasePrintDispatchLock,
+} from '../apps/kiosk/electron/services/PrinterMonitorService.ts';
+
 console.log('══════════════════════════════════════════════════════════════════════');
 console.log('  PICTOLABS PR-02: FOUNDER UAT FAILURES REGRESSION SUITE');
 console.log('══════════════════════════════════════════════════════════════════════\n');
@@ -326,6 +333,10 @@ async function runSuite() {
 
   await testAsync('B8: Manual reprint of 2R session preserves format = "2R" and creates distinct job', async () => {
     seedSession('session_reprint_2r', '2R');
+    db.prepare(`
+      INSERT INTO print_queue (id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, created_at, updated_at)
+      VALUES ('job_prev_2r', 'session_reprint_2r', ?, 'AUTO', '2R', 1, 'COMPLETED', 1, 5, datetime('now', '-1 minute'), datetime('now', '-1 minute'))
+    `).run(dummyFile);
 
     const reprintRes = await reprintSession('session_reprint_2r', 1);
     assert.strictEqual(reprintRes.success, true);
@@ -334,6 +345,166 @@ async function runSuite() {
     const reprintJob = db.prepare('SELECT format, status FROM print_queue WHERE id = ?').get(reprintRes.id);
     assert.strictEqual(reprintJob.format, '2R', 'Reprint job correctly preserves 2R format');
     assert.strictEqual(reprintJob.status, 'PENDING', 'Reprint job enters PENDING');
+  });
+
+  await testAsync('B8a: Manual reprint of 2R session with frame_id = "classic-white" preserves 2R format from last print job', async () => {
+    // Simulates customer session where frameDesignId ("classic-white") was previously stored in sessions.frame_id
+    seedSession('session_theme_2r', 'classic-white');
+    db.prepare(`
+      INSERT INTO print_queue (id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, created_at, updated_at)
+      VALUES ('job_prev_theme_2r', 'session_theme_2r', ?, 'AUTO', '2R', 1, 'COMPLETED', 1, 5, datetime('now', '-1 minute'), datetime('now', '-1 minute'))
+    `).run(dummyFile);
+
+    const reprintRes = await reprintSession('session_theme_2r', 1);
+    assert.strictEqual(reprintRes.success, true, 'Reprint succeeded');
+    assert.ok(reprintRes.id);
+
+    const reprintJob = db.prepare('SELECT format, status FROM print_queue WHERE id = ?').get(reprintRes.id);
+    assert.strictEqual(reprintJob.format, '2R', 'Authoritative previous print_queue.format (2R) overrides ambiguous theme frame_id');
+    assert.strictEqual(reprintJob.status, 'PENDING');
+  });
+
+  await testAsync('B8b: Manual reprint of 4R session preserves persisted 4R job format', async () => {
+    seedSession('session_reprint_4r', '4R');
+    db.prepare(`
+      INSERT INTO print_queue (id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, created_at, updated_at)
+      VALUES ('job_prev_4r', 'session_reprint_4r', ?, 'AUTO', '4R', 1, 'COMPLETED', 1, 5, datetime('now', '-1 minute'), datetime('now', '-1 minute'))
+    `).run(dummyFile);
+
+    const reprintRes = await reprintSession('session_reprint_4r', 1);
+    assert.strictEqual(reprintRes.success, true);
+    assert.ok(reprintRes.id);
+
+    const reprintJob = db.prepare('SELECT format, status FROM print_queue WHERE id = ?').get(reprintRes.id);
+    assert.strictEqual(reprintJob.format, '4R', 'Reprint job correctly preserves 4R format');
+    assert.strictEqual(reprintJob.status, 'PENDING');
+  });
+
+  await testAsync('B8c: Legacy session with ambiguous format and no print job fails fast (NEVER silently defaults to 4R)', async () => {
+    // Session with arbitrary theme string and NO previous print_queue entry
+    seedSession('session_ambiguous_legacy', 'vintage-sepia');
+
+    const reprintRes = await reprintSession('session_ambiguous_legacy', 1);
+    assert.strictEqual(reprintRes.success, false, 'Must reject reprint when format is ambiguous and unverified');
+    assert.ok(reprintRes.error.includes('tidak valid atau ambigu'), 'Actionable error message returned');
+
+    // Confirm no rogue job was added to print_queue
+    const count = db.prepare('SELECT count(*) as cnt FROM print_queue WHERE session_id = ?').get('session_ambiguous_legacy');
+    assert.strictEqual(count.cnt, 0, 'No print job enqueued for ambiguous legacy session');
+  });
+
+  await testAsync('B8d: Manual reprint deduplication prevents duplicate enqueue when reprint is already PENDING', async () => {
+    seedSession('session_dedup_reprint', '2R');
+    db.prepare(`
+      INSERT INTO print_queue (id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, created_at, updated_at)
+      VALUES ('job_dedup_initial', 'session_dedup_reprint', ?, 'AUTO', '2R', 1, 'COMPLETED', 1, 5, datetime('now', '-2 minutes'), datetime('now', '-2 minutes'))
+    `).run(dummyFile);
+
+    // First reprint creates new job
+    const reprint1 = await reprintSession('session_dedup_reprint', 1);
+    assert.strictEqual(reprint1.success, true);
+    assert.strictEqual(reprint1.isDuplicate, false);
+    const newId = reprint1.id;
+
+    // Second reprint while first is still PENDING returns existing job without creating a duplicate
+    const reprint2 = await reprintSession('session_dedup_reprint', 1);
+    assert.strictEqual(reprint2.success, true);
+    assert.strictEqual(reprint2.isDuplicate, true);
+    assert.strictEqual(reprint2.id, newId, 'Returned existing in-flight reprint job ID');
+  });
+
+  await testAsync('B8e: Manual reprint deduplication prevents duplicate enqueue when reprint is already PRINTING', async () => {
+    seedSession('session_dedup_printing', '2R');
+    db.prepare(`
+      INSERT INTO print_queue (id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, created_at, updated_at)
+      VALUES ('job_dedup_printing', 'session_dedup_printing', ?, 'AUTO', '2R', 1, 'PRINTING', 1, 5, datetime('now', '-30 seconds'), datetime('now', '-30 seconds'))
+    `).run(dummyFile);
+
+    const reprintRes = await reprintSession('session_dedup_printing', 1);
+    assert.strictEqual(reprintRes.success, true);
+    assert.strictEqual(reprintRes.isDuplicate, true, 'Returns isDuplicate = true while actively printing');
+    assert.strictEqual(reprintRes.id, 'job_dedup_printing', 'Reuses active PRINTING job ID');
+
+    // Confirm no additional job row was created
+    const count = db.prepare('SELECT count(*) as cnt FROM print_queue WHERE session_id = ?').get('session_dedup_printing');
+    assert.strictEqual(count.cnt, 1, 'Exactly one job remains in print_queue');
+  });
+
+  await testAsync('B8f: Missing required printer mapping during manual reprint dispatch fails fast to FAILED', async () => {
+    // Unconfigure 2R printer mapping in local config
+    const unmappedConfig = {
+      ...customConfig,
+      hardware: {
+        ...customConfig.hardware,
+        printerNames: {
+          strip2x6: null,
+          photo4x6: 'DS-RX1 (Copy 2)',
+          photo6x8: null,
+        },
+      },
+    };
+    writeLocalKioskConfig(unmappedConfig);
+
+    // Cancel any prior leftover pending test jobs to avoid concurrent background worker contention
+    db.prepare("UPDATE print_queue SET status = 'CANCELLED' WHERE status = 'PENDING'").run();
+
+    // Set bypass mode to false so queue worker performs real queue resolution
+    const prevBypass = getIsBypassMode();
+    setIsBypassMode(false);
+
+    seedSession('session_missing_map', '2R');
+    db.prepare(`
+      INSERT INTO print_queue (id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, created_at, updated_at)
+      VALUES ('job_prev_map', 'session_missing_map', ?, 'AUTO', '2R', 1, 'COMPLETED', 1, 5, datetime('now', '-1 minute'), datetime('now', '-1 minute'))
+    `).run(dummyFile);
+
+    const reprintRes = await reprintSession('session_missing_map', 1);
+    assert.strictEqual(reprintRes.success, true);
+    const reprintJobId = reprintRes.id;
+
+    // Await background queue processing (triggerQueueProcessing resolves asynchronously)
+    let updatedJob = null;
+    for (let i = 0; i < 30; i++) {
+      updatedJob = db.prepare('SELECT status, last_error FROM print_queue WHERE id = ?').get(reprintJobId);
+      if (updatedJob && updatedJob.status === 'FAILED') break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    assert.ok(updatedJob, 'Job found in database');
+    assert.strictEqual(updatedJob.status, 'FAILED', 'Job transitions to FAILED state');
+    assert.ok(updatedJob.last_error && updatedJob.last_error.includes('strip 2x6') && updatedJob.last_error.includes('belum dikonfigurasi'), 'Actionable error recorded in queue item');
+
+    const updatedSession = db.prepare('SELECT print_status FROM sessions WHERE id = ?').get('session_missing_map');
+    assert.strictEqual(updatedSession.print_status, 'failed', 'Session print_status updated to failed');
+
+    // Restore bypass mode and config
+    setIsBypassMode(prevBypass);
+    writeLocalKioskConfig(customConfig);
+  });
+
+  await testAsync('B8g: Manual reprint queue & dispatch locking: Single-dispatch lock prevents concurrent processing', async () => {
+    forceReleasePrintDispatchLock();
+
+    // Acquire lock as CALIBRATION
+    const calAcquired = acquirePrintDispatchLock('CALIBRATION');
+    assert.strictEqual(calAcquired, true, 'Calibration acquired dispatch lock');
+    assert.strictEqual(getCurrentDispatchOwner(), 'CALIBRATION');
+
+    // Attempting to acquire lock for QUEUE_WORKER or MANUAL while CALIBRATION is active must be rejected
+    const workerAcquired = acquirePrintDispatchLock('QUEUE_WORKER');
+    assert.strictEqual(workerAcquired, false, 'QUEUE_WORKER cannot acquire lock while CALIBRATION is active');
+
+    const manualAcquired = acquirePrintDispatchLock('MANUAL');
+    assert.strictEqual(manualAcquired, false, 'MANUAL reprint cannot acquire lock while CALIBRATION is active');
+
+    // Release calibration lock
+    releasePrintDispatchLock('CALIBRATION');
+    assert.strictEqual(getCurrentDispatchOwner(), null, 'Lock successfully released');
+
+    // Now QUEUE_WORKER can acquire lock
+    const workerAcquiredNow = acquirePrintDispatchLock('QUEUE_WORKER');
+    assert.strictEqual(workerAcquiredNow, true, 'QUEUE_WORKER acquires lock once idle');
+    releasePrintDispatchLock('QUEUE_WORKER');
   });
 
   test('B9: Idempotency & deduplication: Duplicate 2R enqueue returns existing job without double printing', () => {

@@ -119,7 +119,12 @@ async function compositePhotos(
   filterName: string,
   config: RenderEngineConfig
 ): Promise<RenderCompositeResult> {
-  const frameConfig = DEFAULT_FRAMES[frameId] || DEFAULT_FRAMES['4R'];
+  // Support physical layout keys ('2R', '4R', '6R') or composite keys ('2R:classic-white')
+  const [layoutPart, designPart] = frameId.includes(':') ? frameId.split(':') : [frameId, frameId];
+  const is2R = layoutPart === '2R' || layoutPart.toLowerCase().includes('2r') || frameId.toLowerCase().includes('2r');
+  const is6R = layoutPart === '6R' || layoutPart.toLowerCase().includes('6r') || frameId.toLowerCase().includes('6r');
+  const layoutKey = is2R ? '2R' : is6R ? '6R' : '4R';
+  const frameConfig = DEFAULT_FRAMES[layoutPart] || DEFAULT_FRAMES[frameId] || DEFAULT_FRAMES[layoutKey] || DEFAULT_FRAMES['2R'];
   const { width, height, slots } = frameConfig;
 
   // Determine background color based on frame design theme
@@ -187,7 +192,7 @@ async function compositePhotos(
   }
 
   // Add decorative branding typography for 2R photostrips
-  if (frameId === '2R' || slots.length === 6) {
+  if (is2R || layoutKey === '2R' || frameId === '2R' || slots.length === 6) {
     const brandingSvg = `
       <svg width="${width}" height="${height}">
         <!-- Subtle center cut guide mark -->
@@ -210,7 +215,12 @@ async function compositePhotos(
   }
 
   // Check for custom frame overlay
-  const overlayPath = path.join(config.framesDir, `${frameId}.png`);
+  const overlayName = (designPart && fs.existsSync(path.join(config.framesDir, `${designPart}.png`)))
+    ? designPart
+    : (layoutPart && fs.existsSync(path.join(config.framesDir, `${layoutPart}.png`)))
+    ? layoutPart
+    : frameId;
+  const overlayPath = path.join(config.framesDir, `${overlayName}.png`);
   if (fs.existsSync(overlayPath)) {
     const overlayBuffer = await sharp(overlayPath)
       .resize(width, height, { fit: 'contain' })

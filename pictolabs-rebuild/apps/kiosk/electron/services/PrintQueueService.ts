@@ -426,17 +426,29 @@ export function enqueuePrintJob(
   const now = new Date().toISOString();
 
   // Resolve media format: explicit format -> frame_id from sessions table -> default '4R'
-  let resolvedFormat = format ? String(format).toUpperCase() : null;
+  let resolvedFormat: string | null = null;
+  if (format) {
+    const norm = String(format).toUpperCase();
+    if (norm === '2R' || norm === 'STRIP2X6') resolvedFormat = '2R';
+    else if (norm === '4R' || norm === 'PHOTO4X6') resolvedFormat = '4R';
+    else if (norm === '6R' || norm === 'PHOTO6X8') resolvedFormat = '6R';
+  }
   if (!resolvedFormat && sessionId) {
     try {
       const sess = db.prepare('SELECT frame_id FROM sessions WHERE id = ?').get(sessionId) as { frame_id?: string } | undefined;
       if (sess?.frame_id) {
         const fId = String(sess.frame_id).toUpperCase();
-        resolvedFormat = (fId === '2R') ? '2R' : (fId === '6R' ? '6R' : '4R');
+        if (fId === '2R' || fId.includes('2R') || fId.includes('STRIP')) {
+          resolvedFormat = '2R';
+        } else if (fId === '6R' || fId.includes('6R')) {
+          resolvedFormat = '6R';
+        } else if (fId === '4R' || fId.includes('4R') || fId.includes('POSTCARD')) {
+          resolvedFormat = '4R';
+        }
       }
     } catch (_) {}
   }
-  if (!resolvedFormat || (resolvedFormat !== '2R' && resolvedFormat !== '4R' && resolvedFormat !== '6R')) {
+  if (!resolvedFormat) {
     resolvedFormat = '4R';
   }
 
@@ -892,7 +904,10 @@ export function retryPrintJob(jobId: string): { success: boolean; error?: string
 // TASK 3: Manual Reprint
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function reprintSession(sessionId: string, overrideCopies?: number): Promise<{ success: boolean; id?: string; error?: string }> {
+export async function reprintSession(
+  sessionId: string,
+  overrideCopies?: number
+): Promise<{ success: boolean; id?: string; error?: string; isDuplicate?: boolean }> {
   const db = getDatabase();
   if (!db) return { success: false, error: 'Database not initialized' };
 
@@ -900,50 +915,82 @@ export async function reprintSession(sessionId: string, overrideCopies?: number)
     let filePath: string | null = null;
     let targetPrinter: string | null = null;
     let copies: number = overrideCopies && overrideCopies > 0 ? overrideCopies : 1;
-
-    // 1. Find composite photo and media format from sessions table
-    const sessionRow = db.prepare('SELECT composite_path, frame_id FROM sessions WHERE id = ?').get(sessionId) as any;
-    if (sessionRow && sessionRow.composite_path) {
-      filePath = sessionRow.composite_path;
-    }
-
     let format: string | null = null;
-    if (sessionRow?.frame_id) {
-      const fId = String(sessionRow.frame_id).toUpperCase();
-      format = (fId === '2R') ? '2R' : (fId === '6R' ? '6R' : '4R');
-    }
 
-    // 2. Fallback to latest print_queue job for this session
-    if (!filePath || !format) {
-      const lastJob = db.prepare(`
-        SELECT file_path, printer_name, format, copies 
-        FROM print_queue 
-        WHERE session_id = ? 
-        ORDER BY created_at DESC 
-        LIMIT 1
-      `).get(sessionId) as any;
+    // 1. Authoritative: Inspect previous print_queue jobs for this session
+    const lastJob = db.prepare(`
+      SELECT file_path, printer_name, format, copies 
+      FROM print_queue 
+      WHERE session_id = ? 
+      ORDER BY created_at DESC 
+      LIMIT 1
+    `).get(sessionId) as any;
 
-      if (lastJob) {
-        if (!filePath && lastJob.file_path) {
-          filePath = lastJob.file_path;
-          targetPrinter = lastJob.printer_name;
-          copies = lastJob.copies || 1;
-        }
-        if (!format && lastJob.format) {
-          format = lastJob.format;
+    if (lastJob) {
+      if (lastJob.file_path) {
+        filePath = lastJob.file_path;
+      }
+      if (lastJob.printer_name) {
+        targetPrinter = lastJob.printer_name;
+      }
+      if (lastJob.copies && (!overrideCopies || overrideCopies <= 0)) {
+        copies = lastJob.copies;
+      }
+      if (lastJob.format) {
+        const jf = String(lastJob.format).toUpperCase();
+        if (jf === '2R' || jf === '4R' || jf === '6R') {
+          format = jf;
         }
       }
     }
 
-    if (!format) {
-      format = '4R';
+    // 2. Secondary: Inspect sessions table for composite_path and frame_id
+    const sessionRow = db.prepare('SELECT composite_path, frame_id FROM sessions WHERE id = ?').get(sessionId) as any;
+    if (sessionRow) {
+      if (!filePath && sessionRow.composite_path) {
+        filePath = sessionRow.composite_path;
+      }
+      if (!format && sessionRow.frame_id) {
+        const fId = String(sessionRow.frame_id).toUpperCase();
+        if (fId === '2R' || fId.includes('2R') || fId.includes('STRIP')) {
+          format = '2R';
+        } else if (fId === '6R' || fId.includes('6R')) {
+          format = '6R';
+        } else if (fId === '4R' || fId.includes('4R') || fId.includes('POSTCARD')) {
+          format = '4R';
+        }
+      }
     }
 
+    // 3. Validation: Composite image existence
     if (!filePath) {
       return { success: false, error: `No composite photo found for session ${sessionId}` };
     }
 
+    // 4. Strict Validation: If format is missing or ambiguous
+    // Rule: NEVER silently classify an unknown or ambiguous format as 4R!
+    if (!format) {
+      return {
+        success: false,
+        error: `Format cetak untuk sesi ${sessionId} tidak valid atau ambigu (${sessionRow?.frame_id || 'tidak diketahui'}). Manual reprint ditolak untuk mencegah kesalahan pemotongan media printer.`,
+      };
+    }
+
     const cleanPath = filePath.replace(/^file:\/\/\/?/, '');
+
+    // 5. Manual reprint deduplication & lock guard:
+    // If an active job for this session is already PENDING or PRINTING, prevent duplicate enqueue!
+    const activeJob = db.prepare(`
+      SELECT id, status FROM print_queue 
+      WHERE session_id = ? AND status IN ('PENDING', 'PRINTING')
+      ORDER BY created_at DESC LIMIT 1
+    `).get(sessionId) as { id: string; status: string } | undefined;
+
+    if (activeJob) {
+      console.log(`[PrintQueueService] ⚡ Manual reprint deduplication: Session ${sessionId} already has an active ${activeJob.status} job (${activeJob.id}). Preventing duplicate enqueue.`);
+      triggerQueueProcessing();
+      return { success: true, id: activeJob.id, isDuplicate: true };
+    }
 
     // Ensure file exists on disk, attempt rehydration from R2 if pruned
     if (!fs.existsSync(cleanPath)) {
@@ -954,7 +1001,7 @@ export async function reprintSession(sessionId: string, overrideCopies?: number)
     const newJobId = `print_reprint_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();
 
-    // 3. Create new print_queue row (without modifying old job)
+    // 6. Create new print_queue row (without modifying old job)
     db.prepare(`
       INSERT INTO print_queue (
         id, session_id, file_path, printer_name, format, copies, status, attempts, max_attempts, last_error, next_retry_at, created_at, updated_at
@@ -964,7 +1011,7 @@ export async function reprintSession(sessionId: string, overrideCopies?: number)
     console.log(`[PrintQueueService] 🖨️ Manual reprint initiated: New job ${newJobId} created for session ${sessionId} (format: ${format}, ${cleanPath})`);
     triggerQueueProcessing();
 
-    return { success: true, id: newJobId };
+    return { success: true, id: newJobId, isDuplicate: false };
   } catch (err: any) {
     console.error('[PrintQueueService] Error in reprintSession:', err);
     return { success: false, error: err.message };
