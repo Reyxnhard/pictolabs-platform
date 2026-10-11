@@ -682,11 +682,12 @@ export async function executePrintJob(item: PrintQueueItem): Promise<void> {
       try {
         db.prepare('UPDATE sessions SET print_status = ? WHERE id = ?').run('failed', item.session_id);
       } catch (_) {}
-      recordSystemEvent({
-        eventType: 'PRINT_ERROR',
-        severity: 'ERROR',
-        details: { jobId: item.id, sessionId: item.session_id, format: jobFormat, error: resolution.error },
-      });
+      recordSystemEvent(
+        'PRINT_ERROR',
+        'ERROR',
+        'PrintQueueService',
+        JSON.stringify({ jobId: item.id, sessionId: item.session_id, format: jobFormat, error: resolution.error })
+      );
       return;
     }
 
