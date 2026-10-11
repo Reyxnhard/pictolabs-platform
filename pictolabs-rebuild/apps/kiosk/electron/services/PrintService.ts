@@ -717,15 +717,32 @@ export async function resolvePrinterQueue(
   // Get available printers
   const installedPrinters = installedPrintersOverride || (await listPrinters());
 
+  // 1. If 2R format was requested but no 2R queue is configured:
+  if ((mediaFormat === '2R' || mediaFormat === 'strip2x6') && !candidateQueue) {
+    return {
+      success: false,
+      error: 'Antrean printer 2R (strip 2x6) belum dikonfigurasi di Admin Panel. Harap tentukan antrean printer 2R yang valid.',
+    };
+  }
+
+  // 2. If 6R format was requested but no 6R queue is configured:
+  if ((mediaFormat === '6R' || mediaFormat === 'photo6x8') && !candidateQueue) {
+    return {
+      success: false,
+      error: 'Antrean printer 6R (photo 6x8) belum dikonfigurasi di Admin Panel. Harap tentukan antrean printer 6R yang valid.',
+    };
+  }
+
+  // 3. If explicit or configured candidate queue exists:
   if (candidateQueue) {
-    // Explicit queue requested or configured
     const isInstalled = installedPrinters.some(
       (p) => p.toLowerCase() === candidateQueue!.toLowerCase()
     );
     if (!isInstalled && installedPrinters.length > 0) {
+      const formatLabel = mediaFormat ? `${mediaFormat} ` : '';
       return {
         success: false,
-        error: `Antrean printer terkonfigurasi '${candidateQueue}' tidak ditemukan di sistem Windows. Pastikan nama antrean printer sesuai di Admin Panel.`,
+        error: `Antrean printer ${formatLabel}terkonfigurasi '${candidateQueue}' tidak ditemukan di sistem Windows. Pastikan nama antrean printer sesuai di Admin Panel.`,
       };
     }
     const exactMatch = installedPrinters.find(
@@ -734,17 +751,23 @@ export async function resolvePrinterQueue(
     return { success: true, printerName: exactMatch || candidateQueue };
   }
 
-  // Fallback: candidateQueue is null, use detected default printer
+  // 4. Fallback for 4R (uncut) or general photo printing: candidateQueue is null, use detected default printer
   const defaultPrinter = getDefaultPrinterName();
   if (defaultPrinter) {
-    const isInstalled = installedPrinters.length === 0 || installedPrinters.some(
-      (p) => p.toLowerCase() === defaultPrinter.toLowerCase()
-    );
-    if (isInstalled) {
-      const exactMatch = installedPrinters.find(
+    // Ensure default printer is not a 2-inch cut queue when printing 4R
+    const isCutName =
+      /(2x6|strip|2-inch|2 inch|\bcut\b|\bpotong\b)/i.test(defaultPrinter) &&
+      !/uncut/i.test(defaultPrinter);
+    if (!isCutName) {
+      const isInstalled = installedPrinters.length === 0 || installedPrinters.some(
         (p) => p.toLowerCase() === defaultPrinter.toLowerCase()
       );
-      return { success: true, printerName: exactMatch || defaultPrinter };
+      if (isInstalled) {
+        const exactMatch = installedPrinters.find(
+          (p) => p.toLowerCase() === defaultPrinter.toLowerCase()
+        );
+        return { success: true, printerName: exactMatch || defaultPrinter };
+      }
     }
   }
 

@@ -36,8 +36,8 @@ const kioskApi = {
   printer: {
     print: (imagePath: string, copies: number): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('printer:print', imagePath, copies),
-    enqueue: (imagePath: string, copies: number = 1, sessionId?: string): Promise<{ success: boolean; id?: string; isDuplicate?: boolean; error?: string }> =>
-      ipcRenderer.invoke('printer:enqueue', imagePath, copies, sessionId),
+    enqueue: (imagePath: string, copies: number = 1, sessionId?: string, format?: string): Promise<{ success: boolean; id?: string; isDuplicate?: boolean; error?: string }> =>
+      ipcRenderer.invoke('printer:enqueue', imagePath, copies, sessionId, format),
     getQueueStatus: (sessionId: string): Promise<{ id: string; status: string; attempts: number; last_error?: string } | null> =>
       ipcRenderer.invoke('printer:queue-status', sessionId),
     getQueueList: (): Promise<any[]> =>

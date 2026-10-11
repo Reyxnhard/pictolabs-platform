@@ -140,6 +140,7 @@ function initDatabase(dataDir: string): void {
       session_id TEXT NOT NULL,
       file_path TEXT NOT NULL,
       printer_name TEXT NOT NULL,
+      format TEXT NOT NULL DEFAULT '4R',
       copies INTEGER NOT NULL DEFAULT 1,
       status TEXT NOT NULL DEFAULT 'PENDING',
       attempts INTEGER NOT NULL DEFAULT 0,
@@ -222,6 +223,9 @@ function initDatabase(dataDir: string): void {
   } catch (_) {}
   try {
     db.exec('ALTER TABLE sessions ADD COLUMN gif_path TEXT;');
+  } catch (_) {}
+  try {
+    db.exec("ALTER TABLE print_queue ADD COLUMN format TEXT NOT NULL DEFAULT '4R';");
   } catch (_) {}
   try {
     db.exec('ALTER TABLE sessions ADD COLUMN gif_url TEXT;');
@@ -1904,6 +1908,60 @@ export function writeLocalKioskConfig(newConfig: Record<string, any>): Record<st
  * Reconciles local configuration against backend HTTP API (GET /api/booths/:id/config).
  * Uses a non-blocking 3s timeout to ensure the kiosk never freezes on boot.
  */
+/**
+ * Pushes saved kiosk configuration to backend API (PUT /api/booths/:id/config).
+ * Safe and non-blocking: fails gracefully if offline or backend is unreachable.
+ */
+export async function pushConfigToRemote(
+  baseUrl: string,
+  boothId: string,
+  deviceSecret: string | undefined,
+  configEnvelope: Record<string, any>
+): Promise<any> {
+  const url = `${baseUrl}/api/booths/${boothId}/config`;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  };
+  if (deviceSecret) {
+    headers['x-device-secret'] = deviceSecret;
+  }
+
+  const payload = {
+    pricing: configEnvelope.pricing,
+    timing: configEnvelope.timing,
+    hardware: configEnvelope.hardware,
+    frames: configEnvelope.frames,
+    system: configEnvelope.system,
+  };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4000);
+  try {
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) {
+      console.warn(`[SyncEngine] Push config returned HTTP ${res.status}`);
+      return null;
+    }
+    const data = await res.json();
+    console.log(`[SyncEngine] ✓ Configuration pushed to cloud successfully (v${data.configVersion})`);
+    return data;
+  } catch (err: any) {
+    clearTimeout(timeout);
+    throw err;
+  }
+}
+
+/**
+ * Reconciles local configuration against backend HTTP API (GET /api/booths/:id/config).
+ * Uses a non-blocking 3s timeout to ensure the kiosk never freezes on boot.
+ */
 export async function reconcileRemoteConfig(force: boolean = false): Promise<any> {
   if (!config || !config.boothId || !config.apiBaseUrl) {
     return readLocalKioskConfig();
@@ -1946,9 +2004,69 @@ export async function reconcileRemoteConfig(force: boolean = false): Promise<any
     const localVersion = typeof localConfig.configVersion === 'number' ? localConfig.configVersion : 1;
     const remoteVersion = typeof remoteConfig.configVersion === 'number' ? remoteConfig.configVersion : 0;
 
-    if (remoteVersion >= localVersion || force) {
+    // Conditions to apply remote changes:
+    // 1. Remote is strictly newer (remoteVersion > localVersion)
+    // 2. Force flag is true, but ONLY if remote is at least as new as local (remoteVersion >= localVersion)
+    // NEVER allow older remote config (remoteVersion < localVersion) to overwrite newer local configuration!
+    const shouldReconcile = remoteVersion > localVersion || (force && remoteVersion >= localVersion);
+
+    if (shouldReconcile) {
       console.log(`[SyncEngine] Remote config reconciled: updating local cache from v${localVersion} to v${remoteVersion}`);
-      const merged = { ...localConfig, ...remoteConfig };
+
+      // Safe deep merge that protects configured hardware from cloud null/default overwrites
+      const localHw = localConfig.hardware || {};
+      const remoteHw = remoteConfig.hardware || {};
+
+      const mergedCalibration = {
+        // If remote has non-default calibration, use remote; if remote has factory default (99, 0, 3) and local has custom calibration, preserve local!
+        scale: (typeof remoteHw.printerCalibration?.scale === 'number' && remoteHw.printerCalibration.scale !== 99)
+          ? remoteHw.printerCalibration.scale
+          : (localHw.printerCalibration?.scale ?? 99),
+        offsetX: (typeof remoteHw.printerCalibration?.offsetX === 'number' && remoteHw.printerCalibration.offsetX !== 0)
+          ? remoteHw.printerCalibration.offsetX
+          : (localHw.printerCalibration?.offsetX ?? 0),
+        offsetY: (typeof remoteHw.printerCalibration?.offsetY === 'number' && remoteHw.printerCalibration.offsetY !== 3)
+          ? remoteHw.printerCalibration.offsetY
+          : (localHw.printerCalibration?.offsetY ?? 3),
+      };
+
+      const mergedPrinterNames = {
+        // Null in remote should NOT wipe out configured local queue strings!
+        strip2x6: remoteHw.printerNames?.strip2x6 !== undefined && remoteHw.printerNames?.strip2x6 !== null
+          ? remoteHw.printerNames.strip2x6
+          : (localHw.printerNames?.strip2x6 ?? null),
+        photo4x6: remoteHw.printerNames?.photo4x6 !== undefined && remoteHw.printerNames?.photo4x6 !== null
+          ? remoteHw.printerNames.photo4x6
+          : (localHw.printerNames?.photo4x6 ?? null),
+        photo6x8: remoteHw.printerNames?.photo6x8 !== undefined && remoteHw.printerNames?.photo6x8 !== null
+          ? remoteHw.printerNames.photo6x8
+          : (localHw.printerNames?.photo6x8 ?? null),
+      };
+
+      const merged = {
+        ...localConfig,
+        ...remoteConfig,
+        configVersion: Math.max(localVersion, remoteVersion),
+        pricing: {
+          ...(localConfig.pricing || {}),
+          ...(remoteConfig.pricing || {}),
+        },
+        timing: {
+          ...(localConfig.timing || {}),
+          ...(remoteConfig.timing || {}),
+        },
+        hardware: {
+          ...localHw,
+          ...remoteHw,
+          printerCalibration: mergedCalibration,
+          printerNames: mergedPrinterNames,
+        },
+        system: {
+          ...(localConfig.system || {}),
+          ...(remoteConfig.system || {}),
+        },
+      };
+
       const saved = writeLocalKioskConfig(merged);
 
       configUpdateListeners.forEach((fn) => {
@@ -1959,6 +2077,12 @@ export async function reconcileRemoteConfig(force: boolean = false): Promise<any
       return saved;
     } else {
       console.log(`[SyncEngine] Local config is up to date (local v${localVersion} >= remote v${remoteVersion})`);
+      // If local has newer unpushed changes (e.g. offline save previously), asynchronously push to cloud now that we are online!
+      if (localVersion > remoteVersion && config?.boothId && config?.apiBaseUrl) {
+        pushConfigToRemote(config.apiBaseUrl, config.boothId, config.deviceSecret, localConfig).catch((err) => {
+          console.warn('[SyncEngine] Async sync-up of newer local config to cloud deferred:', err?.message);
+        });
+      }
       return localConfig;
     }
   } catch (err: any) {
@@ -2017,8 +2141,60 @@ export function registerSyncHandlers(engineConfig: SyncEngineConfig): void {
 
     ipcMain.handle('config:set', async (_event, partial: Record<string, unknown>) => {
       const current = readLocalKioskConfig();
-      const merged = { ...current, ...partial };
+      const currentVersion = typeof current.configVersion === 'number' ? current.configVersion : 1;
+      const nextVersion = currentVersion + 1;
+
+      // Safe deep merge for partial configuration updates
+      const partialHardware = (partial.hardware && typeof partial.hardware === 'object') ? (partial.hardware as Record<string, any>) : {};
+      const currentHardware = current.hardware || {};
+
+      const mergedHardware = {
+        ...currentHardware,
+        ...partialHardware,
+        printerCalibration: {
+          ...(currentHardware.printerCalibration || { scale: 99, offsetX: 0, offsetY: 3 }),
+          ...(partialHardware.printerCalibration || {}),
+        },
+        printerNames: {
+          ...(currentHardware.printerNames || { strip2x6: null, photo4x6: null, photo6x8: null }),
+          ...(partialHardware.printerNames || {}),
+        },
+      };
+
+      const merged: Record<string, any> = {
+        ...current,
+        ...partial,
+        configVersion: nextVersion,
+        pricing: {
+          ...(current.pricing || {}),
+          ...((partial.pricing as Record<string, any>) || {}),
+        },
+        timing: {
+          ...(current.timing || {}),
+          ...((partial.timing as Record<string, any>) || {}),
+        },
+        hardware: mergedHardware,
+        system: {
+          ...(current.system || {}),
+          ...((partial.system as Record<string, any>) || {}),
+        },
+      };
+
       const saved = writeLocalKioskConfig(merged);
+
+      configUpdateListeners.forEach((fn) => {
+        try { fn(saved); } catch (_) {}
+      });
+
+      broadcastToWindows('kiosk:config-updated', saved);
+
+      // Asynchronously push updated configuration to backend API (PUT /api/booths/:id/config)
+      if (config?.boothId && config?.apiBaseUrl) {
+        pushConfigToRemote(config.apiBaseUrl, config.boothId, config.deviceSecret, saved).catch((err) => {
+          console.warn('[SyncEngine] Background push of saved config to cloud deferred (offline):', err?.message);
+        });
+      }
+
       return saved;
     });
 
