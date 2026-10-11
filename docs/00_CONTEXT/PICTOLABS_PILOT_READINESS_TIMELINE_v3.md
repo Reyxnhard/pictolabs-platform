@@ -6,7 +6,7 @@
 **Updated:** 8 October 2026  
 
 **Current stage:** PILOT HARDENING / PILOT READINESS  
-**Current active phase:** Phase B — PR-02 Printer Profiles & Calibration (Planning & Calibration Audit)  
+**Current active phase:** Phase B — PR-02 Printer Profiles & Calibration (Implementation & Packaged Runtime Verified — Awaiting Founder Physical UAT Authorization)  
 **Current gate:** PILOT READINESS FEATURE GAP CLOSURE  
 **Pilot target:** 1 booth (Booth #1) → operational proof → scale 5–10 booths  
 **Pilot Booth #1 Status:** NOT READY (Pending Pilot Readiness Gates PR-02 through PR-08, and Payment Gateway Settlement Gate)  
@@ -903,16 +903,18 @@ Founder directives have established mandatory feature requirements for Booth #1 
 
 ### PR-02 — Printer Profiles & Calibration
 - **Objective:** Support printer/media profiles (2R photostrips and 4R postcards), bleed calibration, X/Y offset, scale/crop, and a test print calibration workflow to eliminate white edge defects and misaligned cuts after paper/media roll changes.
-- **Current status:** OPEN (PLANNING PHASE / AUDIT ONLY — ZERO PREMATURE CODING)
-- **Existing foundation:** DNP DS-RX1 GDI execution via native `print.exe`, `PhotolabDNP.exe` telemetry, `PrintService.ts`, GDI rendering pipeline, and PR-01 `hardware.printerProfileId` schema.
-- **Missing scope:** Codebase investigation of render/print pipeline coordinate parameters; media profile data model (2R photostrip vs 4R postcard); configurable X/Y offset and bleed parameters; test print calibration pattern generator in Admin Panel; persistent storage of calibration values per booth.
+- **Current status:** READY_FOR_FOUNDER_PHYSICAL_UAT (Implementation, automated tests, build/typecheck, and packaged runtime verified; awaiting Founder physical UAT authorization)
+- **Existing foundation:** DNP DS-RX1 GDI execution via native `print.exe`, `PhotolabDNP.exe` telemetry, `PrintService.ts`, GDI rendering pipeline, PR-01 `hardware.printerProfileId` schema, and PR-02 calibration engine (`calibration.scale`, `calibration.offsetX`, `calibration.offsetY`).
+- **Implemented Scope:** Reference-parity calibration model (Scale 85–100%, Offset X -15 to +15, Offset Y -15 to +15 native 1/100 inch units, baseline 99/0/3); dynamic per-media printer queue mapping (`strip2x6`, `photo4x6`, `photo6x8`) with nullable fallback contract; live preview canvas with scale/bleed grid; Admin Panel calibration UI & test print; packaged calibration target (`win-unpacked/resources/assets/calibration_target.png`); atomic print dispatch lock (`QUEUE_WORKER`, `CALIBRATION`, `MANUAL`) with safe stale-lock recovery (process liveness verification via PID tracking & tasklist); mandatory 4x6 uncut queue enforcement for calibration test print; USB telemetry 4000ms cooldown.
 - **Dependencies:** PR-01 (Booth Configuration Foundation — CLOSED), Printer RCA-7 engine (`PrintService.ts` — CLOSED).
-- **Acceptance criteria:** Operator can select 2R or 4R profile; calibration test print prints reference alignment grid; X/Y offset and bleed adjustments eliminate white edges on physical prints; calibration persists across reboots.
-- **Founder UAT required:** YES
-- **Implementation status:** NOT_STARTED (Planning & Audit opened; implementation on hold)
-- **Test status:** NOT_STARTED
-- **UAT status:** NOT_STARTED
-- **Release status:** NOT_STARTED
+- **Acceptance criteria:** Operator can calibrate scale and X/Y offset; calibration test print prints reference alignment target without cutting; offset/scale adjustments eliminate white edges on physical prints; calibration persists across reboots and offline runs; dispatch locks prevent concurrency and USB driver collision.
+- **Founder UAT required:** YES (Strictly requires Founder physical authorization before actuating DNP DS-RX1)
+- **Implementation status:** IMPLEMENTED (Commit `426bd8a`)
+- **Test status:** AUTOMATED_TESTS_PASSED (17/17 blocker suite, 25/25 checkpoint 2 suite, 36/36 RCA-6, 10/10 RCA-7, 22/22 PR-01)
+- **Build/Typecheck status:** PASSED (`turbo run build` clean across all workspaces)
+- **Packaged runtime status:** VERIFIED (`release/win-unpacked/resources/assets/calibration_target.png` verified present 123,101 bytes)
+- **UAT status:** PENDING_FOUNDER_AUTHORIZATION (Zero unauthorized physical prints)
+- **Release status:** NOT_STARTED (Release closure protocol pending post-UAT)
 
 ### PR-03 — Camera Selection & Configuration
 - **Objective:** Provide camera device selection (DSLR vs webcam) and camera configuration through Admin Panel per booth, ensuring preview camera and capture camera are strictly synchronized to eradicate the historical mismatch bug.
@@ -1107,7 +1109,7 @@ Install kiosk
 ├────────────────────────────────────────┼──────────────────────────────────────────┤
 │ PILOT READINESS (NEW GATES)            │                                          │
 │ - PR-01 Booth Configuration Foundation │ CLOSED (Conditional Exception)           │
-│ - PR-02 Printer Profiles & Calibration │ OPEN (PLANNING PHASE)                    │
+│ - PR-02 Printer Profiles & Calibration │ READY_FOR_PHYSICAL_UAT                   │
 │ - PR-03 Camera Selection & Config      │ NOT_STARTED / CAMERA WORKSTREAM          │
 │ - PR-04 Frame / Design Asset Mgmt      │ NOT_STARTED                              │
 │ - PR-05 Pricing & Print Quantity       │ PARTIALLY EXISTING / EXTENSION REQUIRED  │
@@ -1194,5 +1196,5 @@ When moving the project to a new chat, follow the canonical documentation hierar
 
 **Current active gate:**
 
-> PILOT READINESS FEATURE GAP CLOSURE (Phase B: PR-02 Printer Profiles & Calibration Planning).
+> PILOT READINESS FEATURE GAP CLOSURE (Phase B: PR-02 Printer Profiles & Calibration — Awaiting Founder Physical UAT Authorization).
 
